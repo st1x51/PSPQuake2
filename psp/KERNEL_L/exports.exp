@@ -1,0 +1,10 @@
+# Define the exports for the prx
+PSP_BEGIN_EXPORTS
+
+# Export our function
+PSP_EXPORT_START(q2gamel, 0, 0x4001)
+PSP_EXPORT_FUNC(Q2_ModuleLoader)
+PSP_EXPORT_FUNC(Q2_ModuleUnLoader)
+PSP_EXPORT_END
+
+PSP_END_EXPORTS

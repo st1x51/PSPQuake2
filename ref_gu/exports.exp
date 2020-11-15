@@ -1,0 +1,8 @@
+# Define the exports for the prx
+PSP_BEGIN_EXPORTS
+
+PSP_EXPORT_START(pspref, 0, 0x0001)
+PSP_EXPORT_FUNC(GetRefAPI)
+PSP_EXPORT_END
+
+PSP_END_EXPORTS

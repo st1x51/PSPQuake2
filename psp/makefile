@@ -1,0 +1,614 @@
+# Build type.
+# Must be one of the types in VALID_VIDEOS.
+VALID_VIDEOS	 = GL GU SOFT
+VIDEO			 = GU
+
+VALID_GAMES	     = Q2 CTF XATRIX ROGUE BOTLIB CRBOT
+GAME	         = Q2
+
+USE_IOCTRL       = 1
+
+BUILD_N          = 1.00
+
+# Site specific variables.
+INSTALL_DIR		 = $(PSP_MOUNT)/PSP/GAME/Quake2
+
+# Compiler specific variables.
+PSPSDK		= $(shell psp-config --pspsdk-path)
+ifeq ($(PSPSDK),)
+$(error PSPSDK wasn't set)
+endif
+PSPLIBSDIR		  = $(PSPSDK)/..
+
+Q2_KERNEL_MOD     = 1
+SRC_DIR		      = ..
+OBJ_DIR		      = ../
+TARGET		      = $(OBJ_DIR)/Quake2
+ifeq ($(Q2_KERNEL_MOD), 1)
+PSP_EBOOT_TITLE	  = PSPQuake2 v.$(BUILD_N) by Crow_bar  (Q2KM)
+else
+PSP_EBOOT_TITLE	  = PSPQuake2 v.$(BUILD_N) by Crow_bar
+endif
+PSP_EBOOT_ICON    = ICON0.png
+PSP_EBOOT_PIC1    = PIC0.png
+PSP_EBOOT_SFO	  = $(OBJ_DIR)/PARAM.SFO
+PSP_EBOOT		  = $(OBJ_DIR)/EBOOT.PBP
+DIST_DIR		  = dist
+DIST_FILES		  = readme.html gpl.txt Quake/EBOOT.PBP
+ZIP_FILE		  = Quake2.zip
+BUILD_PRX		  = 1
+PSP_LARGE_MEMORY  = 1
+PSP_FW_VERSION    = 500
+
+
+PSP_OBJS = \
+$(OBJ_DIR)psp/mp3.o \
+$(OBJ_DIR)psp/cd.o \
+$(OBJ_DIR)psp/glob.o \
+$(OBJ_DIR)psp/in_psp.o \
+$(OBJ_DIR)psp/net_psp.o \
+$(OBJ_DIR)psp/gethost.o \
+$(OBJ_DIR)psp/qshared_psp.o \
+$(OBJ_DIR)psp/gamepsp.o \
+$(OBJ_DIR)psp/snd_psp.o \
+$(OBJ_DIR)psp/sys_psp.o \
+$(OBJ_DIR)psp/HunkLib.o \
+$(OBJ_DIR)psp/sceDmac.o \
+$(OBJ_DIR)psp/vid_psp.o
+
+Q2_KERNEL_OBJS = \
+$(OBJ_DIR)psp/Q2Kernel/Q2Kernel.o
+
+KEY_DANZEFF_OBJS = \
+$(OBJ_DIR)psp/keyboard/danzeff.o
+
+IOCTRL_OBJS = \
+$(OBJ_DIR)qcommon/ioctrl.o
+
+#############################################################################
+# CLIENT/SERVER
+#############################################################################
+
+COMMON_OBJS = \
+$(OBJ_DIR)client/cl_ents.o \
+$(OBJ_DIR)client/cl_input.o \
+$(OBJ_DIR)client/cl_main.o \
+$(OBJ_DIR)client/cl_parse.o \
+$(OBJ_DIR)client/cl_pred.o \
+$(OBJ_DIR)client/cl_tent.o \
+$(OBJ_DIR)client/cl_fx.o \
+$(OBJ_DIR)client/cl_newfx.o \
+$(OBJ_DIR)client/cl_scrn.o \
+$(OBJ_DIR)client/cl_inv.o \
+$(OBJ_DIR)client/cl_cin.o \
+$(OBJ_DIR)client/cl_view.o \
+$(OBJ_DIR)client/console.o \
+$(OBJ_DIR)client/keys.o \
+$(OBJ_DIR)client/menu.o \
+$(OBJ_DIR)client/qmenu.o \
+$(OBJ_DIR)client/snd_dma.o \
+$(OBJ_DIR)client/snd_mix.o \
+$(OBJ_DIR)client/snd_mem.o \
+$(OBJ_DIR)server/sv_ccmds.o \
+$(OBJ_DIR)server/sv_ents.o \
+$(OBJ_DIR)server/sv_init.o \
+$(OBJ_DIR)server/sv_main.o \
+$(OBJ_DIR)server/sv_game.o \
+$(OBJ_DIR)server/sv_send.o \
+$(OBJ_DIR)server/sv_user.o \
+$(OBJ_DIR)server/sv_world.o
+
+#############################################################################
+# COMMON FILE SYSTEM
+#############################################################################
+
+QCOMMON_OBJS = \
+$(OBJ_DIR)qcommon/cmd.o \
+$(OBJ_DIR)qcommon/cmodel.o \
+$(OBJ_DIR)qcommon/common.o \
+$(OBJ_DIR)qcommon/crc.o \
+$(OBJ_DIR)qcommon/cvar.o \
+$(OBJ_DIR)qcommon/files.o \
+$(OBJ_DIR)qcommon/net_chan.o \
+$(OBJ_DIR)qcommon/md4.o \
+$(OBJ_DIR)qcommon/pmove.o \
+$(OBJ_DIR)game/m_flash.o \
+$(OBJ_DIR)game/q_shared.o
+
+#############################################################################
+# QUAKE2
+#############################################################################
+
+GM_Q2_OBJS = \
+$(OBJ_DIR)game/q_shared.o \
+$(OBJ_DIR)game/g_ai.o \
+$(OBJ_DIR)game/p_client.o \
+$(OBJ_DIR)game/g_cmds.o \
+$(OBJ_DIR)game/g_svcmds.o \
+$(OBJ_DIR)game/g_chase.o \
+$(OBJ_DIR)game/g_combat.o \
+$(OBJ_DIR)game/g_func.o \
+$(OBJ_DIR)game/g_items.o \
+$(OBJ_DIR)game/g_main.o \
+$(OBJ_DIR)game/g_misc.o \
+$(OBJ_DIR)game/g_monster.o \
+$(OBJ_DIR)game/g_phys.o \
+$(OBJ_DIR)game/g_save.o \
+$(OBJ_DIR)game/g_spawn.o \
+$(OBJ_DIR)game/g_target.o \
+$(OBJ_DIR)game/g_trigger.o \
+$(OBJ_DIR)game/g_turret.o \
+$(OBJ_DIR)game/g_utils.o \
+$(OBJ_DIR)game/g_weapon.o \
+$(OBJ_DIR)game/m_actor.o \
+$(OBJ_DIR)game/m_berserk.o \
+$(OBJ_DIR)game/m_boss2.o \
+$(OBJ_DIR)game/m_boss3.o \
+$(OBJ_DIR)game/m_boss31.o \
+$(OBJ_DIR)game/m_boss32.o \
+$(OBJ_DIR)game/m_brain.o \
+$(OBJ_DIR)game/m_chick.o \
+$(OBJ_DIR)game/m_flipper.o \
+$(OBJ_DIR)game/m_float.o \
+$(OBJ_DIR)game/m_flyer.o \
+$(OBJ_DIR)game/m_gladiator.o \
+$(OBJ_DIR)game/m_gunner.o \
+$(OBJ_DIR)game/m_hover.o \
+$(OBJ_DIR)game/m_infantry.o \
+$(OBJ_DIR)game/m_insane.o \
+$(OBJ_DIR)game/m_medic.o \
+$(OBJ_DIR)game/m_move.o \
+$(OBJ_DIR)game/m_mutant.o \
+$(OBJ_DIR)game/m_parasite.o \
+$(OBJ_DIR)game/m_soldier.o \
+$(OBJ_DIR)game/m_supertank.o \
+$(OBJ_DIR)game/m_tank.o \
+$(OBJ_DIR)game/p_hud.o \
+$(OBJ_DIR)game/p_trail.o \
+$(OBJ_DIR)game/p_view.o \
+$(OBJ_DIR)game/p_weapon.o \
+$(OBJ_DIR)game/m_flash.o
+
+#############################################################################
+# CRBOT
+#############################################################################
+
+GM_CRBOT_OBJS = \
+$(OBJ_DIR)/crbot/cr_main.o \
+$(OBJ_DIR)/crbot/cr_menu.o \
+$(OBJ_DIR)/crbot/g_ai.o \
+$(OBJ_DIR)/crbot/g_chase.o \
+$(OBJ_DIR)/crbot/g_cmds.o \
+$(OBJ_DIR)/crbot/g_combat.o \
+$(OBJ_DIR)/crbot/g_ctf.o \
+$(OBJ_DIR)/crbot/g_func.o \
+$(OBJ_DIR)/crbot/g_items.o \
+$(OBJ_DIR)/crbot/g_main.o \
+$(OBJ_DIR)/crbot/g_misc.o \
+$(OBJ_DIR)/crbot/g_monster.o \
+$(OBJ_DIR)/crbot/g_phys.o \
+$(OBJ_DIR)/crbot/g_save.o \
+$(OBJ_DIR)/crbot/g_spawn.o \
+$(OBJ_DIR)/crbot/g_svcmds.o \
+$(OBJ_DIR)/crbot/g_target.o \
+$(OBJ_DIR)/crbot/g_trigger.o \
+$(OBJ_DIR)/crbot/g_utils.o \
+$(OBJ_DIR)/crbot/g_weapon.o \
+$(OBJ_DIR)/crbot/m_move.o \
+$(OBJ_DIR)/crbot/m_flash.o \
+$(OBJ_DIR)/crbot/p_client.o \
+$(OBJ_DIR)/crbot/p_hud.o \
+$(OBJ_DIR)/crbot/p_menu.o \
+$(OBJ_DIR)/crbot/p_trail.o \
+$(OBJ_DIR)/crbot/p_view.o \
+$(OBJ_DIR)/crbot/p_weapon.o \
+$(OBJ_DIR)/crbot/q_shared.o
+
+#############################################################################
+# BOTLIB
+#############################################################################
+
+GM_BOTLIB_OBJS = \
+$(OBJ_DIR)/gameg/q_shared.o \
+$(OBJ_DIR)/gameg/g_ai.o \
+$(OBJ_DIR)/gameg/g_arena.o \
+$(OBJ_DIR)/gameg/g_ch.o \
+$(OBJ_DIR)/gameg/g_chase.o \
+$(OBJ_DIR)/gameg/g_combat.o \
+$(OBJ_DIR)/gameg/g_cmds.o \
+$(OBJ_DIR)/gameg/g_ctf.o \
+$(OBJ_DIR)/gameg/g_func.o \
+$(OBJ_DIR)/gameg/g_items.o \
+$(OBJ_DIR)/gameg/g_log.o \
+$(OBJ_DIR)/gameg/g_main.o \
+$(OBJ_DIR)/gameg/g_misc.o \
+$(OBJ_DIR)/gameg/g_monster.o \
+$(OBJ_DIR)/gameg/g_newai_rogue.o \
+$(OBJ_DIR)/gameg/g_newdm_rogue.o \
+$(OBJ_DIR)/gameg/g_newfnc_rogue.o \
+$(OBJ_DIR)/gameg/g_newtarg_rogue.o \
+$(OBJ_DIR)/gameg/g_newtrig_rogue.o \
+$(OBJ_DIR)/gameg/g_newweap_rogue.o \
+$(OBJ_DIR)/gameg/g_phys.o \
+$(OBJ_DIR)/gameg/g_save.o \
+$(OBJ_DIR)/gameg/g_spawn.o \
+$(OBJ_DIR)/gameg/g_sphere_rogue.o \
+$(OBJ_DIR)/gameg/g_svcmds.c \
+$(OBJ_DIR)/gameg/g_target.o \
+$(OBJ_DIR)/gameg/g_trigger.o \
+$(OBJ_DIR)/gameg/g_turret.o \
+$(OBJ_DIR)/gameg/g_utils.o \
+$(OBJ_DIR)/gameg/g_weapon.o \
+$(OBJ_DIR)/gameg/bl_botcfg.o \
+$(OBJ_DIR)/gameg/bl_cmd.o \
+$(OBJ_DIR)/gameg/bl_debug.o \
+$(OBJ_DIR)/gameg/bl_main.o \
+$(OBJ_DIR)/gameg/bl_redirgi.o \
+$(OBJ_DIR)/gameg/bl_spawn.o \
+$(OBJ_DIR)/gameg/changes.o \
+$(OBJ_DIR)/gameg/dm_tag_rogue.o \
+$(OBJ_DIR)/gameg/dm_ball_rogue.o \
+$(OBJ_DIR)/gameg/m_actor.o \
+$(OBJ_DIR)/gameg/m_berserk.o \
+$(OBJ_DIR)/gameg/m_boss2.o \
+$(OBJ_DIR)/gameg/m_boss3.o \
+$(OBJ_DIR)/gameg/m_boss5_xatrix.o \
+$(OBJ_DIR)/gameg/m_boss31.o \
+$(OBJ_DIR)/gameg/m_boss32.o \
+$(OBJ_DIR)/gameg/m_brain.o \
+$(OBJ_DIR)/gameg/m_carrier_rogue.o \
+$(OBJ_DIR)/gameg/m_chick.o \
+$(OBJ_DIR)/gameg/m_fixbot_xatrix.o \
+$(OBJ_DIR)/gameg/m_flash.o \
+$(OBJ_DIR)/gameg/m_flipper.o \
+$(OBJ_DIR)/gameg/m_float.o \
+$(OBJ_DIR)/gameg/m_flyer.o \
+$(OBJ_DIR)/gameg/m_gekk_xatrix.o \
+$(OBJ_DIR)/gameg/m_gladb_xatrix.o \
+$(OBJ_DIR)/gameg/m_gladiator.o \
+$(OBJ_DIR)/gameg/m_gunner.o \
+$(OBJ_DIR)/gameg/m_hover.o \
+$(OBJ_DIR)/gameg/m_infantry.o \
+$(OBJ_DIR)/gameg/m_insane.o \
+$(OBJ_DIR)/gameg/m_medic.o \
+$(OBJ_DIR)/gameg/m_move2_rogue.o \
+$(OBJ_DIR)/gameg/m_move.o \
+$(OBJ_DIR)/gameg/m_mutant.o \
+$(OBJ_DIR)/gameg/m_parasite.o \
+$(OBJ_DIR)/gameg/m_soldier.o \
+$(OBJ_DIR)/gameg/m_stalker_rogue.o \
+$(OBJ_DIR)/gameg/m_supertank.o \
+$(OBJ_DIR)/gameg/m_tank.o \
+$(OBJ_DIR)/gameg/m_turret_rogue.o \
+$(OBJ_DIR)/gameg/m_widow2_rogue.o \
+$(OBJ_DIR)/gameg/m_widow_rogue.o \
+$(OBJ_DIR)/gameg/p_botmenu.o \
+$(OBJ_DIR)/gameg/p_client.o \
+$(OBJ_DIR)/gameg/p_hud.o \
+$(OBJ_DIR)/gameg/p_lag.o \
+$(OBJ_DIR)/gameg/p_menu.o \
+$(OBJ_DIR)/gameg/p_menulib.o \
+$(OBJ_DIR)/gameg/p_trail.o \
+$(OBJ_DIR)/gameg/p_view.o \
+$(OBJ_DIR)/gameg/p_weapon.o
+
+#############################################################################
+# CTF
+#############################################################################
+
+GM_CTF_OBJS = \
+$(OBJ_DIR)/ctf/g_ai.o \
+$(OBJ_DIR)/ctf/g_chase.o \
+$(OBJ_DIR)/ctf/g_cmds.o \
+$(OBJ_DIR)/ctf/g_combat.o \
+$(OBJ_DIR)/ctf/g_ctf.o \
+$(OBJ_DIR)/ctf/g_func.o \
+$(OBJ_DIR)/ctf/g_items.o \
+$(OBJ_DIR)/ctf/g_main.o \
+$(OBJ_DIR)/ctf/g_misc.o \
+$(OBJ_DIR)/ctf/g_monster.o \
+$(OBJ_DIR)/ctf/g_phys.o \
+$(OBJ_DIR)/ctf/g_save.o \
+$(OBJ_DIR)/ctf/g_spawn.o \
+$(OBJ_DIR)/ctf/g_svcmds.o \
+$(OBJ_DIR)/ctf/g_target.o \
+$(OBJ_DIR)/ctf/g_trigger.o \
+$(OBJ_DIR)/ctf/g_utils.o \
+$(OBJ_DIR)/ctf/g_weapon.o \
+$(OBJ_DIR)/ctf/m_move.o \
+$(OBJ_DIR)/ctf/p_client.o \
+$(OBJ_DIR)/ctf/p_hud.o \
+$(OBJ_DIR)/ctf/p_menu.o \
+$(OBJ_DIR)/ctf/p_trail.o \
+$(OBJ_DIR)/ctf/p_view.o \
+$(OBJ_DIR)/ctf/p_weapon.o \
+$(OBJ_DIR)/ctf/q_shared.o
+
+#############################################################################
+# XATRIX
+#############################################################################
+
+GM_XATRIX_OBJS = \
+$(OBJ_DIR)/xatrix/g_ai.o \
+$(OBJ_DIR)/xatrix/g_chase.o \
+$(OBJ_DIR)/xatrix/g_cmds.o \
+$(OBJ_DIR)/xatrix/g_combat.o \
+$(OBJ_DIR)/xatrix/g_func.o \
+$(OBJ_DIR)/xatrix/g_items.o \
+$(OBJ_DIR)/xatrix/g_main.o \
+$(OBJ_DIR)/xatrix/g_misc.o \
+$(OBJ_DIR)/xatrix/g_monster.o \
+$(OBJ_DIR)/xatrix/g_phys.o \
+$(OBJ_DIR)/xatrix/g_save.o \
+$(OBJ_DIR)/xatrix/g_spawn.o \
+$(OBJ_DIR)/xatrix/g_svcmds.o \
+$(OBJ_DIR)/xatrix/g_target.o \
+$(OBJ_DIR)/xatrix/g_trigger.o \
+$(OBJ_DIR)/xatrix/g_turret.o \
+$(OBJ_DIR)/xatrix/g_utils.o \
+$(OBJ_DIR)/xatrix/g_weapon.o \
+$(OBJ_DIR)/xatrix/m_actor.o \
+$(OBJ_DIR)/xatrix/m_berserk.o \
+$(OBJ_DIR)/xatrix/m_boss2.o \
+$(OBJ_DIR)/xatrix/m_boss3.o \
+$(OBJ_DIR)/xatrix/m_boss31.o \
+$(OBJ_DIR)/xatrix/m_boss32.o \
+$(OBJ_DIR)/xatrix/m_boss5.o \
+$(OBJ_DIR)/xatrix/m_brain.o \
+$(OBJ_DIR)/xatrix/m_chick.o \
+$(OBJ_DIR)/xatrix/m_fixbot.o \
+$(OBJ_DIR)/xatrix/m_flash.o \
+$(OBJ_DIR)/xatrix/m_flipper.o \
+$(OBJ_DIR)/xatrix/m_float.o \
+$(OBJ_DIR)/xatrix/m_flyer.o \
+$(OBJ_DIR)/xatrix/m_gekk.o \
+$(OBJ_DIR)/xatrix/m_gladb.o \
+$(OBJ_DIR)/xatrix/m_gladiator.o \
+$(OBJ_DIR)/xatrix/m_gunner.o \
+$(OBJ_DIR)/xatrix/m_hover.o \
+$(OBJ_DIR)/xatrix/m_infantry.o \
+$(OBJ_DIR)/xatrix/m_insane.o \
+$(OBJ_DIR)/xatrix/m_medic.o \
+$(OBJ_DIR)/xatrix/m_move.o \
+$(OBJ_DIR)/xatrix/m_mutant.o \
+$(OBJ_DIR)/xatrix/m_parasite.o \
+$(OBJ_DIR)/xatrix/m_soldier.o \
+$(OBJ_DIR)/xatrix/m_supertank.o \
+$(OBJ_DIR)/xatrix/m_tank.o \
+$(OBJ_DIR)/xatrix/p_client.o \
+$(OBJ_DIR)/xatrix/p_hud.o \
+$(OBJ_DIR)/xatrix/p_trail.o \
+$(OBJ_DIR)/xatrix/p_view.o \
+$(OBJ_DIR)/xatrix/p_weapon.o \
+$(OBJ_DIR)/xatrix/q_shared.o
+
+#############################################################################
+# ROGUE
+#############################################################################
+
+GM_ROGUE_OBJS = \
+$(OBJ_DIR)/rogue/dm_ball.o \
+$(OBJ_DIR)/rogue/dm_tag.o \
+$(OBJ_DIR)/rogue/g_ai.o \
+$(OBJ_DIR)/rogue/g_chase.o \
+$(OBJ_DIR)/rogue/g_cmds.o \
+$(OBJ_DIR)/rogue/g_combat.o \
+$(OBJ_DIR)/rogue/g_func.o \
+$(OBJ_DIR)/rogue/g_items.o \
+$(OBJ_DIR)/rogue/g_main.o \
+$(OBJ_DIR)/rogue/g_misc.o \
+$(OBJ_DIR)/rogue/g_monster.o \
+$(OBJ_DIR)/rogue/g_newai.o \
+$(OBJ_DIR)/rogue/g_newdm.o \
+$(OBJ_DIR)/rogue/g_newfnc.o \
+$(OBJ_DIR)/rogue/g_newtarg.o \
+$(OBJ_DIR)/rogue/g_newtrig.o \
+$(OBJ_DIR)/rogue/g_newweap.o \
+$(OBJ_DIR)/rogue/g_phys.o \
+$(OBJ_DIR)/rogue/g_save.o \
+$(OBJ_DIR)/rogue/g_spawn.o \
+$(OBJ_DIR)/rogue/g_sphere.o \
+$(OBJ_DIR)/rogue/g_svcmds.o \
+$(OBJ_DIR)/rogue/g_target.o \
+$(OBJ_DIR)/rogue/g_trigger.o \
+$(OBJ_DIR)/rogue/g_turret.o \
+$(OBJ_DIR)/rogue/g_utils.o \
+$(OBJ_DIR)/rogue/g_weapon.o \
+$(OBJ_DIR)/rogue/m_actor.o \
+$(OBJ_DIR)/rogue/m_berserk.o \
+$(OBJ_DIR)/rogue/m_boss2.o \
+$(OBJ_DIR)/rogue/m_boss3.o \
+$(OBJ_DIR)/rogue/m_boss31.o \
+$(OBJ_DIR)/rogue/m_boss32.o \
+$(OBJ_DIR)/rogue/m_brain.o \
+$(OBJ_DIR)/rogue/m_carrier.o \
+$(OBJ_DIR)/rogue/m_chick.o \
+$(OBJ_DIR)/rogue/m_flash.o \
+$(OBJ_DIR)/rogue/m_flipper.o \
+$(OBJ_DIR)/rogue/m_float.o \
+$(OBJ_DIR)/rogue/m_flyer.o \
+$(OBJ_DIR)/rogue/m_gladiator.o \
+$(OBJ_DIR)/rogue/m_gunner.o \
+$(OBJ_DIR)/rogue/m_hover.o \
+$(OBJ_DIR)/rogue/m_infantry.o \
+$(OBJ_DIR)/rogue/m_insane.o \
+$(OBJ_DIR)/rogue/m_medic.o \
+$(OBJ_DIR)/rogue/m_move.o \
+$(OBJ_DIR)/rogue/m_mutant.o \
+$(OBJ_DIR)/rogue/m_parasite.o \
+$(OBJ_DIR)/rogue/m_soldier.o \
+$(OBJ_DIR)/rogue/m_stalker.o \
+$(OBJ_DIR)/rogue/m_supertank.o \
+$(OBJ_DIR)/rogue/m_tank.o \
+$(OBJ_DIR)/rogue/m_turret.o \
+$(OBJ_DIR)/rogue/m_widow.o \
+$(OBJ_DIR)/rogue/m_widow2.o \
+$(OBJ_DIR)/rogue/p_client.o \
+$(OBJ_DIR)/rogue/p_hud.o \
+$(OBJ_DIR)/rogue/p_trail.o \
+$(OBJ_DIR)/rogue/p_view.o \
+$(OBJ_DIR)/rogue/p_weapon.o \
+$(OBJ_DIR)/rogue/q_shared.o
+
+
+#############################################################################
+# REF_SOFT
+#############################################################################
+
+REF_SOFT_OBJS = \
+$(OBJ_DIR)/psp/sw_gu.o \
+$(OBJ_DIR)/ref_soft/r_aclip.o \
+$(OBJ_DIR)/ref_soft/r_alias.o \
+$(OBJ_DIR)/ref_soft/r_bsp.o \
+$(OBJ_DIR)/ref_soft/r_draw.o \
+$(OBJ_DIR)/ref_soft/r_edge.o \
+$(OBJ_DIR)/ref_soft/r_image.o \
+$(OBJ_DIR)/ref_soft/r_light.o \
+$(OBJ_DIR)/ref_soft/r_main.o \
+$(OBJ_DIR)/ref_soft/r_misc.o \
+$(OBJ_DIR)/ref_soft/r_model.o \
+$(OBJ_DIR)/ref_soft/r_part.o \
+$(OBJ_DIR)/ref_soft/r_poly.o \
+$(OBJ_DIR)/ref_soft/r_polyse.o \
+$(OBJ_DIR)/ref_soft/r_rast.o \
+$(OBJ_DIR)/ref_soft/r_scan.o \
+$(OBJ_DIR)/ref_soft/r_sprite.o \
+$(OBJ_DIR)/ref_soft/r_surf.o
+
+#############################################################################
+# REF_GU
+#############################################################################
+
+REF_GU_OBJS = \
+$(OBJ_DIR)ref_gu/clipping.o \
+$(OBJ_DIR)ref_gu/math.o \
+$(OBJ_DIR)psp/hw_imp.o \
+$(OBJ_DIR)ref_gu/gu_image.o \
+$(OBJ_DIR)ref_gu/gu_draw.o \
+$(OBJ_DIR)ref_gu/gu_mesh.o \
+$(OBJ_DIR)ref_gu/gu_model.o \
+$(OBJ_DIR)ref_gu/gu_main.o \
+$(OBJ_DIR)ref_gu/gu_misc.o \
+$(OBJ_DIR)ref_gu/gu_surf.o \
+$(OBJ_DIR)ref_gu/gu_light.o \
+$(OBJ_DIR)ref_gu/gu_part.o \
+$(OBJ_DIR)ref_gu/gu_warp.o \
+$(OBJ_DIR)ref_gu/gu_sky.o \
+$(OBJ_DIR)ref_gu/gu_dxt.o
+
+#$(OBJ_DIR)/ref_gu/vram.o \
+
+#############################################################################
+# REF_GL
+#############################################################################
+
+REF_GL_OBJS = \
+$(OBJ_DIR)psp/qgl_psp.o \
+$(OBJ_DIR)psp/hw_sdl.o \
+$(OBJ_DIR)ref_gl/gl_draw.o \
+$(OBJ_DIR)ref_gl/gl_image.o \
+$(OBJ_DIR)ref_gl/gl_light.o \
+$(OBJ_DIR)ref_gl/gl_mesh.o \
+$(OBJ_DIR)ref_gl/gl_model.o \
+$(OBJ_DIR)ref_gl/gl_rmain.o \
+$(OBJ_DIR)ref_gl/gl_rmisc.o \
+$(OBJ_DIR)ref_gl/gl_rsurf.o \
+$(OBJ_DIR)ref_gl/gl_warp.o
+
+# Set up the object files depending on the build.
+ifeq ($(REF_$(VIDEO)_OBJS),)
+$(error Unrecognised VIDEO type '$(VIDEO)'. It must be one of $(VALID_VIDEOS))
+endif
+
+ifeq ($(GM_$(GAME)_OBJS),)
+$(error Unrecognised GAME type '$(GAME)'. It must be one of $(VALID_GAMES))
+endif
+
+OBJS = $(PSP_OBJS) $(COMMON_OBJS) $(QCOMMON_OBJS) $(REF_$(VIDEO)_OBJS) $(KEY_DANZEFF_OBJS)
+
+# Compiler flags.
+CFLAGS  = -O3 -G0 -Wall -ffast-math -fno-strict-aliasing -fomit-frame-pointer -fexpensive-optimizations -Wno-trigraphs     -DLINKGAME -DSLIM -DDEFBUILD=$(BUILD_N)  -Winline -g
+CXXFLAGS = -fno-rtti -Wcast-qual
+ASFLAGS = $(CFLAGS) -c 
+
+CFLAGS += -D$(VIDEO)_RENDER
+
+ifeq ($(USE_IOCTRL),1)
+OBJS   += $(IOCTRL_OBJS)
+CFLAGS += -DIOCTRL
+endif
+
+ifeq ($(Q2_KERNEL_MOD), 1)
+OBJS += $(Q2_KERNEL_OBJS)
+CFLAGS += -DQ2K
+MEMLIB = m33libs/libpspvram4.a
+else
+MEMLIB = -lpspvram
+endif
+
+# Libs.
+RW_LIBS    = -lpng $(MEMLIB) -lpspgum_vfpu -lpspvfpu -lpspgu
+SDL_LIBS   = -lSDL_image -ljpeg -lpng14 -lSDL -lGL -lglut
+AUDIO_LIBS = -lpspaudiolib -lpspaudio -lpsphprm -lpspaudiocodec m33libs/libpspkubridge.a -lpspmp3
+NET_LIBS   = -lpspwlan -lpspnet_adhoc -lpspnet_adhocctl
+MISC_LIBS  = -lpsprtc -lpsppower
+STD_LIBS   = -lstdc++ -lm -lc -lz
+
+LIBS	     = $(RW_LIBS) $(AUDIO_LIBS) $(MISC_LIBS) $(STD_LIBS) $(NET_LIBS)
+
+# What else to clean.
+EXTRA_CLEAN	= $(foreach FILE,$(ZIP_FILE) Quake/EBOOT.PBP,$(DIST_DIR)/$(FILE))
+
+# All target.
+all: $(PSP_EBOOT)
+
+# What is an install?
+install: $(INSTALL_DIR)/EBOOT.PBP
+
+# How to install.
+$(INSTALL_DIR)/EBOOT.PBP: $(PSP_EBOOT)
+	@echo Installing $(PSP_EBOOT) to $@...
+	@-mkdir2 -p $(dir $@)
+	@cp $(PSP_EBOOT) $@
+
+# How to build the distribution.
+distro: clean $(ZIP_FILE)
+	@echo Distribution prepared.
+
+$(DIST_DIR)/Quake/EBOOT.PBP: $(PSP_EBOOT)
+	@echo Copying $< to $@...
+	@-mkdir2 -p $(dir $@)
+	@cp $< $@
+
+$(ZIP_FILE): $(foreach FILE,$(DIST_FILES),$(DIST_DIR)/$(FILE))
+	@echo Creating $(DIST_DIR)/$(ZIP_FILE)...
+	@-rm -rf $(ZIP_FILE)
+	@cd $(DIST_DIR) && zip -r -q -9 -o $(ZIP_FILE) $(DIST_FILES)
+
+# How to compile an S file.
+$(OBJ_DIR)/%.o: $(SRC_DIR)/%.S
+	@echo $(notdir $<)
+	@mkdir2 -p $(dir $@)
+	@$(CC) $(CFLAGS) -c $< -o $@
+
+# How to compile a C file.
+$(OBJ_DIR)/%.o: $(SRC_DIR)/%.c
+	@echo $(notdir $<)
+	@mkdir2 -p $(dir $@)
+	@$(CC) $(CFLAGS) -c $< -o $@
+
+# How to compile a C++ file.
+$(OBJ_DIR)/%.o: $(SRC_DIR)/%.cpp
+	@echo $(notdir $<)
+	@mkdir2 -p $(dir $@)
+	@$(CXX) $(CXXFLAGS) -c $< -o $@
+
+# Use the standard PSPSDK build stuff.
+include $(PSPSDK)/lib/build.mak
+
+ifeq ($(BUILD_PRX),1)
+OBJ_TYPE	= prx
+else
+OBJ_TYPE	= elf
+endif
+
