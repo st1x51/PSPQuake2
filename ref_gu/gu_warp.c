@@ -160,9 +160,9 @@ void SubdividePolygon (int numverts, float *verts)
 	memcpy (&poly->verts[i + 1], &poly->verts[1], sizeof(gu_vert_ftv_t));
 #else
 	poly = ri.Hunk_AllocName (sizeof(glpoly_t) + ((numverts - 1) * sizeof(gu_vert_ftv_t)), loadname);
-	poly->tricached = NULL;
-	poly->numtricached = 0;
-	poly->frametricached = -1;
+	poly->c_verts = NULL;
+	poly->c_numverts = 0;
+	poly->c_frameverts = -1;
 	poly->next = warpface->polys;
 	warpface->polys = poly;
 	poly->numverts = numverts;

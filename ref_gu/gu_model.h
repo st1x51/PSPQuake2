@@ -88,6 +88,9 @@ typedef struct glpoly_s
 {
 	struct	glpoly_s	*next;
 	struct	glpoly_s	*chain;
+	gu_vert_ftv_t		*c_verts;
+	int					c_numverts;
+	int					c_frameverts;
 	int					numverts;
 	int					flags;		// for SURF_UNDERWATER (not needed anymore?)
 	gu_vert_ftv_t		verts[1];	// variable sized (xyz s1t1 + lm(xyz s2t2))

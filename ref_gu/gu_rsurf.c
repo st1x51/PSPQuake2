@@ -101,6 +101,13 @@ DrawGLPoly
 */
 void DrawGLPoly (glpoly_t *p)
 {
+	if (p->c_verts && p->c_frameverts == r_framecount)
+	{
+		if (p->c_numverts)
+			sceGuDrawArray (GU_TRIANGLE_FAN, GU_TEXTURE_32BITF | GU_VERTEX_32BITF, p->c_numverts, 0, p->c_verts);
+		return;
+	}
+
 	if (GU_ClipIsRequired (&p->verts[0], p->numverts))
 	{
 		// clip the polygon.
@@ -120,8 +127,17 @@ void DrawGLPoly (glpoly_t *p)
 			sceGuColor (GU_HCOLOR_DEFAULT);
 #endif
 		}
+
+		p->c_numverts = cvc;
+		p->c_verts = cv;
 	}
-	else sceGuDrawArray (GU_TRIANGLE_FAN, GU_TEXTURE_32BITF | GU_VERTEX_32BITF, p->numverts, 0, &p->verts[0]);
+	else
+	{
+		sceGuDrawArray (GU_TRIANGLE_FAN, GU_TEXTURE_32BITF | GU_VERTEX_32BITF, p->numverts, 0, &p->verts[0]);
+		p->c_numverts = p->numverts;
+		p->c_verts = &p->verts[0];
+	}
+	p->c_frameverts = r_framecount;
 }
 
 //============
@@ -144,27 +160,46 @@ void DrawGLFlowingPoly (msurface_t *fa)
 		scroll = -64.0;
 
 	sceGuTexOffset (scroll, 0.0f);
-	if (GU_ClipIsRequired (&p->verts[0], p->numverts))
-	{
-		// clip the polygon.
-		gu_vert_ftv_t	*cv;
-		int				cvc;
 
-		GU_Clip (&p->verts[0], p->numverts, &cv, &cvc);
-		if (cvc)
-		{
-#if CLIPPING_DEBUGGING
-			sceGuDisable (GU_TEXTURE_2D);
-			sceGuColor (0xff0000ff);
-#endif
-			sceGuDrawArray (GU_TRIANGLE_FAN, GU_TEXTURE_32BITF | GU_VERTEX_32BITF, cvc, 0, cv);
-#if CLIPPING_DEBUGGING
-			sceGuEnable (GU_TEXTURE_2D);
-			sceGuColor (GU_HCOLOR_DEFAULT);
-#endif
-		}
+	if (p->c_verts && p->c_frameverts == r_framecount)
+	{
+		if (p->c_numverts)
+			sceGuDrawArray (GU_TRIANGLE_FAN, GU_TEXTURE_32BITF | GU_VERTEX_32BITF, p->c_numverts, 0, p->c_verts);
+		return;
 	}
-	else sceGuDrawArray (GU_TRIANGLE_FAN, GU_TEXTURE_32BITF | GU_VERTEX_32BITF, p->numverts, 0, &p->verts[0]);
+	else
+	{
+		if (GU_ClipIsRequired (&p->verts[0], p->numverts))
+		{
+			// clip the polygon.
+			gu_vert_ftv_t	*cv;
+			int				cvc;
+
+			GU_Clip (&p->verts[0], p->numverts, &cv, &cvc);
+			if (cvc)
+			{
+#if CLIPPING_DEBUGGING
+				sceGuDisable (GU_TEXTURE_2D);
+				sceGuColor (0xff0000ff);
+#endif
+				sceGuDrawArray (GU_TRIANGLE_FAN, GU_TEXTURE_32BITF | GU_VERTEX_32BITF, cvc, 0, cv);
+#if CLIPPING_DEBUGGING
+				sceGuEnable (GU_TEXTURE_2D);
+				sceGuColor (GU_HCOLOR_DEFAULT);
+#endif
+			}
+			p->c_numverts = cvc;
+			p->c_verts = cv;
+		}
+		else
+		{
+			sceGuDrawArray (GU_TRIANGLE_FAN, GU_TEXTURE_32BITF | GU_VERTEX_32BITF, p->numverts, 0, &p->verts[0]);
+			p->c_numverts = p->numverts;
+			p->c_verts = &p->verts[0];
+		}
+
+		p->c_frameverts = r_framecount;
+	}
 	sceGuTexOffset (0.0f, 0.0f);
 }
 //PGM
@@ -211,23 +246,39 @@ void R_DrawTriangleOutlines (void)
 /*
 ** DrawGLPolyChain
 */
-void DrawGLPolyChain( glpoly_t *p, float soffset, float toffset )
+void DrawGLPolyChain( msurface_t *fa, float soffset, float toffset )
 {
-	qboolean		dynamic;
+	glpoly_t	*p;
 
-	dynamic = (soffset == 0.0f && toffset == 0.0f) ? false : true;
+	// scale to lightmap coordinates
+	float w = (float)fa->texinfo->image->width;
+	float h = (float)fa->texinfo->image->height;
+	float scaleS = w / (BLOCK_WIDTH * 16.0f);
+	float scaleT = h / (BLOCK_HEIGHT * 16.0f);
+	float baseOffS = (-fa->texturemins[0] + fa->light_s * 16.0f + 8.0f) / w;
+	float baseOffT = (-fa->texturemins[1] + fa->light_t * 16.0f + 8.0f) / h;
+	float finalOffS = (baseOffS * scaleS) - soffset;
+	float finalOffT = (baseOffT * scaleT) - toffset;
 
-	if (dynamic) sceGuTexOffset (-soffset, -toffset);
+	sceGuTexScale(scaleS, scaleT);
+	sceGuTexOffset(finalOffS, finalOffT);
 
-	for ( ; p != 0; p = p->chain )
+	for (p = fa->polys; p != 0; p = p->chain)
 	{
-		if (GU_ClipIsRequired (&p->verts[p->numverts], p->numverts))
+		if (p->c_verts && p->c_frameverts == r_framecount)
+		{
+			if (p->c_numverts)
+				sceGuDrawArray (GU_TRIANGLE_FAN, GU_TEXTURE_32BITF | GU_VERTEX_32BITF, p->c_numverts, 0, p->c_verts);
+			continue;
+		}
+
+		if (GU_ClipIsRequired (&p->verts[0], p->numverts))
 		{
 			// clip the polygon.
 			gu_vert_ftv_t	*cv;
 			int				cvc;
 
-			GU_Clip (&p->verts[p->numverts], p->numverts, &cv, &cvc);
+			GU_Clip (&p->verts[0], p->numverts, &cv, &cvc);
 			if (cvc)
 			{
 #if CLIPPING_DEBUGGING
@@ -241,10 +292,11 @@ void DrawGLPolyChain( glpoly_t *p, float soffset, float toffset )
 #endif
 			}
 		}
-		else sceGuDrawArray (GU_TRIANGLE_FAN, GU_TEXTURE_32BITF | GU_VERTEX_32BITF, p->numverts, 0, &p->verts[p->numverts]);
+		else sceGuDrawArray (GU_TRIANGLE_FAN, GU_TEXTURE_32BITF | GU_VERTEX_32BITF, p->numverts, 0, &p->verts[0]);
 	}
 
-	if (dynamic) sceGuTexOffset (0.0f, 0.0f);
+	sceGuTexOffset (0.0f, 0.0f);
+	sceGuTexScale (1.0f, 1.0f);
 }
 
 /*
@@ -320,7 +372,7 @@ void R_BlendLightmaps (void)
 			{
 				if ( surf->polys )
 				{
-					DrawGLPolyChain( surf->polys, 0, 0 );
+					DrawGLPolyChain( surf, 0, 0 );
 				}
 			}
 		}
@@ -366,7 +418,7 @@ void R_BlendLightmaps (void)
 				for ( drawsurf = newdrawsurf; drawsurf != surf; drawsurf = drawsurf->lightmapchain )
 				{
 					if ( drawsurf->polys )
-						DrawGLPolyChain( drawsurf->polys,
+						DrawGLPolyChain( drawsurf,
 							              ( drawsurf->light_s - drawsurf->dlight_s ) * ( 1.0 / 128.0 ),
 										( drawsurf->light_t - drawsurf->dlight_t ) * ( 1.0 / 128.0 ) );
 				}
@@ -398,7 +450,7 @@ void R_BlendLightmaps (void)
 		for ( surf = newdrawsurf; surf != 0; surf = surf->lightmapchain )
 		{
 			if ( surf->polys )
-				DrawGLPolyChain( surf->polys, ( surf->light_s - surf->dlight_s ) * ( 1.0 / 128.0 ), ( surf->light_t - surf->dlight_t ) * ( 1.0 / 128.0 ) );
+				DrawGLPolyChain( surf, ( surf->light_s - surf->dlight_s ) * ( 1.0 / 128.0 ), ( surf->light_t - surf->dlight_t ) * ( 1.0 / 128.0 ) );
 		}
 	}
 
@@ -1066,7 +1118,10 @@ void GL_BuildPolygonFromSurface(msurface_t *fa)
 	//
 	// draw texture
 	//
-	poly = ri.Hunk_AllocName (sizeof(glpoly_t) + (lnumverts * 2 - 1) * sizeof(gu_vert_ftv_t), loadname);
+	poly = ri.Hunk_AllocName (sizeof(glpoly_t) + (lnumverts - 1) * sizeof(gu_vert_ftv_t), loadname);
+	poly->c_verts = NULL;
+	poly->c_numverts = 0;
+	poly->c_frameverts = -1;
 	poly->next = fa->polys;
 	poly->flags = fa->flags;
 	fa->polys = poly;
@@ -1088,21 +1143,6 @@ void GL_BuildPolygonFromSurface(msurface_t *fa)
 		VectorCopy (vec, poly->verts[i].xyz);
 		poly->verts[i].u = s / fa->texinfo->image->width;
 		poly->verts[i].v = t / fa->texinfo->image->height;
-
-		//
-		// lightmap texture coordinates
-		//
-		s -= fa->texturemins[0];
-		s += fa->light_s*16;
-		s += 8;
-
-		t -= fa->texturemins[1];
-		t += fa->light_t*16;
-		t += 8;
-
-		VectorCopy (vec, poly->verts[i + lnumverts].xyz);
-		poly->verts[i + lnumverts].u = s / (BLOCK_WIDTH * 16);
-		poly->verts[i + lnumverts].v = t / (BLOCK_HEIGHT * 16);
 	}
 
 	poly->numverts = lnumverts;
