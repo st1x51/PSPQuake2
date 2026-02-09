@@ -160,6 +160,9 @@ void SubdividePolygon (int numverts, float *verts)
 	memcpy (&poly->verts[i + 1], &poly->verts[1], sizeof(gu_vert_ftv_t));
 #else
 	poly = ri.Hunk_AllocName (sizeof(glpoly_t) + ((numverts - 1) * sizeof(gu_vert_ftv_t)), loadname);
+	poly->tricached = NULL;
+	poly->numtricached = 0;
+	poly->frametricached = -1;
 	poly->next = warpface->polys;
 	warpface->polys = poly;
 	poly->numverts = numverts;
@@ -231,6 +234,48 @@ EmitWaterPolys
 Does a water warp on the pre-fragmented glpoly_t chain
 =============
 */
+#if USE_FAST_WATER
+void EmitWaterPolys (msurface_t *fa)
+{
+	glpoly_t		*p, *bp;
+	int				i;
+	float			s, t, os, ot;
+	float			scroll;
+	float			rdt = r_newrefdef.time;
+	float			scale = 1.0f / 64.0f;
+
+	if (fa->texinfo->flags & SURF_FLOWING)
+		scroll = -64 * ( (r_newrefdef.time*0.5) - (int)(r_newrefdef.time*0.5) );
+	else
+		scroll = 0;
+
+	sceGuTexScale(scale, scale);
+
+	for (bp=fa->polys ; bp ; bp=bp->next)
+	{
+		p = bp;
+
+		os = (r_turbsin[(int)(rdt * TURBSCALE) & 255] + scroll) * scale;
+		ot = (r_turbsin[(int)(rdt * TURBSCALE * 0.5f) & 255]) * scale;
+
+		sceGuTexOffset(os, ot);
+
+		if (GU_ClipIsRequired(&p->verts[0], p->numverts))
+		{
+			gu_vert_ftv_t *cv;
+			int cvc;
+			GU_Clip(&p->verts[0], p->numverts, &cv, &cvc);
+			if (cvc) sceGuDrawArray (GU_TRIANGLE_FAN, GU_TEXTURE_32BITF | GU_VERTEX_32BITF, cvc, 0, cv);
+		}
+		else
+		{
+			sceGuDrawArray (GU_TRIANGLE_FAN, GU_TEXTURE_32BITF | GU_VERTEX_32BITF, p->numverts, 0, &p->verts[0]);
+		}
+	}
+	sceGuTexOffset (0.0f, 0.0f);
+	sceGuTexScale (1.0f, 1.0f);
+}
+#else
 void EmitWaterPolys (msurface_t *fa)
 {
 	glpoly_t		*p, *bp;
@@ -284,6 +329,7 @@ void EmitWaterPolys (msurface_t *fa)
 		else sceGuDrawArray (GU_TRIANGLE_FAN, GU_TEXTURE_32BITF | GU_VERTEX_32BITF, p->numverts, 0, out);
 	}
 }
+#endif
 
 
 //===================================================================
