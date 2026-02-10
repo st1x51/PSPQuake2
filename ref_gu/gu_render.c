@@ -251,14 +251,11 @@ int GU_Init (void *hinstance, void *wndproc)
 	sceGumUpdateMatrix();
 
 	sceGuFinish();
-	sceGuSync (GU_SYNC_FINISH, GU_SYNC_WAIT);
 
 	// Turn on the display.
 	sceDisplayWaitVblankStart();
 	sceGuDisplay (GU_TRUE);
 
-	// Start a new render.
-	sceGuStart (GU_DIRECT, gu_render.list.ptr);
 
 	return true;
 }
@@ -270,22 +267,9 @@ GU_BeginFrame
 */
 void GU_BeginFrame (float camera_seperation)
 {
-}
-
-/*
-===============
-GU_EndFrame
-
-Responsible for doing a swapbuffers and possibly for other stuff
-as yet to be determined.
-===============
-*/
-void GU_EndFrame (void)
-{
 	static int v_count = 0, v_count_last = 0;
 
-	// finish rendering.
-	sceGuFinish ();
+	// wait for previous frame to finish rendering.
 	sceGuSync (GU_SYNC_FINISH, GU_SYNC_WAIT);
 
 	// vsync
@@ -309,6 +293,20 @@ void GU_EndFrame (void)
 
 	// start a new render.
 	sceGuStart (GU_DIRECT, gu_render.list.ptr);
+}
+
+/*
+===============
+GU_EndFrame
+
+Responsible for doing a swapbuffers and possibly for other stuff
+as yet to be determined.
+===============
+*/
+void GU_EndFrame (void)
+{
+	// finish rendering.
+	sceGuFinish ();
 }
 
 /*
