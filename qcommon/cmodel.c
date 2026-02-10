@@ -99,9 +99,13 @@ typedef struct
 	dareaportal_t	*areaportals;
 
 	int				numclusters; // = 1;
+	int				visrowbytes;
 
 	int				floodvalid;
 	int				checkcount;
+
+	int				lastpvscluster;
+	int				lastphscluster;
 
 	byte			portalopen[MAX_MAP_AREAPORTALS];
 } clipMap_t;
@@ -317,6 +321,8 @@ void CMod_LoadLeafs (lump_t *l)
 		if (out->cluster >= cm.numclusters)
 			cm.numclusters = out->cluster + 1;
 	}
+
+	cm.visrowbytes = (cm.numclusters + 7) >> 3;
 
 	if (cm.leafs[0].contents != CONTENTS_SOLID)
 		Com_Error (ERR_DROP, "Map leaf 0 is not CONTENTS_SOLID");
@@ -587,10 +593,14 @@ cmodel_t *CM_LoadMap (char *name, qboolean clientload, unsigned *checksum)
 	// free old stuff
 	memset (&cm, 0, sizeof(cm));
 
+	cm.lastpvscluster = -2;
+	cm.lastphscluster = -2;
+
 	if (!name || !name[0])
 	{
 		cm.numleafs = 1;
 		cm.numclusters = 1;
+		cm.visrowbytes = 1;
 		cm.numareas = 1;
 		*checksum = 0;
 		cm.cmodels = Hunk_Alloc (sizeof(*cm.cmodels)); // dummy
@@ -1581,62 +1591,78 @@ CM_DecompressVis
 */
 void CM_DecompressVis (byte *in, byte *out)
 {
-	int		c;
-	byte	*out_p;
-	int		row;
+	int			c;
+	int			row;
+	byte		in_val;
+	byte		*out_p;
+	const byte	*out_end;
 
-	row = (cm.numclusters+7)>>3;
+	row = cm.visrowbytes;
 	out_p = out;
+	out_end = out + row;
 
 	if (!in)
-	{	// no vis info, so make all visible
-		while (row)
-		{
-			*out_p++ = 0xff;
-			row--;
-		}
+	{
+		// no vis info, so make all visible
+		memset (out, 0xff, row);
 		return;
 	}
 
-	do
+	while (out_p < out_end)
 	{
-		if (*in)
+		in_val = *in++;
+		if (in_val)
 		{
-			*out_p++ = *in++;
+			*out_p++ = in_val;
 			continue;
 		}
-
-		c = in[1];
-		in += 2;
-		if ((out_p - out) + c > row)
+		else
 		{
-			c = row - (out_p - out);
-			Com_DPrintf ("warning: Vis decompression overrun\n");
+			c = *in++;
+			if (out_p + c > out_end)
+			{
+				c = out_end - out_p;
+				Com_DPrintf ("warning: Vis decompression overrun\n");
+			}
+			if (c > 0)
+			{
+				memset (out_p, 0, c);
+				out_p += c;
+			}
 		}
-		while (c)
-		{
-			*out_p++ = 0;
-			c--;
-		}
-	} while (out_p - out < row);
+	}
 }
 
+#ifdef __psp__
+byte	pvsrow[MAX_MAP_LEAFS/8] __attribute__ ((aligned (16)));
+byte	phsrow[MAX_MAP_LEAFS/8] __attribute__ ((aligned (16)));
+#else
 byte	pvsrow[MAX_MAP_LEAFS/8];
 byte	phsrow[MAX_MAP_LEAFS/8];
+#endif
 
 byte	*CM_ClusterPVS (int cluster)
 {
+	if (cluster == cm.lastpvscluster && cluster != -1)
+		return pvsrow;
+	cm.lastpvscluster = cluster;
+
 	if (cluster == -1 || !cm.vis)
-		memset (pvsrow, 0, (cm.numclusters+7)>>3);
+		memset (pvsrow, 0, cm.visrowbytes);
 	else
 		CM_DecompressVis ((byte*)cm.vis + cm.vis->bitofs[cluster][DVIS_PVS], pvsrow);
+
 	return pvsrow;
 }
 
 byte	*CM_ClusterPHS (int cluster)
 {
+	if (cluster == cm.lastphscluster && cluster != -1)
+		return phsrow;
+	cm.lastphscluster = cluster;
+
 	if (cluster == -1 || !cm.vis)
-		memset (phsrow, 0, (cm.numclusters+7)>>3);
+		memset (phsrow, 0, cm.visrowbytes);
 	else
 		CM_DecompressVis ((byte*)cm.vis + cm.vis->bitofs[cluster][DVIS_PHS], phsrow);
 	return phsrow;
