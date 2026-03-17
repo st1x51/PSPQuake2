@@ -365,16 +365,26 @@ float CalcFov (float fov_x, float width, float height)
 	float	a;
 	float	x;
 
-	if (fov_x < 1 || fov_x > 179)
-		Com_Error (ERR_DROP, "Bad fov: %f", fov_x);
+	static float last_fov_x = -1.0f;
+	static float last_width = -1.0f;
+	static float last_height = -1.0f;
+	static float last_result = 0.0f;
 
-	x = width/tan(fov_x/360*M_PI);
+	if (fov_x != last_fov_x || width != last_width || height != last_height)
+	{
+		if (fov_x < 1.0f || fov_x > 179.0f)
+			Com_Error (ERR_DROP, "Bad fov: %f", fov_x);
 
-	a = atan (height/x);
+		x = width/tan(fov_x / 360.0f * M_PI);
 
-	a = a*360/M_PI;
+		last_result = atan (height / x);
+		last_result *= 360.0f / M_PI;
 
-	return a;
+		last_fov_x = fov_x;
+		last_width = width;
+		last_height = height;
+	}
+	return last_result;
 }
 
 //============================================================================
