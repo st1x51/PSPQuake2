@@ -34,6 +34,9 @@ msurface_t	*r_alpha_surfaces;
 #define	BLOCK_WIDTH		128
 #define	BLOCK_HEIGHT	128
 
+#define BLOCK_WIDTH_16_INV	(1.0f / (BLOCK_WIDTH * 16.0f))
+#define BLOCK_HEIGHT_16_INV	(1.0f / (BLOCK_HEIGHT * 16.0f))
+
 int		c_visible_lightmaps;
 int		c_visible_textures;
 
@@ -249,19 +252,16 @@ void R_DrawTriangleOutlines (void)
 void DrawGLPolyChain( msurface_t *fa, float soffset, float toffset )
 {
 	glpoly_t	*p;
+	float		scls, sclt, offs, offt;
 
 	// scale to lightmap coordinates
-	float w = (float)fa->texinfo->image->width;
-	float h = (float)fa->texinfo->image->height;
-	float scaleS = w / (BLOCK_WIDTH * 16.0f);
-	float scaleT = h / (BLOCK_HEIGHT * 16.0f);
-	float baseOffS = (-fa->texturemins[0] + fa->light_s * 16.0f + 8.0f) / w;
-	float baseOffT = (-fa->texturemins[1] + fa->light_t * 16.0f + 8.0f) / h;
-	float finalOffS = (baseOffS * scaleS) - soffset;
-	float finalOffT = (baseOffT * scaleT) - toffset;
+	scls = (float)fa->texinfo->image->width * BLOCK_WIDTH_16_INV;
+	sclt = (float)fa->texinfo->image->height * BLOCK_HEIGHT_16_INV;
+	offs = ((-fa->texturemins[0] + (fa->light_s << 4) + 8.0f) * BLOCK_WIDTH_16_INV) - soffset;
+	offt = ((-fa->texturemins[1] + (fa->light_t << 4) + 8.0f) * BLOCK_HEIGHT_16_INV) - toffset;
 
-	sceGuTexScale(scaleS, scaleT);
-	sceGuTexOffset(finalOffS, finalOffT);
+	sceGuTexScale (scls, sclt);
+	sceGuTexOffset (offs, offt);
 
 	for (p = fa->polys; p != 0; p = p->chain)
 	{
