@@ -20,19 +20,27 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 */
 // gu_warp.c -- sky and water polygons
 
+#include <malloc.h>
 #include "gu_local.h"
 
 extern	model_t	*loadmodel;
 extern	char	loadname[32];	// for hunk tags
 
+#define	SKY_DIV		4 // 4x4
+#define	SKY_S_STEP	(2.0f / (float)SKY_DIV)
+#define	SKY_T_STEP	(2.0f / (float)SKY_DIV)
+
 typedef struct
 {
-	char	name[MAX_QPATH];
-	float	rotate;
-	vec3_t	axis;
-	image_t	*images[6];
-	float	mins[2][6], maxs[2][6];
-	float	min, max;
+	char			name[MAX_QPATH];
+	float			rotate;
+	vec3_t			axis;
+	image_t			*images[6];
+	float			mins[2][6], maxs[2][6];
+	float			min, max;
+#ifdef USE_CACHED_SKY
+	gu_vert_ftv_t	*verts;
+#endif
 } skybox_t;
 static skybox_t skybox;
 
@@ -234,10 +242,10 @@ EmitWaterPolys
 Does a water warp on the pre-fragmented glpoly_t chain
 =============
 */
-#if USE_FAST_WATER
+#ifdef USE_FAST_WATER
 void EmitWaterPolys (msurface_t *fa)
 {
-	glpoly_t		*p, *bp;
+	glpoly_t		*p;
 	int				i;
 	float			s, t, os, ot;
 	float			scroll;
@@ -245,16 +253,14 @@ void EmitWaterPolys (msurface_t *fa)
 	float			scale = 1.0f / 64.0f;
 
 	if (fa->texinfo->flags & SURF_FLOWING)
-		scroll = -64 * ( (r_newrefdef.time*0.5) - (int)(r_newrefdef.time*0.5) );
+		scroll = -64 * ((rdt * 0.5f) - (int)(rdt * 0.5f));
 	else
 		scroll = 0;
 
 	sceGuTexScale(scale, scale);
 
-	for (bp=fa->polys ; bp ; bp=bp->next)
+	for (p = fa->polys; p; p = p->next)
 	{
-		p = bp;
-
 		os = (r_turbsin[(int)(rdt * TURBSCALE) & 255] + scroll) * scale;
 		ot = (r_turbsin[(int)(rdt * TURBSCALE * 0.5f) & 255]) * scale;
 
@@ -267,10 +273,7 @@ void EmitWaterPolys (msurface_t *fa)
 			GU_Clip(&p->verts[0], p->numverts, &cv, &cvc);
 			if (cvc) sceGuDrawArray (GU_TRIANGLE_FAN, GU_TEXTURE_32BITF | GU_VERTEX_32BITF, cvc, 0, cv);
 		}
-		else
-		{
-			sceGuDrawArray (GU_TRIANGLE_FAN, GU_TEXTURE_32BITF | GU_VERTEX_32BITF, p->numverts, 0, &p->verts[0]);
-		}
+		else sceGuDrawArray (GU_TRIANGLE_FAN, GU_TEXTURE_32BITF | GU_VERTEX_32BITF, p->numverts, 0, &p->verts[0]);
 	}
 	sceGuTexOffset (0.0f, 0.0f);
 	sceGuTexScale (1.0f, 1.0f);
@@ -278,35 +281,30 @@ void EmitWaterPolys (msurface_t *fa)
 #else
 void EmitWaterPolys (msurface_t *fa)
 {
-	glpoly_t		*p, *bp;
+	glpoly_t		*p;
 	int				i;
-	float			s, t, os, ot;
+	float			os, ot;
 	float			scroll;
 	float			rdt = r_newrefdef.time;
+	float			scale = 1.0f / 64.0f;
 
 	if (fa->texinfo->flags & SURF_FLOWING)
-		scroll = -64 * ( (r_newrefdef.time*0.5) - (int)(r_newrefdef.time*0.5) );
+		scroll = -64 * ((rdt * 0.5f) - (int)(rdt * 0.5f));
 	else
 		scroll = 0;
-	for (bp=fa->polys ; bp ; bp=bp->next)
-	{
-		p = bp;
 
+	sceGuTexScale (scale, scale);
+	sceGuTexOffset (scroll * scale, 0.0f);
+
+	for (p = fa->polys;p ; p = p->next)
+	{
 		gu_vert_ftv_t* const out = (gu_vert_ftv_t*)sceGuGetMemory (sizeof(gu_vert_ftv_t) * p->numverts);
 		for (i = 0; i < p->numverts; i++)
 		{
 			os = p->verts[i].u;
 			ot = p->verts[i].v;
-
-			s = os + r_turbsin[(int)((ot*0.125+r_newrefdef.time) * TURBSCALE) & 255];
-			s += scroll;
-			s *= (1.0/64);
-
-			t = ot + r_turbsin[(int)((os*0.125+rdt) * TURBSCALE) & 255];
-			t *= (1.0/64);
-
-			out[i].u = s;
-			out[i].v = t;
+			out[i].u = os + r_turbsin[(int)((ot * 0.125f + rdt) * TURBSCALE) & 255];
+			out[i].v = ot + r_turbsin[(int)((os * 0.125f + rdt) * TURBSCALE) & 255];
 			VectorCopy (p->verts[i].xyz, out[i].xyz);
 		}
 		if (GU_ClipIsRequired (out, p->numverts))
@@ -320,7 +318,7 @@ void EmitWaterPolys (msurface_t *fa)
 			sceGuDisable (GU_TEXTURE_2D);
 			sceGuColor (0xff00ff00);
 #endif
-			if (cvc) sceGuDrawArray( GU_TRIANGLE_FAN, GU_TEXTURE_32BITF | GU_VERTEX_32BITF, cvc, 0, cv );
+			if (cvc) sceGuDrawArray (GU_TRIANGLE_FAN, GU_TEXTURE_32BITF | GU_VERTEX_32BITF, cvc, 0, cv);
 #if CLIPPING_DEBUGGING
 			sceGuEnable (GU_TEXTURE_2D);
 			sceGuColor (GU_HCOLOR_DEFAULT);
@@ -328,9 +326,11 @@ void EmitWaterPolys (msurface_t *fa)
 		}
 		else sceGuDrawArray (GU_TRIANGLE_FAN, GU_TEXTURE_32BITF | GU_VERTEX_32BITF, p->numverts, 0, out);
 	}
+
+	sceGuTexOffset (0.0f, 0.0f);
+	sceGuTexScale (1.0f, 1.0f);
 }
 #endif
-
 
 //===================================================================
 
@@ -418,11 +418,10 @@ void DrawSkyPolygon (int nump, vec3_t vecs)
 		j = vec_to_st[axis][1];
 		t = (j < 0) ? -vecs[-j -1] / dv : vecs[j-1] / dv;
 
-
-		if (s < skybox.mins[0][axis]) skybox.mins[0][axis] = s;
-		if (t < skybox.mins[1][axis]) skybox.mins[1][axis] = t;
-		if (s > skybox.maxs[0][axis]) skybox.maxs[0][axis] = s;
-		if (t > skybox.maxs[1][axis]) skybox.maxs[1][axis] = t;
+		skybox.mins[0][axis] = Q_min(skybox.mins[0][axis], s);
+		skybox.mins[1][axis] = Q_min(skybox.mins[1][axis], t);
+		skybox.maxs[0][axis] = Q_max(skybox.maxs[0][axis], s);
+		skybox.maxs[1][axis] = Q_max(skybox.maxs[1][axis], t);
 	}
 }
 
@@ -559,44 +558,115 @@ void R_ClearSkyBox (void)
 	}
 }
 
-
 static inline void MakeSkyVec (float s, float t, int axis, gu_vert_ftv_t *out)
 {
 	vec3_t		b;
 	int			j, k;
 
-	b[0] = s*2300;
-	b[1] = t*2300;
-	b[2] = 2300;
+	b[0] = s * 2300.0f;
+	b[1] = t * 2300.0f;
+	b[2] = 2300.0f;
 
-	for (j=0 ; j<3 ; j++)
+	for (j = 0; j < 3; j++)
 	{
 		k = st_to_vec[axis][j];
 		out->xyz[j] = (k < 0) ? -b[-k - 1] : b[k - 1];
 	}
 
-	if(!skybox.rotate)
+#ifndef USE_CACHED_SKY
+	if (!skybox.rotate)
 		VectorAdd(out->xyz, r_origin, out->xyz);
+#endif
 
 	// avoid bilerp seam
-	s = (s+1)*0.5;
-	t = (t+1)*0.5;
+	s = (s + 1.0f) * 0.5f;
+	t = (t + 1.0f) * 0.5f;
 
-	if (s < skybox.min)
-		s = skybox.min;
-	else if (s > skybox.max)
-		s = skybox.max;
-	if (t < skybox.min)
-		t = skybox.min;
-	else if (t > skybox.max)
-		t = skybox.max;
-
-	t = 1.0 - t;
+	s = Q_bound(skybox.min, s, skybox.max);
+	t = Q_bound(skybox.min, t, skybox.max);
 
 	out->u = s;
-	out->v = t;
+	out->v = 1.0 - t;
 }
 
+#ifdef USE_CACHED_SKY
+/*
+==============
+R_BuildSkyBoxVertices
+==============
+*/
+static void R_BuildSkyBoxVertices (void)
+{
+	int				i, sy, sx;
+	float			s, t;
+	gu_vert_ftv_t	*v;
+	size_t			verts_size;
+
+	verts_size = 6 * SKY_DIV * SKY_DIV * 4 * sizeof(gu_vert_ftv_t);
+
+	skybox.verts = memalign (16, verts_size);
+	if (!skybox.verts)
+		ri.Sys_Error(ERR_FATAL, "No enough space for skybox vertices!");
+
+	for (i = 0; i < 6; i++)
+	{
+		for (sy = 0; sy < SKY_DIV; sy++)
+		{
+			t = -1.0f + (sy * SKY_T_STEP);
+			for (sx = 0; sx < SKY_DIV; sx++)
+			{
+				s = -1.0f + (sx * SKY_S_STEP);
+
+				v = &skybox.verts[(i * SKY_DIV * SKY_DIV * 4) + ((sy * SKY_DIV + sx) * 4)];
+				MakeSkyVec( s,              t,              i, &v[0]);
+				MakeSkyVec( s,              t + SKY_T_STEP, i, &v[1]);
+				MakeSkyVec( s + SKY_S_STEP, t + SKY_T_STEP, i, &v[2]);
+				MakeSkyVec( s + SKY_S_STEP, t,              i, &v[3]);
+			}
+		}
+	}
+	sceKernelDcacheWritebackRange (skybox.verts, verts_size);
+}
+
+/*
+==============
+R_DrawSkyBox
+==============
+*/
+int	skytexorder[6] = {0,2,1,3,4,5};
+void R_DrawSkyBox (void)
+{
+	int	i;
+
+	if (!skybox.verts)
+		return;
+
+	sceGumPushMatrix ();
+	sceGumTranslate ((ScePspFVector3*)&r_origin);
+
+	if (skybox.rotate)
+	{
+		if (skybox.axis[0]) sceGumRotateX (r_newrefdef.time * skybox.rotate * (GU_PI / 180.0f));
+		if (skybox.axis[1]) sceGumRotateY (r_newrefdef.time * skybox.rotate * (GU_PI / 180.0f));
+		if (skybox.axis[2]) sceGumRotateZ (r_newrefdef.time * skybox.rotate * (GU_PI / 180.0f));
+	}
+
+	sceGumUpdateMatrix ();
+
+	for (i = 0; i < 6; i++)
+	{
+		if (!skybox.rotate && (skybox.mins[0][i] >= skybox.maxs[0][i] || skybox.mins[1][i] >= skybox.maxs[1][i]))
+			continue;
+
+		GL_Bind (skybox.images[skytexorder[i]]);
+
+		sceGuDrawArrayN (GU_TRIANGLE_FAN, GU_TEXTURE_32BITF | GU_VERTEX_32BITF | GU_TRANSFORM_3D, 
+			4, SKY_DIV * SKY_DIV, NULL, &skybox.verts[i * SKY_DIV * SKY_DIV * 4]);
+	}
+
+	sceGumPopMatrix ();
+}
+#else
 /*
 ==============
 R_DrawSkyBox
@@ -696,6 +766,7 @@ void R_DrawSkyBox (void)
 	glEnable (GL_DEPTH_TEST);
 #endif
 }
+#endif
 
 /*
 ============
@@ -713,6 +784,11 @@ void R_PurgeSkybox (void)
 			continue;
 		GL_FreeImage (skybox.images[i]);
 	}
+
+#ifdef USE_CACHED_SKY
+	if (skybox.verts)
+		free (skybox.verts);
+#endif
 
 	memset(&skybox, 0, sizeof(skybox));
 }
@@ -776,4 +852,7 @@ void R_SetSky (char *name, float rotate, vec3_t axis)
 		skybox.min = 1.0/512;
 		skybox.max = 511.0/512;
 	}
+#ifdef USE_CACHED_SKY
+	R_BuildSkyBoxVertices ();
+#endif
 }

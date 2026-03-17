@@ -154,6 +154,7 @@ extern vec3_t vec3_origin;
 #define Q_min(a, b)	(((a) < (b)) ? (a) : (b))
 #define Q_max(a, b)	(((a) > (b)) ? (a) : (b))
 #define Q_max3(a, b, c) (((a) > (b)) ? (((a) > (c)) ? (a) : (c)) : (((b) > (c)) ? (b) : (c)))
+#define Q_bound(a, b, c) (Q_max(a, Q_min(b, c)))
 
 #define	nanmask (255<<23)
 
