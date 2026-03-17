@@ -1269,6 +1269,8 @@ qboolean GL_UploadScrap (image_t *image, byte *pic, int width, int height)
 	image->sh = x + image->width;
 	image->th = y + image->height;
 
+	sceKernelDcacheWritebackRange (image->data, BLOCK_WIDTH * BLOCK_HEIGHT);
+
 	return true;
 }
 
