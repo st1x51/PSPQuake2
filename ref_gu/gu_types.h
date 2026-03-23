@@ -144,6 +144,44 @@ typedef struct
 
 	union
 	{
+		float nxyz[3];
+
+		struct
+		{
+			float nx;
+			float ny;
+			float nz;
+		};
+	};
+
+	union
+	{
+		float xyz[3];
+
+		struct
+		{
+			float x;
+			float y;
+			float z;
+		};
+	};
+} gu_vert_ftnv_t;
+
+typedef struct
+{
+	union
+	{
+		float uv[2];
+
+		struct
+		{
+			float u;
+			float v;
+		};
+	};
+
+	union
+	{
 		unsigned int c;
 		unsigned char rgba[4];
 

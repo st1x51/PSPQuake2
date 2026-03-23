@@ -127,6 +127,7 @@ typedef struct image_s
 	size_t		size;
 	byte		bpp;
 
+	unsigned int	pkt[6];
 #ifdef USE_HASH_FOR_TEXTURES
 	uint		hashkey;
 	struct image_s		*nexthash;
@@ -137,6 +138,7 @@ typedef struct image_s
 #define	MAX_GLTEXTURES		1024
 #define	MAX_GLTEXTURES_HASH	(MAX_GLTEXTURES >> 2)
 #define	MAX_LIGHTMAPS		128
+#define	MAX_VLIGHTS			3
 //===================================================================
 
 typedef enum
@@ -241,6 +243,8 @@ void GL_Bind (image_t *image);
 void GL_TexEnv (int mode);
 
 void R_LightPoint (vec3_t p, vec3_t color);
+void R_GetWorldLight (vec3_t p, vec3_t color);
+void R_GetBestDynamicLights (float *origin, dlight_t **lights, int *count);
 void R_PushDlights (void);
 
 //====================================================================

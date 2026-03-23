@@ -32,20 +32,14 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 
 #define NUMVERTEXNORMALS	162
 
+extern	vec3_t	lightspot;
+
 float	r_avertexnormals[NUMVERTEXNORMALS][3] = {
 #include "anorms.h"
 };
 
 static vec4_t	s_lerped[MAX_VERTS];
 static vec4_t	shadelight;
-
-// precalculated dot products for quantized angles
-#define SHADEDOT_QUANT 16
-float	r_avertexnormal_dots[SHADEDOT_QUANT][256] =
-#include "anormtab.h"
-;
-
-float	*shadedots = r_avertexnormal_dots[0];
 
 #if 1
 static inline void GL_LerpVerts( int nverts, dtrivertx_t *v, dtrivertx_t *ov, dtrivertx_t *verts, float *lerp, float move[3], float frontv[3], float backv[3] )
@@ -88,8 +82,8 @@ static inline void GL_LerpVerts( int nverts, dtrivertx_t *v, dtrivertx_t *ov, dt
 				".set		noreorder\n"			// suppress reordering
 				"lv.s		S000, 0 + %1\n"			// ov->v[3] and ov->lightnormalindex
 				"lv.s		S002, 0 + %2\n"			// v->v[3] and ov->lightnormalindex
-				".word		0xD03880A4\n"			// vuc2i.s	R100, C000 !!!
-				".word		0xD03840A5\n"			// vuc2i.s	R101, C002 !!!
+				".word		0xD03880A4\n"			// vuc2i.s	R100, S000 !!!
+				".word		0xD03840A5\n"			// vuc2i.s	R101, S002 !!!
 				"vi2f.t		R100, R100, 23\n"		// R100 = float(R100)
 				"vi2f.t		R101, R101, 23\n"		// R101 = float(R101)
 				"lv.s		S102, 0 + %3\n"			// S102 = normal[0]
@@ -167,18 +161,18 @@ void GL_DrawAliasFrameLerp (dmdl_t *paliashdr, float backlerp)
 {
 	float 	l;
 	daliasframe_t	*frame, *oldframe;
-	dtrivertx_t	*v, *ov, *verts;
+	dtrivertx_t		*v, *ov, *verts;
 	int		*order;
 	int		count;
 	float	frontlerp;
 	float	alpha;
+	float	*norm;
 	vec3_t	move, delta, vectors[3];
 	vec3_t	frontv, backv;
 	int		i;
 	int		index_xyz;
 	float	*lerp;
 	int		prim;
-	int		index;
 
 	frame = (daliasframe_t *)((byte *)paliashdr + paliashdr->ofs_frames
 		+ currententity->frame * paliashdr->framesize);
@@ -190,20 +184,10 @@ void GL_DrawAliasFrameLerp (dmdl_t *paliashdr, float backlerp)
 
 	order = (int *)((byte *)paliashdr + paliashdr->ofs_glcmds);
 
-//	glTranslatef (frame->translate[0], frame->translate[1], frame->translate[2]);
-//	glScalef (frame->scale[0], frame->scale[1], frame->scale[2]);
-
 	if (currententity->flags & RF_TRANSLUCENT)
 		alpha = currententity->alpha;
 	else
 		alpha = 1.0;
-
-	// PMM - added double shell
-	if (currententity->flags & ( RF_SHELL_RED | RF_SHELL_GREEN | RF_SHELL_BLUE | RF_SHELL_DOUBLE | RF_SHELL_HALF_DAM))
-	{
-		sceGuDisable (GU_TEXTURE_2D);
-		sceGuColor (GU_HCOLOR_C4F (shadelight[0], shadelight[1], shadelight[2], alpha));
-	}
 
 	frontlerp = 1.0 - backlerp;
 
@@ -232,92 +216,78 @@ void GL_DrawAliasFrameLerp (dmdl_t *paliashdr, float backlerp)
 
 	GL_LerpVerts( paliashdr->num_xyz, v, ov, verts, lerp, move, frontv, backv );
 
-	if (!(currententity->flags & ( RF_SHELL_RED | RF_SHELL_GREEN | RF_SHELL_BLUE)))
+	// PMM - added double shell
+	if (currententity->flags & ( RF_SHELL_RED | RF_SHELL_GREEN | RF_SHELL_BLUE | RF_SHELL_DOUBLE | RF_SHELL_HALF_DAM))
 	{
-		__asm__ volatile (
-			".set		push\n"					// save assembler option
-			".set		noreorder\n"			// suppress reordering
-			"lv.q		C100,  %0\n"			// C100 = shadelight
-			"mfc1		$8, %1\n"				// FPU->CPU
-			"mtv		$8, S003\n"				// CPU->VFPU S003 = alpha
-			"viim.s		S010, 255\n"			// S103 = 255.0f
-			".set		pop\n"					// restore assembler option
-			:: "m"(*shadelight), "f"(alpha)
-			:	"$8"
-		);
-	}
+		sceGuDisable (GU_TEXTURE_2D);
+		sceGuColor (GU_HCOLOR_C4F (shadelight[0], shadelight[1], shadelight[2], alpha));
 
-	while (1)
-	{
-		// get the vertex count and primitive type
-		count = *order++;
-		if (!count)
-			break;		// done
-		if (count < 0)
+		while (1)
 		{
-			count = -count;
-			prim = GU_TRIANGLE_FAN;
-		}
-		else
-		{
-			prim = GU_TRIANGLE_STRIP;
-		}
+			// get the vertex count and primitive type
+			count = *order++;
+			if (!count)
+				break;		// done
+			if (count < 0)
+			{
+				count = -count;
+				prim = GU_TRIANGLE_FAN;
+			}
+			else
+			{
+				prim = GU_TRIANGLE_STRIP;
+			}
 
-		if (currententity->flags & ( RF_SHELL_RED | RF_SHELL_GREEN | RF_SHELL_BLUE))
-		{
 			gu_vert_fv_t* const out = (gu_vert_fv_t*)sceGuGetMemory (sizeof(gu_vert_fv_t) * count);
-			for (i = 0; i < count; i++)
+			gu_vert_fv_t* out_ptr = out;
+			for (i = 0; i < count; i++, order += 3, out_ptr++)
 			{
 				index_xyz = order[2];
-				order += 3;
-
-				VectorCopy (s_lerped[index_xyz], out[i].xyz);
+				VectorCopy (s_lerped[index_xyz], out_ptr->xyz);
 			}
 			sceGuDrawArray (prim, GU_VERTEX_32BITF, count, 0, out);
 		}
-		else
-		{
-			gu_vert_ftcv_t* const out = (gu_vert_ftcv_t*)sceGuGetMemory (sizeof(gu_vert_ftcv_t) * count);
-			for (i = 0; i < count; i++)
-			{
-				// texture coordinates come from the draw list
-				out[i].u = ((float *)order)[0];
-				out[i].v = ((float *)order)[1];
 
-				index_xyz = order[2];
-				order += 3;
-
-				// normals and vertexes come from the frame list
-				l = shadedots[verts[index_xyz].lightnormalindex];
-
-				// color
-				__asm__ volatile (
-					".set		push\n"					// save assembler option
-					"lv.s		S011, %1\n"				// S010 = shadedots[verts[index_xyz].lightnormalindex]
-					"vscl.t		C000, C100, S011\n"		// C000 = l*shadelight[0], l*shadelight[1], l*shadelight[2]
-					"vsat0.q	C000, C000\n"			// C000 = saturation to [0:1](C000)
-					"vscl.q		C000, C000, S010\n"		// C000 = C000 * 255.0f
-					"vf2iz.q	C000, C000, 23\n"		// C000 = C000 * 2^23
-					"vi2uc.q	S000, C000\n"			// S000 = ((S003>>23)<<24) | ((S002>>23)<<16) | ((S001>>23)<<8) | (S000>>23)
-					"sv.s		S000, %0\n"				// out[i].c = S000
-					".set		pop\n"					// restore assembler option
-					:	"=m"(out[i].c)
-					:	"m"(shadedots[verts[index_xyz].lightnormalindex])
-				);
-
-				// vert
-				VectorCopy (s_lerped[index_xyz], out[i].xyz);
-			}
-			sceGuDrawArray (prim, GU_TEXTURE_32BITF | GU_COLOR_8888 | GU_VERTEX_32BITF, count, 0, out);
-		}
-	}
-
-//	if ( currententity->flags & ( RF_SHELL_RED | RF_SHELL_GREEN | RF_SHELL_BLUE ) )
-	// PMM - added double damage shell
-	if (currententity->flags & ( RF_SHELL_RED | RF_SHELL_GREEN | RF_SHELL_BLUE | RF_SHELL_DOUBLE | RF_SHELL_HALF_DAM))
-	{
 		sceGuColor (GU_HCOLOR_DEFAULT);
 		sceGuEnable (GU_TEXTURE_2D);
+	}
+	else
+	{
+		while (1)
+		{
+			// get the vertex count and primitive type
+			count = *order++;
+			if (!count)
+				break;		// done
+			if (count < 0)
+			{
+				count = -count;
+				prim = GU_TRIANGLE_FAN;
+			}
+			else
+			{
+				prim = GU_TRIANGLE_STRIP;
+			}
+
+			gu_vert_ftnv_t* const out = (gu_vert_ftnv_t*)sceGuGetMemory (sizeof(gu_vert_ftnv_t) * count);
+			gu_vert_ftnv_t* out_ptr = out;
+			for (i = 0; i < count; i++, order += 3, out_ptr++)
+			{
+				index_xyz = order[2];
+
+				// texture coordinates come from the draw list
+				out_ptr->u = ((float *)order)[0];
+				out_ptr->v = ((float *)order)[1];
+
+				// normals
+				norm = r_avertexnormals[verts[index_xyz].lightnormalindex];
+				VectorCopy (norm, out_ptr->nxyz);
+
+				// vert
+				VectorCopy (s_lerped[index_xyz], out_ptr->xyz);
+			}
+			sceGuDrawArray (prim, GU_TEXTURE_32BITF | GU_NORMAL_32BITF | GU_VERTEX_32BITF, count, 0, out);
+		}
 	}
 }
 
@@ -328,8 +298,6 @@ void GL_DrawAliasFrameLerp (dmdl_t *paliashdr, float backlerp)
 GL_DrawAliasShadow
 =============
 */
-extern	vec3_t			lightspot;
-
 void GL_DrawAliasShadow (dmdl_t *paliashdr, int posenum)
 {
 	dtrivertx_t	*verts;
@@ -548,6 +516,180 @@ static qboolean R_CullAliasModel( vec3_t bbox[8], entity_t *e )
 }
 
 /*
+=============
+R_SetupAliasLighting
+=============
+*/
+static qboolean R_SetupAliasLighting (void)
+{
+	dlight_t	*best_dls[MAX_VLIGHTS];
+	int			i, num_dls;
+	float		r, g, b;
+
+	ScePspFVector3	sun_dir = { -0.5f, 0.8f, 0.5f };
+	qboolean		flat_light = currententity->flags & ( RF_SHELL_HALF_DAM | RF_SHELL_GREEN | RF_SHELL_RED | RF_SHELL_BLUE | RF_SHELL_DOUBLE | RF_FULLBRIGHT );
+
+
+	if ( flat_light )
+	{
+		if ( currententity->flags & RF_FULLBRIGHT )
+		{
+			VectorSet (shadelight, 1.0f, 1.0f, 1.0f);
+		}
+		else
+		{
+			VectorClear (shadelight);
+			if (currententity->flags & RF_SHELL_HALF_DAM)
+			{
+					shadelight[0] = 0.56;
+					shadelight[1] = 0.59;
+					shadelight[2] = 0.45;
+			}
+			if ( currententity->flags & RF_SHELL_DOUBLE )
+			{
+				shadelight[0] = 0.9;
+				shadelight[1] = 0.7;
+			}
+			if ( currententity->flags & RF_SHELL_RED )
+				shadelight[0] = 1.0;
+			if ( currententity->flags & RF_SHELL_GREEN )
+				shadelight[1] = 1.0;
+			if ( currententity->flags & RF_SHELL_BLUE )
+				shadelight[2] = 1.0;
+		}
+	}
+	else
+	{
+		R_GetWorldLight (currententity->origin, shadelight);
+
+		sun_dir.x = lightspot[0];
+		sun_dir.y = lightspot[1];
+		sun_dir.z = lightspot[2];
+
+		// player lighting hack for communication back to server
+		// big hack!
+		if ( currententity->flags & RF_WEAPONMODEL )
+		{
+			// pick the greatest component, which should be the same
+			// as the mono value returned by software
+			if (shadelight[0] > shadelight[1])
+			{
+				if (shadelight[0] > shadelight[2])
+					r_lightlevel->value = 150.0f * shadelight[0];
+				else
+					r_lightlevel->value = 150.0f * shadelight[2];
+			}
+			else
+			{
+				if (shadelight[1] > shadelight[2])
+					r_lightlevel->value = 150.0f * shadelight[1];
+				else
+					r_lightlevel->value = 150.0f * shadelight[2];
+			}
+
+		}
+
+		if ( gl_monolightmap->string[0] != '0' )
+		{
+			float s = Q_max3(shadelight[0], shadelight[1], shadelight[2]);
+			shadelight[0] = s;
+			shadelight[1] = s;
+			shadelight[2] = s;
+		}
+	}
+
+
+	// PGM	ir goggles color override
+	if ( r_newrefdef.rdflags & RDF_IRGOGGLES && currententity->flags & RF_IR_VISIBLE)
+	{
+		shadelight[0] = 1.0;
+		shadelight[1] = 0.0;
+		shadelight[2] = 0.0;
+	}
+	else
+	{
+		if ( currententity->flags & RF_MINLIGHT )
+		{
+			for (i = 0; i < 3; i++)
+			{
+				if (shadelight[i] > 0.1)
+					break;
+			}
+			if (i == 3)
+			{
+				shadelight[0] = 0.1;
+				shadelight[1] = 0.1;
+				shadelight[2] = 0.1;
+			}
+		}
+
+		if ( currententity->flags & RF_GLOW )
+		{	// bonus items will pulse with time
+			float	scale;
+			float	min;
+
+			scale = 0.1f * sinf (r_newrefdef.time * 7);
+			for (i=0; i < 3; i++)
+			{
+				min = shadelight[i] * 0.8;
+				shadelight[i] += scale;
+				if (shadelight[i] < min)
+					shadelight[i] = min;
+			}
+		}
+	}
+
+	if (flat_light)
+		return false;
+
+	sceGuEnable (GU_LIGHTING);
+	sceGuAmbient (GU_HCOLOR_4F(
+		shadelight[0] * 0.5f,
+		shadelight[1] * 0.5f,
+		shadelight[2] * 0.5f,
+		1.0f));
+
+	sceGuEnable (GU_LIGHT0);
+	sceGuLight (0, GU_DIRECTIONAL, GU_DIFFUSE, &sun_dir);
+	sceGuLightColor (0, GU_DIFFUSE, GU_HCOLOR_C4F(
+		shadelight[0],
+		shadelight[1],
+		shadelight[2],
+		1.0f));
+
+	R_GetBestDynamicLights (currententity->origin, best_dls, &num_dls);
+
+	for (i = 0; i < MAX_VLIGHTS; i++)
+	{
+		int slot = i + 1;
+		if (i < num_dls)
+		{
+			sceGuEnable (GU_LIGHT0 + slot);
+
+			r = best_dls[i]->color[0];
+			g = best_dls[i]->color[1];
+			b = best_dls[i]->color[2];
+
+			float intensity = best_dls[i]->intensity;
+			if (intensity <= 0)
+				intensity = 1.0f;
+
+			sceGuLight (slot, GU_POINTLIGHT, GU_DIFFUSE, (const ScePspFVector3 *)best_dls[i]->origin);
+			sceGuLightColor (slot, GU_DIFFUSE, GU_HCOLOR_3F(r, g, b));
+			sceGuLightAtt (slot, 1.0f, 1.0f / intensity, 2.0f / (intensity * intensity));
+		}
+		else
+			sceGuDisable (GU_LIGHT0 + slot);
+
+	}
+
+	sceGuColorMaterial (GU_AMBIENT | GU_DIFFUSE);
+	sceGuModelColor (0xFF404040, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF);
+
+	return true;
+}
+
+/*
 =================
 R_DrawAliasModel
 
@@ -560,6 +702,7 @@ void R_DrawAliasModel (entity_t *e)
 	float		an;
 	vec3_t		bbox[8];
 	image_t		*skin;
+	qboolean	light_en;
 	ScePspFVector3	scale;
 
 	if ( !( e->flags & RF_WEAPONMODEL ) )
@@ -579,183 +722,7 @@ void R_DrawAliasModel (entity_t *e)
 	//
 	// get lighting information
 	//
-	// PMM - rewrote, reordered to handle new shells & mixing
-	// PMM - 3.20 code .. replaced with original way of doing it to keep mod authors happy
-	//
-	if ( currententity->flags & ( RF_SHELL_HALF_DAM | RF_SHELL_GREEN | RF_SHELL_RED | RF_SHELL_BLUE | RF_SHELL_DOUBLE ) )
-	{
-		VectorClear (shadelight);
-		if (currententity->flags & RF_SHELL_HALF_DAM)
-		{
-				shadelight[0] = 0.56;
-				shadelight[1] = 0.59;
-				shadelight[2] = 0.45;
-		}
-		if ( currententity->flags & RF_SHELL_DOUBLE )
-		{
-			shadelight[0] = 0.9;
-			shadelight[1] = 0.7;
-		}
-		if ( currententity->flags & RF_SHELL_RED )
-			shadelight[0] = 1.0;
-		if ( currententity->flags & RF_SHELL_GREEN )
-			shadelight[1] = 1.0;
-		if ( currententity->flags & RF_SHELL_BLUE )
-			shadelight[2] = 1.0;
-	}
-/*
-		// PMM -special case for godmode
-		if ( (currententity->flags & RF_SHELL_RED) &&
-			(currententity->flags & RF_SHELL_BLUE) &&
-			(currententity->flags & RF_SHELL_GREEN) )
-		{
-			for (i=0 ; i<3 ; i++)
-				shadelight[i] = 1.0;
-		}
-		else if ( currententity->flags & ( RF_SHELL_RED | RF_SHELL_BLUE | RF_SHELL_DOUBLE ) )
-		{
-			VectorClear (shadelight);
-
-			if ( currententity->flags & RF_SHELL_RED )
-			{
-				shadelight[0] = 1.0;
-				if (currententity->flags & (RF_SHELL_BLUE|RF_SHELL_DOUBLE) )
-					shadelight[2] = 1.0;
-			}
-			else if ( currententity->flags & RF_SHELL_BLUE )
-			{
-				if ( currententity->flags & RF_SHELL_DOUBLE )
-				{
-					shadelight[1] = 1.0;
-					shadelight[2] = 1.0;
-				}
-				else
-				{
-					shadelight[2] = 1.0;
-				}
-			}
-			else if ( currententity->flags & RF_SHELL_DOUBLE )
-			{
-				shadelight[0] = 0.9;
-				shadelight[1] = 0.7;
-			}
-		}
-		else if ( currententity->flags & ( RF_SHELL_HALF_DAM | RF_SHELL_GREEN ) )
-		{
-			VectorClear (shadelight);
-			// PMM - new colors
-			if ( currententity->flags & RF_SHELL_HALF_DAM )
-			{
-				shadelight[0] = 0.56;
-				shadelight[1] = 0.59;
-				shadelight[2] = 0.45;
-			}
-			if ( currententity->flags & RF_SHELL_GREEN )
-			{
-				shadelight[1] = 1.0;
-			}
-		}
-	}
-			//PMM - ok, now flatten these down to range from 0 to 1.0.
-	//		max_shell_val = max(shadelight[0], max(shadelight[1], shadelight[2]));
-	//		if (max_shell_val > 0)
-	//		{
-	//			for (i=0; i<3; i++)
-	//			{
-	//				shadelight[i] = shadelight[i] / max_shell_val;
-	//			}
-	//		}
-	// pmm
-*/
-	else if ( currententity->flags & RF_FULLBRIGHT )
-	{
-		for (i=0 ; i<3 ; i++)
-			shadelight[i] = 1.0;
-	}
-	else
-	{
-		R_LightPoint (currententity->origin, shadelight);
-
-		// player lighting hack for communication back to server
-		// big hack!
-		if ( currententity->flags & RF_WEAPONMODEL )
-		{
-			// pick the greatest component, which should be the same
-			// as the mono value returned by software
-			if (shadelight[0] > shadelight[1])
-			{
-				if (shadelight[0] > shadelight[2])
-					r_lightlevel->value = 150*shadelight[0];
-				else
-					r_lightlevel->value = 150*shadelight[2];
-			}
-			else
-			{
-				if (shadelight[1] > shadelight[2])
-					r_lightlevel->value = 150*shadelight[1];
-				else
-					r_lightlevel->value = 150*shadelight[2];
-			}
-
-		}
-
-		if ( gl_monolightmap->string[0] != '0' )
-		{
-			float s = shadelight[0];
-
-			if ( s < shadelight[1] )
-				s = shadelight[1];
-			if ( s < shadelight[2] )
-				s = shadelight[2];
-
-			shadelight[0] = s;
-			shadelight[1] = s;
-			shadelight[2] = s;
-		}
-	}
-
-// =================
-// PGM	ir goggles color override
-	if ( r_newrefdef.rdflags & RDF_IRGOGGLES && currententity->flags & RF_IR_VISIBLE)
-	{
-		shadelight[0] = 1.0;
-		shadelight[1] = 0.0;
-		shadelight[2] = 0.0;
-	}
-// PGM
-// =================
-	else
-	{
-		if ( currententity->flags & RF_MINLIGHT )
-		{
-			for (i=0 ; i<3 ; i++)
-				if (shadelight[i] > 0.1)
-					break;
-			if (i == 3)
-			{
-				shadelight[0] = 0.1;
-				shadelight[1] = 0.1;
-				shadelight[2] = 0.1;
-			}
-		}
-
-		if ( currententity->flags & RF_GLOW )
-		{	// bonus items will pulse with time
-			float	scale;
-			float	min;
-
-			scale = 0.1 * sin(r_newrefdef.time*7);
-			for (i=0 ; i<3 ; i++)
-			{
-				min = shadelight[i] * 0.8;
-				shadelight[i] += scale;
-				if (shadelight[i] < min)
-					shadelight[i] = min;
-			}
-		}
-	}
-
-	shadedots = r_avertexnormal_dots[((int)(currententity->angles[1] * (SHADEDOT_QUANT / 360.0))) & (SHADEDOT_QUANT - 1)];
+	light_en = R_SetupAliasLighting ();
 
 	//
 	// locate the proper data
@@ -873,6 +840,8 @@ void R_DrawAliasModel (entity_t *e)
 	if (currententity->flags & RF_DEPTHHACK)
 		sceGuDepthRange (gldepthmin, gldepthmax);
 
+	if (light_en)
+		sceGuDisable (GU_LIGHTING);
 #if 1
 	if (gl_shadows->value && !(currententity->flags & (RF_TRANSLUCENT | RF_WEAPONMODEL)))
 	{

@@ -407,6 +407,101 @@ void R_LightPoint (vec3_t p, vec3_t color)
 	VectorScale (color, gl_modulate->value, color);
 }
 
+/*
+===============
+R_GetWorldLight
+===============
+*/
+void R_GetWorldLight (vec3_t p, vec3_t color)
+{
+	vec3_t		end;
+	float		r;
+
+	if (!r_worldmodel->lightdata)
+	{
+		color[0] = color[1] = color[2] = 1.0;
+		return;
+	}
+
+	end[0] = p[0];
+	end[1] = p[1];
+	end[2] = p[2] - 2048;
+
+	r = RecursiveLightPoint (r_worldmodel->nodes, p, end);
+
+	if (r == -1)
+	{
+		VectorCopy (vec3_origin, color);
+	}
+	else
+	{
+		VectorCopy (pointcolor, color);
+	}
+
+	VectorScale (color, gl_modulate->value, color);
+}
+
+/*
+===============
+R_GetBestDynamicLights
+===============
+*/
+void R_GetBestDynamicLights (float *origin, dlight_t **lights, int *count)
+{
+	int			lnum, i, k;
+	float		minstrength, weakest, dist, r, f;
+	float		lstrength[MAX_VLIGHTS];
+	dlight_t	*el;
+	vec3_t		mid;
+
+	*count = 0;
+	for (i = 0; i < MAX_VLIGHTS; i++)
+	{
+		lstrength[i] = 0.0f;
+		lights[i] = NULL;
+	}
+
+	el = r_newrefdef.dlights;
+	for (lnum = 0; lnum < r_newrefdef.num_dlights; lnum++, el++)
+	{
+		if (el->intensity <= 0)
+			continue;
+
+		VectorSubtract (origin, el->origin, mid);
+		dist = DotProduct (mid, mid);
+		r = el->intensity * el->intensity;
+
+		f = (dist > r) ? (r / dist) : 1.0f;
+
+		if (f > 0.05f)
+		{
+			k = -1;
+			if (*count < MAX_VLIGHTS)
+			{
+				k = *count;
+				(*count)++;
+			}
+			else
+			{
+				weakest = f;
+				for (i = 0; i < MAX_VLIGHTS; i++)
+				{
+					if (lstrength[i] < weakest)
+					{
+						weakest = lstrength[i];
+						k = i;
+					}
+				}
+			}
+
+			if (k != -1)
+			{
+				lights[k] = el;
+				lstrength[k] = f;
+			}
+		}
+	}
+}
 
 //===================================================================
 
