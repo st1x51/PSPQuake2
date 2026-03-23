@@ -104,7 +104,11 @@ void SCR_LoadPCX (char *filename, byte **pic, byte **palette, int *width, int *h
 
 	if(!*pic)
 	{
+#if __psp__
+		*pic = memalign ( 16, (pcx->ymax+1) * (pcx->xmax+1) );
+#else
 		*pic = malloc ( (pcx->ymax+1) * (pcx->xmax+1) );
+#endif
 		if(!*pic)
 			Com_Error (ERR_DROP, "LoadPCX: not enough space for %s", filename);
 		allocated = true;
@@ -331,7 +335,11 @@ cblock_t Huff1Decompress (cblock_t in)
 	// get decompressed count
 	count = in.data[0] + (in.data[1]<<8) + (in.data[2]<<16) + (in.data[3]<<24);
 	input = in.data + 4;
+#if __psp__
+	out_p = out.data = memalign (16, count);
+#else
 	out_p = out.data = malloc (count);
+#endif
 	if (!out_p)
 		Com_Error (ERR_DROP, "Huff1Decompress: not enough space for Huff1Decompress");
 
