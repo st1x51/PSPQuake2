@@ -721,6 +721,31 @@ int _VectorCompare (vec3_t v1, vec3_t v2)
 
 vec_t VectorNormalize (vec3_t v)
 {
+#if __psp__
+	float length;
+	__asm__ volatile (
+		".set		push\n"
+		".set		noreorder\n"
+		"lv.s		S000, 0 + %1\n"
+		"lv.s		S001, 4 + %1\n"
+		"lv.s		S002, 8 + %1\n"
+		"vdot.t		S010, C000, C000\n"
+		"vzero.s	S012\n"
+		"vsqrt.s	S011, S010\n"
+		"vcmp.s		EZ, S010\n"
+		"vrcp.s		S010, S011\n"
+		"vcmovt.s	S010, S012, 0\n"
+		"vscl.t		C000, C000, S010\n"
+		"mfv		%0, S011\n"
+		"sv.s		S000, 0 + %1\n"
+		"sv.s		S001, 4 + %1\n"
+		"sv.s		S002, 8 + %1\n"
+		".set		pop\n"
+		:	"=r"(length), "+m"(*v)
+		::	"memory"
+	);
+	return length;
+#else
 	float	length, ilength;
 
 	length = v[0]*v[0] + v[1]*v[1] + v[2]*v[2];
@@ -735,11 +760,37 @@ vec_t VectorNormalize (vec3_t v)
 	}
 		
 	return length;
-
+#endif
 }
 
 vec_t VectorNormalize2 (vec3_t v, vec3_t out)
 {
+#if __psp__
+	float length;
+	__asm__ volatile (
+		".set		push\n"
+		".set		noreorder\n"
+		"lv.s		S000, 0 + %2\n"
+		"lv.s		S001, 4 + %2\n"
+		"lv.s		S002, 8 + %2\n"
+		"vdot.t		S010, C000, C000\n"
+		"vzero.s	S012\n"
+		"vsqrt.s	S011, S010\n"
+		"vcmp.s		EZ, S010\n"
+		"vrcp.s		S010, S011\n"
+		"vcmovt.s	S010, S012, 0\n"
+		"vscl.t		C000, C000, S010\n"
+		"mfv		%0, S011\n"
+		"sv.s		S000, 0 + %1\n"
+		"sv.s		S001, 4 + %1\n"
+		"sv.s		S002, 8 + %1\n"
+		".set		pop\n"
+		:	"=r"(length), "=m"(*out)
+		:	"m"(*v)
+		:	"memory"
+	);
+	return length;
+#else
 	float	length, ilength;
 
 	length = v[0]*v[0] + v[1]*v[1] + v[2]*v[2];
@@ -755,6 +806,7 @@ vec_t VectorNormalize2 (vec3_t v, vec3_t out)
 		
 	return length;
 
+#endif
 }
 
 void _VectorMA (vec3_t veca, float scale, vec3_t vecb, vec3_t vecc)
