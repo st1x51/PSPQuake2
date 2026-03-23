@@ -23,6 +23,9 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 
 #include "gu_local.h"
 
+#define SLICE_W			64
+#define NUM_SLICES(w)	(((w) + SLICE_W - 1) / SLICE_W)
+
 image_t		*draw_chars;
 
 /*
@@ -131,6 +134,9 @@ Draw_StretchPic
 void Draw_StretchPic (int x, int y, int w, int h, char *pic)
 {
 	image_t *image;
+	int num_slices;
+	int i, x1, x2, sx, sw;
+	float u_step;
 
 	image = Draw_FindPic (pic);
 	if (!image)
@@ -139,28 +145,41 @@ void Draw_StretchPic (int x, int y, int w, int h, char *pic)
 		return;
 	}
 
+	num_slices = NUM_SLICES (w);
+	u_step = (image->sh - image->sl) / (float)w;
+
 	//if (!(image->flags & IMG_FLAG_HAS_ALPHA))
 	//	sceGuDisable (GU_ALPHA_TEST);
 
 	GL_Bind (image);
 
-	gu_vert_htv_t* const out = (gu_vert_htv_t*)sceGuGetMemory (sizeof(gu_vert_htv_t ) * 2);
-	out[0].u = image->sl;
-	out[0].v = image->tl;
-	out[0].x = x;
-	out[0].y = y;
-	out[0].z = 0;
-	out[1].u = image->sh;
-	out[1].v = image->th;
-	out[1].x = x + w;
-	out[1].y = y + h;
-	out[1].z = 0;
-	sceGuDrawArray (GU_SPRITES, GU_TEXTURE_16BIT | GU_VERTEX_16BIT | GU_TRANSFORM_2D, 2, 0, out);
+	gu_vert_htv_t* out = (gu_vert_htv_t*)sceGuGetMemory (sizeof(gu_vert_htv_t) * 2 * num_slices);
+	gu_vert_htv_t* out_ptr = out;
+
+	for (i = 0; i < num_slices; i++)
+	{
+		sx = i * SLICE_W;
+		sw = (sx + SLICE_W > w) ? (w - sx) : SLICE_W;
+
+		out_ptr->u = image->sl + (sx * u_step);
+		out_ptr->v = image->tl;
+		out_ptr->x = x + sx;
+		out_ptr->y = y;
+		out_ptr->z = 0;
+		out_ptr++;
+
+		out_ptr->u = image->sl + ((sx + sw) * u_step);
+		out_ptr->v = image->th;
+		out_ptr->x = x + sx + sw;
+		out_ptr->y = y + h;
+		out_ptr->z = 0;
+		out_ptr++;
+	}
+	sceGuDrawArray (GU_SPRITES, GU_TEXTURE_16BIT | GU_VERTEX_16BIT | GU_TRANSFORM_2D, 2 * num_slices, 0, out);
 
 	//if (!(image->flags & IMG_FLAG_HAS_ALPHA))
 	//	sceGuEnable (GU_ALPHA_TEST);
 }
-
 
 /*
 =============
@@ -170,6 +189,9 @@ Draw_Pic
 void Draw_Pic (int x, int y, char *pic)
 {
 	image_t *image;
+	int num_slices;
+	int i, w, sx, sw;
+	float u_step;
 
 	image = Draw_FindPic (pic);
 	if (!image)
@@ -178,23 +200,38 @@ void Draw_Pic (int x, int y, char *pic)
 		return;
 	}
 
+	w = image->width;
+	num_slices = NUM_SLICES(w);
+	u_step = (image->sh - image->sl) / (float)w;
+
 	//if (!(image->flags & IMG_FLAG_HAS_ALPHA))
 	//	sceGuDisable (GU_ALPHA_TEST);
 
 	GL_Bind (image);
 
-	gu_vert_htv_t* const out = (gu_vert_htv_t*)sceGuGetMemory (sizeof(gu_vert_htv_t ) * 2);
-	out[0].u = image->sl;
-	out[0].v = image->tl;
-	out[0].x = x;
-	out[0].y = y;
-	out[0].z = 0;
-	out[1].u = image->sh;
-	out[1].v = image->th;
-	out[1].x = x + image->width;
-	out[1].y = y + image->height;
-	out[1].z = 0;
-	sceGuDrawArray (GU_SPRITES, GU_TEXTURE_16BIT | GU_VERTEX_16BIT | GU_TRANSFORM_2D, 2, 0, out);
+	gu_vert_htv_t* out = (gu_vert_htv_t*)sceGuGetMemory (sizeof(gu_vert_htv_t) * 2 * num_slices);
+	gu_vert_htv_t* out_ptr = out;
+
+	for (i = 0; i < num_slices; i++)
+	{
+		sx = i * SLICE_W;
+		sw = (sx + SLICE_W > w) ? (w - sx) : SLICE_W;
+
+		out_ptr->u = image->sl + (sx * u_step);
+		out_ptr->v = image->tl;
+		out_ptr->x = x + sx;
+		out_ptr->y = y;
+		out_ptr->z = 0;
+		out_ptr++;
+
+		out_ptr->u = image->sl + ((sx + sw) * u_step);
+		out_ptr->v = image->th;
+		out_ptr->x = x + sx + sw;
+		out_ptr->y = y + image->height;
+		out_ptr->z = 0;
+		out_ptr++;
+	}
+	sceGuDrawArray (GU_SPRITES, GU_TEXTURE_16BIT | GU_VERTEX_16BIT | GU_TRANSFORM_2D, 2 * num_slices, 0, out);
 
 	//if (!(image->flags & IMG_FLAG_HAS_ALPHA))
 	//	sceGuEnable (GU_ALPHA_TEST);
@@ -210,7 +247,10 @@ refresh window.
 */
 void Draw_TileClear (int x, int y, int w, int h, char *pic)
 {
-	image_t	*image;
+	image_t *image;
+	int num_slices;
+	int i, sx, sw, x1, x2;
+	float u_step;
 
 	image = Draw_FindPic (pic);
 	if (!image)
@@ -219,23 +259,39 @@ void Draw_TileClear (int x, int y, int w, int h, char *pic)
 		return;
 	}
 
+	num_slices = NUM_SLICES (w);
+
 	//if (!(image->flags & IMG_FLAG_HAS_ALPHA))
 	//	sceGuDisable (GU_ALPHA_TEST);
 
 	GL_Bind (image);
 
-	gu_vert_htv_t* const out = (gu_vert_htv_t*)sceGuGetMemory (sizeof(gu_vert_htv_t ) * 2);
-	out[0].u = x;
-	out[0].v = y;
-	out[0].x = x;
-	out[0].y = y;
-	out[0].z = 0;
-	out[1].u = x + w;
-	out[1].v = y + h;
-	out[1].x = x + w;
-	out[1].y = y + h;
-	out[1].z = 0;
-	sceGuDrawArray (GU_SPRITES, GU_TEXTURE_16BIT | GU_VERTEX_16BIT | GU_TRANSFORM_2D, 2, 0, out);
+	gu_vert_htv_t* out = (gu_vert_htv_t*)sceGuGetMemory (sizeof(gu_vert_htv_t) * 2 * num_slices);
+	gu_vert_htv_t* out_ptr = out;
+
+	for (i = 0; i < num_slices; i++)
+	{
+		sx = i * SLICE_W;
+		sw = (sx + SLICE_W > w) ? (w - sx) : SLICE_W;
+
+		x1 = x + sx;
+		x2 = x1 + sw;
+
+		out_ptr->u = x1;
+		out_ptr->v = y;
+		out_ptr->x = x1;
+		out_ptr->y = y;
+		out_ptr->z = 0;
+		out_ptr++;
+
+		out_ptr->u = x2;
+		out_ptr->v = y + h;
+		out_ptr->x = x2;
+		out_ptr->y = y + h;
+		out_ptr->z = 0;
+		out_ptr++;
+	}
+	sceGuDrawArray (GU_SPRITES, GU_TEXTURE_16BIT | GU_VERTEX_16BIT | GU_TRANSFORM_2D, 2 * num_slices, 0, out);
 
 	//if (!(image->flags & IMG_FLAG_HAS_ALPHA))
 	//	sceGuEnable (GU_ALPHA_TEST);
@@ -336,29 +392,44 @@ Draw_StretchRaw
 */
 void Draw_StretchRaw (int x, int y, int w, int h, int cols, int rows, byte *data)
 {
-	static byte image8[256*256] __attribute__((aligned(16)));
+	int num_slices;
+	int i, x1, x2;
+	float x1r, x2r;
 
-	GL_ResampleTexture8 (data, cols, rows, image8, 256, 256);
+	num_slices = NUM_SLICES (w);
 
-	sceKernelDcacheWritebackRange (image8, sizeof(image8));
+	sceKernelDcacheWritebackRange(data, cols * rows);
 
 	sceGuTexMode (GU_PSM_T8, 0, 0, GU_FALSE);
 	sceGuTexFilter (GU_LINEAR, GU_LINEAR);
-	sceGuTexImage (0, 256, 256, 256, image8);
+	sceGuTexImage (0, 512, 256, cols, data);
 
 	gl_state.currenttexture = NULL;
 
-	gu_vert_htv_t* const out = (gu_vert_htv_t*)sceGuGetMemory (sizeof(gu_vert_htv_t ) * 2);
-	out[0].u = 0;
-	out[0].v = 0;
-	out[0].x = x;
-	out[0].y = y;
-	out[0].z = 0;
-	out[1].u = 256;
-	out[1].v = 256;
-	out[1].x = x + w;
-	out[1].y = y + h;
-	out[1].z = 0;
-	sceGuDrawArray (GU_SPRITES, GU_TEXTURE_16BIT | GU_VERTEX_16BIT | GU_TRANSFORM_2D, 2, 0, out);
-}
+	gu_vert_htv_t* out = (gu_vert_htv_t*)sceGuGetMemory (sizeof(gu_vert_htv_t) * 2 * num_slices);
+	gu_vert_htv_t* out_ptr = out;
 
+	for (i = 0; i < num_slices; i++)
+	{
+		x1r = (float)(i * SLICE_W) / (float)w;
+		x2r = (float)((i + 1) * SLICE_W > w ? w : (i + 1) * SLICE_W) / (float)w;
+
+		x1 = x + (i * SLICE_W);
+		x2 = x + ((i + 1) * SLICE_W > w ? w : (i + 1) * SLICE_W);
+
+		out_ptr->u = x1r * cols;
+		out_ptr->v = 0;
+		out_ptr->x = x1;
+		out_ptr->y = y;
+		out_ptr->z = 0;
+		out_ptr++;
+
+		out_ptr->u = x2r * cols;
+		out_ptr->v = rows;
+		out_ptr->x = x2;
+		out_ptr->y = y + h;
+		out_ptr->z = 0;
+		out_ptr++;
+	}
+	sceGuDrawArray (GU_SPRITES, GU_TEXTURE_16BIT | GU_VERTEX_16BIT | GU_TRANSFORM_2D, 2 * num_slices, 0, out);
+}
