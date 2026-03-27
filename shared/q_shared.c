@@ -93,45 +93,75 @@ void RotatePointAroundVector( vec3_t dst, const vec3_t dir, const vec3_t point, 
 void AngleVectors (vec3_t angles, vec3_t forward, vec3_t right, vec3_t up)
 {
 #ifdef __psp__
-		vec4_t	vsin, vcos; // aligned on a 16-byte boundary
-
-		__asm__ (
+	__asm__ volatile (
 		".set		push\n"					// save assembler option
 		".set		noreorder\n"			// suppress reordering
-		"lv.s		S000,  0 + %2\n"		// S000 = angle[PITCH]
-		"lv.s		S001,  4 + %2\n"		// S001 = angle[YAW]
-		"lv.s		S002,  8 + %2\n"		// S002 = angle[ROLL]
-		"li			$8, 0x3c360b61\n"		// t0 = (1 / 90) = 0.0111111111111111	(lvi.s)
-		"mtv		$8, S010\n"				// S010 = t0 = (1 / 90)					(lvi.s)
-		"vscl.t		C000, C000, S010\n"		// angles[] * (1 / 90)
-		"vsin.t		C010, C000\n"			// C010 = sin(angle[])
-		"vcos.t		C020, C000\n"			// C020 = cos(angle[])
-		"sv.q		C010, %0\n"				// vsin = C010
-		"sv.q		C020, %1\n"				// vcos = C020
-		".set		pop\n"					// restore assembler option
-		:	"=m"(vsin), "=m"(vcos)
-		:	"m"(*angles)
-		:	"$8"
-	);
+		"lv.s		S000, 0(%0)\n"			// S000 = angle[PITCH]
+		"lv.s		S001, 4(%0)\n"			// S001 = angle[YAW]
+		"lv.s		S002, 8(%0)\n"			// S002 = angle[ROLL]
 
-	if (forward)
-	{
-		forward[0] = vcos[PITCH] * vcos[YAW];
-		forward[1] = vcos[PITCH] * vsin[YAW];
-		forward[2] = -vsin[PITCH];
-	}
-	if (right)
-	{
-		right[0] = (-1 * vsin[ROLL] * vsin[PITCH] * vcos[YAW] + -1 * vcos[ROLL] * -vsin[YAW]);
-		right[1] = (-1 * vsin[ROLL] * vsin[PITCH] * vsin[YAW] + -1 * vcos[ROLL] * vcos[YAW]);
-		right[2] = -1 * vsin[ROLL] * vcos[PITCH];
-	}
-	if (up)
-	{
-		up[0] = (vcos[ROLL] * vsin[PITCH] * vcos[YAW] + -vsin[ROLL] * -vsin[YAW]);
-		up[1] = (vcos[ROLL] * vsin[PITCH] * vsin[YAW] + -vsin[ROLL] * vcos[YAW]);
-		up[2] = vcos[ROLL] * vcos[PITCH];
-	}
+		// (angle / 90)
+		"li			$8, 0x3c360b61\n"		// 1 / 90.0f
+		"mtv		$8, S003\n"
+		"vscl.t		C000, C000, S003\n"		// C000 = [PITCH/90, YAW/90, ROLL/90]
+
+		// [SIN COS]
+		"vsin.t		C010, C000\n"			// S010=sp, S011=sy, S012=sr
+		"vcos.t		C020, C000\n"			// S020=cp, S021=cy, S022=cr
+    "0:\n"
+		"beq		%1, $0, 1f\n"			// forward == NULL?
+		"nop\n"								// (delay slot)
+	// FORWARD
+		// forward[0] = cp*cy;
+		// forward[1] = cp*sy;
+		// forward[2] = -sp;
+		"vmul.s		S000, S020, S021\n"		// forward[0] = cp * cy
+		"vmul.s		S001, S020, S011\n"		// forward[1] = cp * sy
+		"vneg.s		S002, S010\n"			// forward[2] = -sp
+		"sv.s		S000, 0(%1)\n"
+		"sv.s		S001, 4(%1)\n"
+		"sv.s		S002, 8(%1)\n"
+    "1:\n"
+		"beq		%2, $0, 2f\n"			// right == NULL?
+		"nop\n"								// (delay slot)
+	// RIGHT
+		// right[0] = -sr*sp*cy + cr*sy
+		// right[1] = -sr*sp*sy - cr*cy
+		// right[2] = -sr*cp
+		"vmul.s		S003, S012[-X], S010\n"	// S003 = -sr*sp
+		"vmul.s		S013, S022, S011\n"		// S013 = cr*sy
+		"vmul.s		S002, S012[-X], S020\n"	// right[2] = -sr*cp
+		"vmul.s		S000, S003, S021\n"		// S000 = -sr*sp*cy
+		"vmul.s		S001, S003, S011\n"		// S001 = -sr*sp*sy
+		"vmul.s		S023, S022, S021\n"		// S023 = cr*cy
+		"vadd.s		S000, S000, S013\n"		// right[0] = -sr*sp*cy + cr*sy
+		"vsub.s		S001, S001, S023\n"		// right[1] = -sr*sp*sy - cr*cy
+		"sv.s		S000, 0(%2)\n"
+		"sv.s		S001, 4(%2)\n"
+		"sv.s		S002, 8(%2)\n"
+	"2:\n"
+		"beq		%3, $0, 3f\n"			// up == NULL?
+		"nop\n"								// (delay slot)
+	// UP
+		// up[0] = cr*sp*cy + sr*sy
+		// up[1] = cr*sp*sy - sr*cy
+		// up[2] = cr*cp
+		"vmul.s		S003, S022, S010\n"		// S003 = cr*sp
+		"vmul.s		S013, S012, S011\n"		// S013 = sr*sy
+		"vmul.s		S002, S022, S020\n"		// up[2] = cr*cp
+		"vmul.s		S000, S003, S021\n"		// S000 = cr*sp*cy
+		"vmul.s		S001, S003, S011\n"		// S001 = cr*sp*sy
+		"vmul.s		S023, S012, S021\n"		// S023 = sr*cy
+		"vadd.s		S000, S000, S013\n"		// up[0] = cr*sp*cy + sr*sy
+		"vsub.s		S001, S001, S023\n"		// up[1] = cr*sp*sy - sr*cy
+		"sv.s		S000, 0(%3)\n"
+		"sv.s		S001, 4(%3)\n"
+		"sv.s		S002, 8(%3)\n"
+	"3:\n"
+		".set		pop\n"					// restore assembler option
+		:: "r"(angles), "r"(forward), "r"(right), "r"(up)
+		: "$8", "memory"
+	);
 #else
 	float		angle;
 	static float		sr, sp, sy, cr, cp, cy;
