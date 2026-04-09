@@ -344,9 +344,16 @@ void GL_BuildGammaTable (float gamma, float intensity);
 // gu_clipping.c
 //
 #define CLIPPING_DEBUGGING 0
+
+#define GU_CULL_INSIDE	0
+#define GU_CULL_CLIP	1
+#define GU_CULL_OUTSIDE	2
+
 void GU_ClipSetWorldFrustum (void);
 void GU_ClipRestoreWorldFrustum (void);
 void GU_ClipSetModelFrustum (void);
+void GU_ClipTransformAABBFromModelMatrix(const vec3_t mins, const vec3_t maxs, vec3_t out_mins, vec3_t out_maxs);
+int GU_ClipCullBox(const vec3_t mins, const vec3_t maxs);
 int GU_ClipIsRequired (gu_vert_ftv_t* uv, int uvc);
 void GU_Clip (gu_vert_ftv_t *uv, int uvc, gu_vert_ftv_t **cv, int* cvc);
 

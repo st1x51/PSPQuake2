@@ -287,11 +287,16 @@ void EmitWaterPolys (msurface_t *fa)
 	float			scroll;
 	float			rdt = r_newrefdef.time;
 	float			scale = 1.0f / 64.0f;
+	qboolean		needsclip;
 
 	if (fa->texinfo->flags & SURF_FLOWING)
 		scroll = -64 * ((rdt * 0.5f) - (int)(rdt * 0.5f));
 	else
 		scroll = 0;
+
+	needsclip = (fa->flags & SURF_NEEDS_CLIP);
+	if (needsclip)
+		fa->flags &= ~SURF_NEEDS_CLIP;
 
 	sceGuTexScale (scale, scale);
 	sceGuTexOffset (scroll * scale, 0.0f);
@@ -307,7 +312,8 @@ void EmitWaterPolys (msurface_t *fa)
 			out[i].v = ot + r_turbsin[(int)((os * 0.125f + rdt) * TURBSCALE) & 255];
 			VectorCopy (p->verts[i].xyz, out[i].xyz);
 		}
-		if (GU_ClipIsRequired (out, p->numverts))
+
+		if (needsclip && GU_ClipIsRequired (out, p->numverts))
 		{
 			// Clip the polygon.
 			gu_vert_ftv_t	*cv;

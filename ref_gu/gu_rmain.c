@@ -107,38 +107,24 @@ cvar_t	*vid_ref;
 
 /*
 =================
-R_CullBox
-
-Returns true if the box is completely outside the frustom
+R_RotateForEntity
 =================
 */
-qboolean R_CullBox (vec3_t mins, vec3_t maxs)
-{
-	int		i;
-
-	if (r_nocull->value)
-		return false;
-
-	for (i=0 ; i<4 ; i++)
-		if ( BOX_ON_PLANE_SIDE(mins, maxs, &frustum[i]) == 2)
-			return true;
-	return false;
-}
-
-
 void R_RotateForEntity (entity_t *e)
 {
-	ScePspFVector3	translate;
+	ScePspFVector3	fvec;
 
-	translate.x = e->origin[0];
-	translate.y = e->origin[1];
-	translate.z = e->origin[2];
+	fvec.x = e->origin[0];
+	fvec.y = e->origin[1];
+	fvec.z = e->origin[2];
 
-	sceGumTranslate (&translate);
+	sceGumTranslate (&fvec);
 
-	sceGumRotateZ ( e->angles[1] * (GU_PI / 180.0f));
-	sceGumRotateY (-e->angles[0] * (GU_PI / 180.0f));
-	sceGumRotateX (-e->angles[2] * (GU_PI / 180.0f));
+	fvec.z = e->angles[1] * (GU_PI / 180.0f);
+	fvec.y = -e->angles[0] * (GU_PI / 180.0f);
+	fvec.x = -e->angles[2] * (GU_PI / 180.0f);
+
+	sceGumRotateZYX (&fvec);
 
 	sceGumUpdateMatrix ();
 }
@@ -577,64 +563,6 @@ void R_PolyBlend (void)
 
 //=======================================================================
 
-int SignbitsForPlane (cplane_t *out)
-{
-	int	bits, j;
-
-	// for fast box on planeside test
-
-	bits = 0;
-	for (j=0 ; j<3 ; j++)
-	{
-		if (out->normal[j] < 0)
-			bits |= 1<<j;
-	}
-	return bits;
-}
-
-
-void R_SetFrustum (void)
-{
-	int		i;
-
-#if 0
-	/*
-	** this code is wrong, since it presume a 90 degree FOV both in the
-	** horizontal and vertical plane
-	*/
-	// front side is visible
-	VectorAdd (vpn, vright, frustum[0].normal);
-	VectorSubtract (vpn, vright, frustum[1].normal);
-	VectorAdd (vpn, vup, frustum[2].normal);
-	VectorSubtract (vpn, vup, frustum[3].normal);
-
-	// we theoretically don't need to normalize these vectors, but I do it
-	// anyway so that debugging is a little easier
-	VectorNormalize( frustum[0].normal );
-	VectorNormalize( frustum[1].normal );
-	VectorNormalize( frustum[2].normal );
-	VectorNormalize( frustum[3].normal );
-#else
-	// rotate VPN right by FOV_X/2 degrees
-	RotatePointAroundVector( frustum[0].normal, vup, vpn, -(90-r_newrefdef.fov_x / 2 ) );
-	// rotate VPN left by FOV_X/2 degrees
-	RotatePointAroundVector( frustum[1].normal, vup, vpn, 90-r_newrefdef.fov_x / 2 );
-	// rotate VPN up by FOV_X/2 degrees
-	RotatePointAroundVector( frustum[2].normal, vright, vpn, 90-r_newrefdef.fov_y / 2 );
-	// rotate VPN down by FOV_X/2 degrees
-	RotatePointAroundVector( frustum[3].normal, vright, vpn, -( 90 - r_newrefdef.fov_y / 2 ) );
-#endif
-
-	for (i=0 ; i<4 ; i++)
-	{
-		frustum[i].type = PLANE_ANYZ;
-		frustum[i].dist = DotProduct (r_origin, frustum[i].normal);
-		frustum[i].signbits = SignbitsForPlane (&frustum[i]);
-	}
-}
-
-//=======================================================================
-
 /*
 ===============
 R_SetupFrame
@@ -782,8 +710,6 @@ void R_SetupGL (void)
 	sceGuDisable (GU_BLEND);
 	sceGuDisable (GU_ALPHA_TEST);
 	sceGuEnable (GU_DEPTH_TEST);
-
-	GU_ClipSetWorldFrustum ();
 }
 
 /*
@@ -841,9 +767,9 @@ void R_RenderView (refdef_t *fd)
 
 	R_SetupFrame ();
 
-	R_SetFrustum ();
-
 	R_SetupGL ();
+
+	GU_ClipSetWorldFrustum ();
 
 	R_MarkLeaves ();	// done here so we know if we're in water
 

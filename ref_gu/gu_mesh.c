@@ -22,6 +22,8 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 
 #include "gu_local.h"
 
+#define DRAW_BBOX 0
+
 /*
 =============================================================
 
@@ -131,6 +133,10 @@ void GL_LerpVerts( int nverts, dtrivertx_t *v, dtrivertx_t *ov, dtrivertx_t *ver
 	//PMM -- added RF_SHELL_DOUBLE, RF_SHELL_HALF_DAM
 	if ( currententity->flags & ( RF_SHELL_RED | RF_SHELL_GREEN | RF_SHELL_BLUE | RF_SHELL_DOUBLE | RF_SHELL_HALF_DAM) )
 	{
+		for (i=0 ; i < nverts; i++, v++, ov++, lerp+=4 )
+		{
+			float *normal = r_avertexnormals[verts[i].lightnormalindex];
+
 			lerp[0] = move[0] + ov->v[0]*backv[0] + v->v[0]*frontv[0] + normal[0] * POWERSUIT_SCALE;
 			lerp[1] = move[1] + ov->v[1]*backv[1] + v->v[1]*frontv[1] + normal[1] * POWERSUIT_SCALE;
 			lerp[2] = move[2] + ov->v[2]*backv[2] + v->v[2]*frontv[2] + normal[2] * POWERSUIT_SCALE;
@@ -373,19 +379,18 @@ void GL_DrawAliasShadow (dmdl_t *paliashdr, int posenum)
 #endif
 
 /*
-** R_CullAliasModel
+=============
+R_CullAliasModel
+=============
 */
-static qboolean R_CullAliasModel( vec3_t bbox[8], entity_t *e )
+static qboolean R_CullAliasModel (dmdl_t *paliashdr, vec3_t bbox[8], entity_t *e)
 {
-	int i;
+	int			i, clipstatus;
 	vec3_t		mins, maxs;
-	dmdl_t		*paliashdr;
 	vec3_t		vectors[3];
 	vec3_t		thismins, oldmins, thismaxs, oldmaxs;
 	daliasframe_t *pframe, *poldframe;
-	vec3_t angles;
-
-	paliashdr = (dmdl_t *)Mod_Extradata (currentmodel);
+	vec3_t		angles;
 
 	if ( ( e->frame >= paliashdr->num_frames ) || ( e->frame < 0 ) )
 	{
@@ -441,6 +446,9 @@ static qboolean R_CullAliasModel( vec3_t bbox[8], entity_t *e )
 		}
 	}
 
+	GU_ClipTransformAABBFromModelMatrix(mins, maxs, mins, maxs);
+
+#if DRAW_BBOX
 	/*
 	** compute a full bounding box
 	*/
@@ -465,54 +473,9 @@ static qboolean R_CullAliasModel( vec3_t bbox[8], entity_t *e )
 
 		VectorCopy( tmp, bbox[i] );
 	}
+#endif
 
-	/*
-	** rotate the bounding box
-	*/
-	VectorCopy( e->angles, angles );
-	angles[YAW] = -angles[YAW];
-	AngleVectors( angles, vectors[0], vectors[1], vectors[2] );
-
-	for ( i = 0; i < 8; i++ )
-	{
-		vec3_t tmp;
-
-		VectorCopy( bbox[i], tmp );
-
-		bbox[i][0] = DotProduct( vectors[0], tmp );
-		bbox[i][1] = -DotProduct( vectors[1], tmp );
-		bbox[i][2] = DotProduct( vectors[2], tmp );
-
-		VectorAdd( e->origin, bbox[i], bbox[i] );
-	}
-
-	{
-		int p, f, aggregatemask = ~0;
-
-		for ( p = 0; p < 8; p++ )
-		{
-			int mask = 0;
-
-			for ( f = 0; f < 4; f++ )
-			{
-				float dp = DotProduct( frustum[f].normal, bbox[p] );
-
-				if ( ( dp - frustum[f].dist ) < 0 )
-				{
-					mask |= ( 1 << f );
-				}
-			}
-
-			aggregatemask &= mask;
-		}
-
-		if ( aggregatemask )
-		{
-			return true;
-		}
-
-		return false;
-	}
+	return (GU_ClipCullBox(mins, maxs) == GU_CULL_OUTSIDE);
 }
 
 /*
@@ -705,12 +668,6 @@ void R_DrawAliasModel (entity_t *e)
 	qboolean	light_en;
 	ScePspFVector3	scale;
 
-	if ( !( e->flags & RF_WEAPONMODEL ) )
-	{
-		if ( R_CullAliasModel( bbox, e ) )
-			return;
-	}
-
 	if ( e->flags & RF_WEAPONMODEL )
 	{
 		if ( r_lefthand->value == 2 )
@@ -718,6 +675,21 @@ void R_DrawAliasModel (entity_t *e)
 	}
 
 	paliashdr = (dmdl_t *)Mod_Extradata (currentmodel);
+
+	sceGumPushMatrix ();
+	e->angles[PITCH] = -e->angles[PITCH];	// sigh.
+	R_RotateForEntity (e); // &proj update
+	e->angles[PITCH] = -e->angles[PITCH];	// sigh.
+
+	if ( !( e->flags & RF_WEAPONMODEL ) )
+	{
+		if (R_CullAliasModel ( paliashdr, bbox, e))
+		{
+			sceGumPopMatrix();
+			sceGumUpdateMatrix();
+			return;
+		}
+	}
 
 	//
 	// get lighting information
@@ -753,11 +725,6 @@ void R_DrawAliasModel (entity_t *e)
 
 		sceGuFrontFace (GU_CCW); // GL_BACK
 	}
-
-    sceGumPushMatrix ();
-	e->angles[PITCH] = -e->angles[PITCH];	// sigh.
-	R_RotateForEntity (e); // &proj update
-	e->angles[PITCH] = -e->angles[PITCH];	// sigh.
 
 	// select skin
 	if (currententity->skin)
@@ -811,21 +778,6 @@ void R_DrawAliasModel (entity_t *e)
 
 	sceGumPopMatrix();
 
-#if 0
-	qglDisable( GL_CULL_FACE );
-	qglPolygonMode( GL_FRONT_AND_BACK, GL_LINE );
-	qglDisable( GL_TEXTURE_2D );
-	qglBegin( GL_TRIANGLE_STRIP );
-	for ( i = 0; i < 8; i++ )
-	{
-		qglVertex3fv( bbox[i] );
-	}
-	qglEnd();
-	qglEnable( GL_TEXTURE_2D );
-	qglPolygonMode( GL_FRONT_AND_BACK, GL_FILL );
-	qglEnable( GL_CULL_FACE );
-#endif
-
 	if ((currententity->flags & RF_WEAPONMODEL ) && (r_lefthand->value == 1.0F))
 	{
 		sceGumMatrixMode (GU_PROJECTION);
@@ -857,6 +809,22 @@ void R_DrawAliasModel (entity_t *e)
 	}
 #endif
 	sceGumUpdateMatrix();
+
+
+#if DRAW_BBOX
+	sceGuDisable (GU_CULL_FACE);
+	sceGuDisable (GU_TEXTURE_2D);
+	sceGuColor (0xFFFFFF00);
+	gu_vert_fv_t *bboxverts = sceGuGetMemory (sizeof(gu_vert_fv_t) * 8);
+	for (i = 0; i < 8; i++)
+	{
+		VectorCopy (bbox[i], bboxverts[i].xyz);
+	}
+	sceGuDrawArray (GU_LINE_STRIP, GU_VERTEX_32BITF, 8, 0, bboxverts);
+	sceGuEnable (GU_TEXTURE_2D);
+	if (gl_cull->value)
+		sceGuEnable (GU_CULL_FACE);
+#endif
 	sceGuColor (GU_HCOLOR_DEFAULT);
 }
 

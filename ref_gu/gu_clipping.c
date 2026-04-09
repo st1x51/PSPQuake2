@@ -47,7 +47,9 @@ Based on clipping system from PSP Quake by Peter Mackay and Chris Swindle.
 static ScePspFMatrix4	projection_view_matrix;
 
 // The temporary working buffers.
-static gu_vert_ftv_t	work_buffer[2][MAX_CLIPPED_VERTICES] __attribute__((aligned(16)));
+//static gu_vert_ftv_t	work_buffer[2][MAX_CLIPPED_VERTICES] __attribute__((aligned(16)));
+#define work_buffer (*(gu_vert_ftv_t (*)[2][MAX_CLIPPED_VERTICES])0x00010000) // scratchpad addr
+
 
 /*
 =================
@@ -167,6 +169,155 @@ void GU_ClipSetModelFrustum (void)
 
 	// Calculate and cache the clipping frustum.
 	GU_ClipGetAndStoreFrustum (&projection_view_model_matrix);
+}
+
+
+/*
+=================
+GU_ClipSetModelFrustum
+
+Transforms an AABB using James Arvo's algorithm.
+M300 - current matrix (pspgum_vfpu)!!!
+=================
+*/
+void GU_ClipTransformAABBFromModelMatrix(const vec3_t mins, const vec3_t maxs, vec3_t out_mins, vec3_t out_maxs)
+{
+	__asm__ volatile (
+		".set		push\n"
+		".set		noreorder\n"
+
+		"lv.s		S000, 0(%0)\n"		// mins
+		"lv.s		S001, 4(%0)\n"
+		"lv.s		S002, 8(%0)\n"
+		"vone.s		S003\n"				// W = 1.0
+
+		"lv.s		S010, 0(%1)\n"		// maxs
+		"lv.s		S011, 4(%1)\n"
+		"lv.s		S012, 8(%1)\n"
+		"vone.s		S013\n"				// W = 1.0
+
+		"vmov.q		C200, C330\n"		// world_mins
+		"vmov.q		C210, C330\n"		// world_maxs
+
+		// X C300
+		"vmul.q		C100, C300, C000[X, X, X, X]\n"
+		"vmul.q		C110, C300, C010[X, X, X, X]\n"
+		"vmin.q		C120, C100, C110\n"
+		"vmax.q		C130, C100, C110\n"
+		"vadd.q		C200, C200, C120\n"
+		"vadd.q		C210, C210, C130\n"
+
+		// Y C310
+		"vmul.q		C100, C310, C000[Y, Y, Y, Y]\n"
+		"vmul.q		C110, C310, C010[Y, Y, Y, Y]\n"
+		"vmin.q		C120, C100, C110\n"
+		"vmax.q		C130, C100, C110\n"
+		"vadd.q		C200, C200, C120\n"
+		"vadd.q		C210, C210, C130\n"
+
+		// Z C320
+		"vmul.q		C100, C320, C000[Z, Z, Z, Z]\n"
+		"vmul.q		C110, C320, C010[Z, Z, Z, Z]\n"
+		"vmin.q		C120, C100, C110\n"
+		"vmax.q		C130, C100, C110\n"
+		"vadd.q		C200, C200, C120\n"
+		"vadd.q		C210, C210, C130\n"
+
+		"sv.s		S200, 0(%2)\n"		// mins
+		"sv.s		S201, 4(%2)\n"
+		"sv.s		S202, 8(%2)\n"
+
+		"sv.s		S210, 0(%3)\n"		// maxs
+		"sv.s		S211, 4(%3)\n"
+		"sv.s		S212, 8(%3)\n"
+
+		".set		pop\n"
+		::	"r"(mins), "r"(maxs), "r"(out_mins), "r"(out_maxs)
+		:	"memory"
+	);
+}
+
+/*
+=================
+GU_ClipCullBox
+
+Returns:
+ 0 - GU_CULL_INSIDE
+ 1 - GU_CULL_CLIP
+ 2 - GU_CULL_OUTSIDE
+=================
+*/
+int GU_ClipCullBox(const vec3_t mins, const vec3_t maxs)
+{
+	int	status;
+	__asm__ volatile (
+		".set		push\n"
+		".set		noreorder\n"
+
+		"vzero.q	C020\n"							// C020 = [0.0, 0.0, 0.0, 0.0]
+
+		"lv.s		S000, 0(%1)\n"					// mins
+		"lv.s		S001, 4(%1)\n"
+		"lv.s		S002, 8(%1)\n"
+		"vone.s		S003\n"							// W = 1.0
+
+		"lv.s		S010, 0(%2)\n"					// maxs
+		"lv.s		S011, 4(%2)\n"
+		"lv.s		S012, 8(%2)\n"
+		"vone.s		S013\n"							// W = 1.0
+
+		// P-VERTEX: C100-C120 N-VERTEX: C200-C220
+		"vcmp.q		GE,   R700, C020\n"				// A >= 0?
+		"vcmovt.q	C100, C010[X, X, X, X], 6\n"	// Px = maxs.x OR
+		"vcmovf.q	C100, C000[X, X, X, X], 6\n"	// Px = mins.x
+		"vcmovt.q	C200, C000[X, X, X, X], 6\n"	// Nx = mins.x OR
+		"vcmovf.q	C200, C010[X, X, X, X], 6\n"	// Nx = maxs.x
+
+		"vcmp.q		GE,   R701, C020\n"				// B >= 0?
+		"vcmovt.q	C110, C010[Y, Y, Y, Y], 6\n"	// Py = maxs.y OR
+		"vcmovf.q	C110, C000[Y, Y, Y, Y], 6\n"	// Py = mins.y
+		"vcmovt.q	C210, C000[Y, Y, Y, Y], 6\n"	// Ny = mins.y OR
+		"vcmovf.q	C210, C010[Y, Y, Y, Y], 6\n"	// Ny = maxs.y
+
+		"vcmp.q		GE,   R702, C020\n"				// C >= 0?
+		"vcmovt.q	C120, C010[Z, Z, Z, Z], 6\n"	// Pz = maxs.z OR
+		"vcmovf.q	C120, C000[Z, Z, Z, Z], 6\n"	// Pz = mins.z
+		"vcmovt.q	C220, C000[Z, Z, Z, Z], 6\n"	// Nz = mins.z OR
+		"vcmovf.q	C220, C010[Z, Z, Z, Z], 6\n"	// Nz = maxs.z
+
+		// P-VERTEX - DistP
+		"vmul.q		C030, R700, C100\n"				// A * Px
+		"vmul.q		C130, R701, C110\n"				// B * Py
+		"vadd.q		C030, C030, R703\n"				// (A * Px) + D
+		"vmul.q		C100, R702, C120\n"				// C * Pz
+		"vadd.q		C030, C030, C130\n"				// + (B * Py)
+		"vadd.q		C030, C030, C100\n"				// + (C * Pz)
+
+		// Check OUTSIDE
+		"vcmp.q		LT,   C030, C020\n"				// Any DistP < 0
+		"bvt		4,    0f\n"						// jump to exit if any DistP < 0
+		"li			%0,   2\n"						// OUTSIDE (2) (delay slot)
+
+		// N-VERTEX - DistN
+		"vmul.q		C030, R700, C200\n"				// A * Nx
+		"vmul.q		C130, R701, C210\n"				// B * Ny
+		"vadd.q		C030, C030, R703\n"				// (A * Nx) + D
+		"vmul.q		C200, R702, C220\n"				// C * Nz
+		"vadd.q		C030, C030, C130\n"				// + (B * Ny)
+		"vadd.q		C030, C030, C200\n"				// + (C * Nz)
+
+		// Check CLIPPING
+		"vcmp.q		LT,   C030, C020\n"				// Any DistN < 0
+		"bvt		4,    0f\n"						// jump to exit if any DistN < 0
+		"li			%0,   1\n"						// CLIP (1) (delay slot)
+		"li			%0,   0\n"						// INSIDE (0)
+	"0:\n"											// exit
+		".set		pop\n"
+		:	"=r" (status)
+		:	"r" (mins), "r" (maxs)
+		:	"memory"
+	);
+    return status;
 }
 
 /*

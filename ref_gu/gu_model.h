@@ -65,6 +65,7 @@ typedef struct
 #define SURF_DRAWTURB		0x10
 #define SURF_DRAWBACKGROUND	0x40
 #define SURF_UNDERWATER		0x80
+#define SURF_NEEDS_CLIP		0x100
 
 // !!! if this is changed, it must be changed in asm_draw.h too !!!
 typedef struct

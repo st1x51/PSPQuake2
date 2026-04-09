@@ -102,45 +102,59 @@ image_t *R_TextureAnimation (mtexinfo_t *tex)
 DrawGLPoly
 ================
 */
-void DrawGLPoly (glpoly_t *p)
+void DrawGLPoly (msurface_t *fa)
 {
-	if (p->c_verts && p->c_frameverts == r_framecount)
+	glpoly_t		*p;
+	int				framecount;
+	qboolean		needsclip;
+
+	framecount = r_framecount;
+
+	needsclip = (fa->flags & SURF_NEEDS_CLIP);
+	if (needsclip)
+		fa->flags &= ~SURF_NEEDS_CLIP;
+
+	p = fa->polys;
+
+	if (p->c_verts && p->c_frameverts == framecount)
 	{
 		if (p->c_numverts)
 			sceGuDrawArray (GU_TRIANGLE_FAN, GU_TEXTURE_32BITF | GU_VERTEX_32BITF, p->c_numverts, 0, p->c_verts);
-		return;
-	}
-
-	if (GU_ClipIsRequired (&p->verts[0], p->numverts))
-	{
-		// clip the polygon.
-		gu_vert_ftv_t	*cv;
-		int				cvc;
-
-		GU_Clip (&p->verts[0], p->numverts, &cv, &cvc);
-		if (cvc)
-		{
-#if CLIPPING_DEBUGGING
-			sceGuDisable (GU_TEXTURE_2D);
-			sceGuColor (0xff0000ff);
-#endif
-			sceGuDrawArray (GU_TRIANGLE_FAN, GU_TEXTURE_32BITF | GU_VERTEX_32BITF, cvc, 0, cv);
-#if CLIPPING_DEBUGGING
-			sceGuEnable (GU_TEXTURE_2D);
-			sceGuColor (GU_HCOLOR_DEFAULT);
-#endif
-		}
-
-		p->c_numverts = cvc;
-		p->c_verts = cv;
 	}
 	else
 	{
-		sceGuDrawArray (GU_TRIANGLE_FAN, GU_TEXTURE_32BITF | GU_VERTEX_32BITF, p->numverts, 0, &p->verts[0]);
-		p->c_numverts = p->numverts;
-		p->c_verts = &p->verts[0];
+		if (needsclip && GU_ClipIsRequired (&p->verts[0], p->numverts))
+		{
+			// clip the polygon.
+			gu_vert_ftv_t	*cv;
+			int				cvc;
+
+			GU_Clip (&p->verts[0], p->numverts, &cv, &cvc);
+			if (cvc)
+			{
+#if CLIPPING_DEBUGGING
+				sceGuDisable (GU_TEXTURE_2D);
+				sceGuColor (0xff0000ff);
+#endif
+				sceGuDrawArray (GU_TRIANGLE_FAN, GU_TEXTURE_32BITF | GU_VERTEX_32BITF, cvc, 0, cv);
+#if CLIPPING_DEBUGGING
+				sceGuEnable (GU_TEXTURE_2D);
+				sceGuColor (GU_HCOLOR_DEFAULT);
+#endif
+			}
+
+			p->c_numverts = cvc;
+			p->c_verts = cv;
+		}
+		else
+		{
+			sceGuDrawArray (GU_TRIANGLE_FAN, GU_TEXTURE_32BITF | GU_VERTEX_32BITF, p->numverts, 0, &p->verts[0]);
+			p->c_numverts = p->numverts;
+			p->c_verts = &p->verts[0];
+		}
+
+		p->c_frameverts = framecount;
 	}
-	p->c_frameverts = r_framecount;
 }
 
 //============
@@ -154,7 +168,14 @@ void DrawGLFlowingPoly (msurface_t *fa)
 {
 	glpoly_t		*p;
 	float			scroll;
+	int				framecount;
+	qboolean		needsclip;
 
+	framecount = r_framecount;
+
+	needsclip = (fa->flags & SURF_NEEDS_CLIP);
+	if (needsclip)
+		fa->flags &= ~SURF_NEEDS_CLIP;
 
 	p = fa->polys;
 
@@ -164,15 +185,14 @@ void DrawGLFlowingPoly (msurface_t *fa)
 
 	sceGuTexOffset (scroll, 0.0f);
 
-	if (p->c_verts && p->c_frameverts == r_framecount)
+	if (p->c_verts && p->c_frameverts == framecount)
 	{
 		if (p->c_numverts)
 			sceGuDrawArray (GU_TRIANGLE_FAN, GU_TEXTURE_32BITF | GU_VERTEX_32BITF, p->c_numverts, 0, p->c_verts);
-		return;
 	}
 	else
 	{
-		if (GU_ClipIsRequired (&p->verts[0], p->numverts))
+		if (needsclip && GU_ClipIsRequired (&p->verts[0], p->numverts))
 		{
 			// clip the polygon.
 			gu_vert_ftv_t	*cv;
@@ -201,7 +221,7 @@ void DrawGLFlowingPoly (msurface_t *fa)
 			p->c_verts = &p->verts[0];
 		}
 
-		p->c_frameverts = r_framecount;
+		p->c_frameverts = framecount;
 	}
 	sceGuTexOffset (0.0f, 0.0f);
 }
@@ -253,6 +273,10 @@ void DrawGLPolyChain( msurface_t *fa, float soffset, float toffset )
 {
 	glpoly_t	*p;
 	float		scls, sclt, offs, offt;
+	int			framecount;
+	qboolean	needsclip;
+
+	framecount = r_framecount;
 
 	// scale to lightmap coordinates
 	scls = (float)fa->texinfo->image->width * BLOCK_WIDTH_16_INV;
@@ -263,36 +287,41 @@ void DrawGLPolyChain( msurface_t *fa, float soffset, float toffset )
 	sceGuTexScale (scls, sclt);
 	sceGuTexOffset (offs, offt);
 
+	needsclip = (fa->flags & SURF_NEEDS_CLIP);
+	if (needsclip)
+		fa->flags &= ~SURF_NEEDS_CLIP;
+
 	for (p = fa->polys; p != 0; p = p->chain)
 	{
-		if (p->c_verts && p->c_frameverts == r_framecount)
+		if (p->c_verts && p->c_frameverts == framecount)
 		{
 			if (p->c_numverts)
 				sceGuDrawArray (GU_TRIANGLE_FAN, GU_TEXTURE_32BITF | GU_VERTEX_32BITF, p->c_numverts, 0, p->c_verts);
-			continue;
 		}
-
-		if (GU_ClipIsRequired (&p->verts[0], p->numverts))
+		else
 		{
-			// clip the polygon.
-			gu_vert_ftv_t	*cv;
-			int				cvc;
-
-			GU_Clip (&p->verts[0], p->numverts, &cv, &cvc);
-			if (cvc)
+			if (needsclip && GU_ClipIsRequired (&p->verts[0], p->numverts))
 			{
+				// clip the polygon.
+				gu_vert_ftv_t	*cv;
+				int				cvc;
+
+				GU_Clip (&p->verts[0], p->numverts, &cv, &cvc);
+				if (cvc)
+				{
 #if CLIPPING_DEBUGGING
-				sceGuDisable (GU_TEXTURE_2D);
-				sceGuColor (0xff0000ff);
+					sceGuDisable (GU_TEXTURE_2D);
+					sceGuColor (0xff0000ff);
 #endif
-				sceGuDrawArray (GU_TRIANGLE_FAN, GU_TEXTURE_32BITF | GU_VERTEX_32BITF, cvc, 0, cv);
+					sceGuDrawArray (GU_TRIANGLE_FAN, GU_TEXTURE_32BITF | GU_VERTEX_32BITF, cvc, 0, cv);
 #if CLIPPING_DEBUGGING
-				sceGuEnable (GU_TEXTURE_2D);
-				sceGuColor (GU_HCOLOR_DEFAULT);
+					sceGuEnable (GU_TEXTURE_2D);
+					sceGuColor (GU_HCOLOR_DEFAULT);
 #endif
+				}
 			}
+			else sceGuDrawArray (GU_TRIANGLE_FAN, GU_TEXTURE_32BITF | GU_VERTEX_32BITF, p->numverts, 0, &p->verts[0]);
 		}
-		else sceGuDrawArray (GU_TRIANGLE_FAN, GU_TEXTURE_32BITF | GU_VERTEX_32BITF, p->numverts, 0, &p->verts[0]);
 	}
 
 	sceGuTexOffset (0.0f, 0.0f);
@@ -501,7 +530,7 @@ void R_RenderBrushPoly (msurface_t *fa)
 	if(fa->texinfo->flags & SURF_FLOWING)
 		DrawGLFlowingPoly (fa);
 	else
-		DrawGLPoly (fa->polys);
+		DrawGLPoly (fa);
 //PGM
 //======
 	/*
@@ -581,7 +610,7 @@ void R_DrawAlphaSurfaces (void)
 		else if(s->texinfo->flags & SURF_FLOWING)			// PGM	9/16/98
 			DrawGLFlowingPoly (s);							// PGM
 		else
-			DrawGLPoly (s->polys);
+			DrawGLPoly (s);
 	}
 
 	GL_TexEnv (GU_TFX_REPLACE);
@@ -631,7 +660,7 @@ void DrawTextureChains (void)
 R_DrawInlineBModel
 =================
 */
-void R_DrawInlineBModel (void)
+void R_DrawInlineBModel (qboolean needsclip)
 {
 	int			i, k;
 	cplane_t	*pplane;
@@ -672,6 +701,12 @@ void R_DrawInlineBModel (void)
 		if (((psurf->flags & SURF_PLANEBACK) && (dot < -BACKFACE_EPSILON)) ||
 			(!(psurf->flags & SURF_PLANEBACK) && (dot > BACKFACE_EPSILON)))
 		{
+
+			if (needsclip)
+				psurf->flags |= SURF_NEEDS_CLIP;
+			else
+				psurf->flags &= ~SURF_NEEDS_CLIP;
+
 			if (psurf->texinfo->flags & (SURF_TRANS33|SURF_TRANS66) )
 			{	// add to the translucent chain
 				psurf->texturechain = r_alpha_surfaces;
@@ -706,6 +741,7 @@ void R_DrawBrushModel (entity_t *e)
 	vec3_t		mins, maxs;
 	int			i;
 	qboolean	rotated;
+	int			cullstatus;
 
 	if (currentmodel->nummodelsurfaces == 0)
 		return;
@@ -729,7 +765,8 @@ void R_DrawBrushModel (entity_t *e)
 		VectorAdd (e->origin, currentmodel->maxs, maxs);
 	}
 
-	if (R_CullBox (mins, maxs))
+	cullstatus = GU_ClipCullBox (mins, maxs);
+	if (cullstatus == GU_CULL_OUTSIDE)
 		return;
 
 	sceGuColor (GU_HCOLOR_DEFAULT);
@@ -761,7 +798,7 @@ void R_DrawBrushModel (entity_t *e)
 	//GL_TexEnv( GU_TFX_REPLACE );
 
 	GU_ClipSetModelFrustum ();
-	R_DrawInlineBModel ();
+	R_DrawInlineBModel (cullstatus == GU_CULL_CLIP);
 	GU_ClipRestoreWorldFrustum ();
 
 	sceGumPopMatrix ();
@@ -783,114 +820,134 @@ R_RecursiveWorldNode
 */
 void R_RecursiveWorldNode (mnode_t *node)
 {
-	int			c, side, sidebit;
+	int			c, side, sidebit, cullstatus;
+	int			framecount, visframecount, numsurfaces;
 	cplane_t	*plane;
-	msurface_t	*surf, **mark;
+	msurface_t	*surfs, *surf, *firstsurf, *alphasurf, **mark;
 	mleaf_t		*pleaf;
-	float		dot;
+	const byte	*areabits;
+	float		dot, *model_org;
 	image_t		*image;
+	mnode_t		*childnode;
 
-	if (node->contents == CONTENTS_SOLID)
-		return;		// solid
+	// local copy
+	surfs = r_worldmodel->surfaces;
+	model_org = modelorg;
+	framecount = r_framecount;
+	visframecount = r_visframecount;
+	areabits = r_newrefdef.areabits;
 
-	if (node->visframe != r_visframecount)
-		return;
-	if (R_CullBox (node->minmaxs, node->minmaxs+3))
-		return;
-
-// if a leaf node, draw stuff
-	if (node->contents != -1)
+	while (node)
 	{
-		pleaf = (mleaf_t *)node;
+		cullstatus = GU_ClipCullBox (node->minmaxs, node->minmaxs + 3);
+		if (cullstatus == GU_CULL_OUTSIDE)
+			return;
 
-		// check for door connected areas
-		if (r_newrefdef.areabits)
+		// if a leaf node, draw stuff
+		if (node->contents != -1)
 		{
-			if (! (r_newrefdef.areabits[pleaf->area>>3] & (1<<(pleaf->area&7)) ) )
-				return;		// not visible
-		}
+			pleaf = (mleaf_t *)node;
 
-		mark = pleaf->firstmarksurface;
-		c = pleaf->nummarksurfaces;
-
-		if (c)
-		{
-			do
+			// check for door connected areas
+			if (areabits)
 			{
-				(*mark)->visframe = r_framecount;
-				mark++;
-			} while (--c);
+				if (! (areabits[pleaf->area>>3] & (1<<(pleaf->area&7)) ) )
+					return;		// not visible
+			}
+
+			mark = pleaf->firstmarksurface;
+			c = pleaf->nummarksurfaces;
+
+			if (c)
+			{
+				do
+				{
+					(*mark)->visframe = framecount;
+					mark++;
+				} while (--c);
+			}
+
+			return;
 		}
 
-		return;
-	}
+		// node is just a decision point, so go down the apropriate sides
 
-// node is just a decision point, so go down the apropriate sides
+		// find which side of the node we are on
+		plane = node->plane;
+		dot = (__builtin_expect(plane->type < 3, 1)) ? model_org[plane->type] : DotProduct(model_org, plane->normal);
+		dot -= plane->dist;
 
-// find which side of the node we are on
-	plane = node->plane;
-
-	switch (plane->type)
-	{
-	case PLANE_X:
-		dot = modelorg[0] - plane->dist;
-		break;
-	case PLANE_Y:
-		dot = modelorg[1] - plane->dist;
-		break;
-	case PLANE_Z:
-		dot = modelorg[2] - plane->dist;
-		break;
-	default:
-		dot = DotProduct (modelorg, plane->normal) - plane->dist;
-		break;
-	}
-
-	if (dot >= 0)
-	{
-		side = 0;
-		sidebit = 0;
-	}
-	else
-	{
-		side = 1;
-		sidebit = SURF_PLANEBACK;
-	}
-
-// recurse down the children, front side first
-	R_RecursiveWorldNode (node->children[side]);
-
-	// draw stuff
-	for ( c = node->numsurfaces, surf = r_worldmodel->surfaces + node->firstsurface; c ; c--, surf++)
-	{
-		if (surf->visframe != r_framecount)
-			continue;
-
-		if ( (surf->flags & SURF_PLANEBACK) != sidebit )
-			continue;		// wrong side
-
-		if (surf->texinfo->flags & SURF_SKY)
-		{	// just adds to visible sky bounds
-			R_AddSkySurface (surf);
-		}
-		else if (surf->texinfo->flags & (SURF_TRANS33|SURF_TRANS66))
-		{	// add to the translucent chain
-			surf->texturechain = r_alpha_surfaces;
-			r_alpha_surfaces = surf;
-		}
-		else
+		side = (dot < 0);
+		sidebit = side ? SURF_PLANEBACK : 0;
+#if 1
+		childnode = node->children[side];
+		if (childnode && childnode->visframe == visframecount)
 		{
-			// the polygon is visible, so add it to the texture
-			// sorted chain
-			// FIXME: this is a hack for animation
-			image = R_TextureAnimation (surf->texinfo);
-			surf->texturechain = image->texturechain;
-			image->texturechain = surf;
+			// recurse down the children, front side first
+			R_RecursiveWorldNode (childnode);
 		}
-	}
+#else
+		R_RecursiveWorldNode (node->children[side]);
+#endif
 
-	// recurse down the back side
-	R_RecursiveWorldNode (node->children[!side]);
+		alphasurf = r_alpha_surfaces;
+		firstsurf = &surfs[node->firstsurface];
+		numsurfaces = node->numsurfaces;
+
+		//clipbit = (cullstatus == GU_CULL_CLIP) ? SURF_NEEDS_CLIP : 0;
+
+		// draw stuff
+		for (c = 0; c < numsurfaces; c++)
+		{
+			surf = &firstsurf[c];
+
+			// Fill cache surf + 1
+			__asm__ volatile (
+				"cache	0x1e, %1(%0)\n" // 0x1e - Fill(D)
+				::	"r" (surf), "i" (sizeof(msurface_t))
+			);
+
+			if (surf->visframe != framecount)
+				continue;
+
+			if ( (surf->flags & SURF_PLANEBACK) != sidebit )
+				continue;		// wrong side
+
+			if (surf->texinfo->flags & SURF_SKY)
+			{	// just adds to visible sky bounds
+				R_AddSkySurface (surf);
+			}
+			else
+			{
+				if (cullstatus == GU_CULL_CLIP && !(surf->flags & SURF_NEEDS_CLIP))
+					surf->flags |= SURF_NEEDS_CLIP;
+
+				if (surf->texinfo->flags & (SURF_TRANS33|SURF_TRANS66))
+				{	// add to the translucent chain
+					surf->texturechain = alphasurf;
+					alphasurf = surf;
+				}
+				else
+				{
+					// the polygon is visible, so add it to the texture
+					// sorted chain
+					// FIXME: this is a hack for animation
+					image = R_TextureAnimation (surf->texinfo);
+					surf->texturechain = image->texturechain;
+					image->texturechain = surf;
+				}
+			}
+		}
+
+		r_alpha_surfaces = alphasurf;
+#if 1
+		childnode = node->children[!side];
+		node = (childnode && childnode->visframe == visframecount) ? childnode : NULL; 
+#else
+		// to the back side
+		node = node->children[!side];
+#endif
+	}
 }
 
 
@@ -902,6 +959,7 @@ R_DrawWorld
 void R_DrawWorld (void)
 {
 	entity_t	ent;
+	mnode_t		*worldnodes;
 
 	if (!r_drawworld->value)
 		return;
@@ -925,7 +983,13 @@ void R_DrawWorld (void)
 	memset (gl_lms.lightmap_surfaces, 0, sizeof(gl_lms.lightmap_surfaces));
 
 	R_ClearSkyBox ();
+#if 1
+	worldnodes = r_worldmodel->nodes;
+	if(worldnodes && worldnodes->visframe == r_visframecount && worldnodes->contents != CONTENTS_SOLID)
+		R_RecursiveWorldNode (worldnodes);
+#else
 	R_RecursiveWorldNode (r_worldmodel->nodes);
+#endif
 	DrawTextureChains ();
 	R_BlendLightmaps ();
 
@@ -948,10 +1012,12 @@ void R_MarkLeaves (void)
 {
 	byte	*vis;
 	byte	fatvis[MAX_MAP_LEAFS/8];
-	mnode_t	*node;
-	int		i, c;
-	mleaf_t	*leaf;
+	mnode_t	*nodes, *node;
+	model_t *world;
+	int		i, c, num_leafs, num_nodes;
+	mleaf_t	*leafs, *leaf;
 	int		cluster;
+	int		visframecount;
 
 	if (r_oldviewcluster == r_viewcluster && r_oldviewcluster2 == r_viewcluster2 && !r_novis->value && r_viewcluster != -1)
 		return;
@@ -961,34 +1027,41 @@ void R_MarkLeaves (void)
 	if (gl_lockpvs->value)
 		return;
 
-	r_visframecount++;
+	world = r_worldmodel;
+    leafs = world->leafs;
+	nodes = world->nodes;
+    num_leafs = world->numleafs;
+	num_nodes = world->numnodes;
+	visframecount = ++r_visframecount;
+
 	r_oldviewcluster = r_viewcluster;
 	r_oldviewcluster2 = r_viewcluster2;
 
-	if (r_novis->value || r_viewcluster == -1 || !r_worldmodel->vis)
+	if (r_novis->value || r_viewcluster == -1 || !world->vis)
 	{
 		// mark everything
-		for (i=0 ; i<r_worldmodel->numleafs ; i++)
-			r_worldmodel->leafs[i].visframe = r_visframecount;
-		for (i=0 ; i<r_worldmodel->numnodes ; i++)
-			r_worldmodel->nodes[i].visframe = r_visframecount;
+		for (i = 0; i < num_leafs; i++)
+			leafs[i].visframe = visframecount;
+		for (i = 0; i < num_nodes; i++)
+			nodes[i].visframe = visframecount;
 		return;
 	}
 
-	vis = Mod_ClusterPVS (r_viewcluster, r_worldmodel);
+	vis = Mod_ClusterPVS (r_viewcluster, world);
 	// may have to combine two clusters because of solid water boundaries
 	if (r_viewcluster2 != r_viewcluster)
 	{
-		memcpy (fatvis, vis, (r_worldmodel->numleafs+7)/8);
-		vis = Mod_ClusterPVS (r_viewcluster2, r_worldmodel);
-		c = (r_worldmodel->numleafs+31)/32;
-		for (i=0 ; i<c ; i++)
+		memcpy (fatvis, vis, (num_leafs + 7) / 8);
+		vis = Mod_ClusterPVS (r_viewcluster2, world);
+		c = (num_leafs + 31) / 32;
+		for (i = 0; i < c; i++)
 			((int *)fatvis)[i] |= ((int *)vis)[i];
 		vis = fatvis;
 	}
 
-	for (i=0,leaf=r_worldmodel->leafs ; i<r_worldmodel->numleafs ; i++, leaf++)
+	for (i = 0; i < num_leafs; i++)
 	{
+		leaf = &leafs[i];
 		cluster = leaf->cluster;
 		if (cluster == -1)
 			continue;
@@ -997,9 +1070,9 @@ void R_MarkLeaves (void)
 			node = (mnode_t *)leaf;
 			do
 			{
-				if (node->visframe == r_visframecount)
+				if (node->visframe == visframecount)
 					break;
-				node->visframe = r_visframecount;
+				node->visframe = visframecount;
 				node = node->parent;
 			} while (node);
 		}
