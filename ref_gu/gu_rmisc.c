@@ -93,34 +93,65 @@ void R_InitParticleTexture (void)
 ==============================================================================
 */
 
-typedef struct _TargaHeader {
-	unsigned char 	id_length, colormap_type, image_type;
-	unsigned short	colormap_index, colormap_length;
-	unsigned char	colormap_size;
-	unsigned short	x_origin, y_origin, width, height;
-	unsigned char	pixel_size, attributes;
-} TargaHeader;
-
-
 /*
 ==================
 GL_ScreenShot_f
 ==================
 */
+#pragma pack(push, 1)
+typedef struct
+{
+	// File Header
+	struct
+	{
+		unsigned short type;
+		unsigned int   size;
+		unsigned short reserved1;
+		unsigned short reserved2;
+		unsigned int   offset;
+	} file_header;
+
+	// Info Header V4
+	struct
+	{
+
+		unsigned int   header_size;
+		int            width;
+		int            height;
+		unsigned short planes;
+		unsigned short bpp;
+		unsigned int   compression;
+		unsigned int   img_size;
+		int            res_x;
+		int            res_y;
+		unsigned int   clr_used;
+		unsigned int   clr_important;
+		unsigned int   r_mask;
+		unsigned int   g_mask;
+		unsigned int   b_mask;
+		unsigned int   a_mask;
+		unsigned int   colorspace_type;
+		unsigned int   unused[12];
+	} info_header;
+} bmp_header_t;
+#pragma pack(pop)
+
 void GL_ScreenShot_f (void)
 {
-	byte		*buffer;
-	char		picname[80];
-	char		checkname[MAX_OSPATH];
-	int			i, j, size, temp;
-	byte		*dst, *src;
+	byte			*buffer;
+	char			picname[80];
+	char			checkname[MAX_OSPATH];
+	int				i, j, size, src_stride, dst_stride;
+	unsigned short	pixel;
+	byte			*src, *dst;
+	bmp_header_t	*hp;
 
 //
 // find a file name to save it to
 //
-	strcpy(picname,"quake00.tga");
+	strcpy(picname,"quake00.bmp");
 
-	for (i=0 ; i<=99 ; i++)
+	for (i = 0; i <= 99; i++)
 	{
 		picname[5] = i/10 + '0';
 		picname[6] = i%10 + '0';
@@ -128,42 +159,73 @@ void GL_ScreenShot_f (void)
 		if (!ri.FS_FileExists(checkname, FS_PATH_GAMEDIR | FS_TYPE_RFS))
 			break;	// file doesn't exist
 	}
-	if (i==100)
+	if (i == 100)
 	{
 		ri.Con_Printf (PRINT_ALL, "SCR_ScreenShot_f: Couldn't create a file\n");
 		return;
  	}
 
-	size = vid.width*vid.height*3 + 18;
-	buffer = malloc(size);
-	memset (buffer, 0, 18);
-	buffer[2] = 2;		// uncompressed type
-	buffer[12] = vid.width&255;
-	buffer[13] = vid.width>>8;
-	buffer[14] = vid.height&255;
-	buffer[15] = vid.height>>8;
-	buffer[16] = 24;	// pixel size
+	src_stride = gu_render.buffer.width * gu_render.buffer.bpp;
+	dst_stride = (vid.width * gu_render.buffer.bpp + 3) & ~3; // align to 4-byte boundary
 
-	// vertical flip
-	src = (byte*)gu_render.buffer.disp_ptr + (gu_render.buffer.width * gu_render.screen.height * 2);
-	dst = buffer + 18;
-	for(i = 0; i < vid.height; i++)
+	size = dst_stride * vid.height + sizeof(bmp_header_t);
+	buffer = calloc (size, 1);
+
+	// BMP Header
+	hp = (bmp_header_t *)buffer;
+
+	hp->file_header.type = 0x4D42; // "BM"
+	hp->file_header.size = size;
+	hp->file_header.offset = sizeof(bmp_header_t);
+
+	hp->info_header.header_size = sizeof(hp->info_header);
+	hp->info_header.width = vid.width;
+	hp->info_header.height = vid.height;
+	hp->info_header.planes = 1;
+	hp->info_header.bpp = gu_render.buffer.bpp * 8;
+	hp->info_header.compression = 3; // BI_BITFIELDS
+	hp->info_header.img_size = dst_stride * vid.height;
+
+	switch(gu_render.buffer.format)
 	{
-		src -= gu_render.buffer.width * 2;
-		/***/
-		for(j = 0; j < vid.width; j++)
-		{
-			// 565 to bgr
-			dst[j * 3 + 2]  = (src[j * 2 + 0] & 0x1f) << 3;
-			dst[j * 3 + 1]  = (src[j * 2 + 0] & 0xe0) >> 3;
-			dst[j * 3 + 1] |= (src[j * 2 + 1] & 0x07) << 5;
-			dst[j * 3 + 0]  = (src[j * 2 + 1] & 0xf8);
-		}
-		/***/
-		dst += vid.width * 3;
+	case GU_PSM_5650:
+		hp->info_header.r_mask = 0x0000001F;
+		hp->info_header.g_mask = 0x000007E0;
+		hp->info_header.b_mask = 0x0000F800;
+		break;
+	case GU_PSM_5551:
+		hp->info_header.r_mask = 0x0000001F;
+		hp->info_header.g_mask = 0x000003E0;
+		hp->info_header.b_mask = 0x00007C00;
+		hp->info_header.a_mask = 0x00008000;
+		break;
+	case GU_PSM_4444:
+		hp->info_header.r_mask = 0x0000000F;
+		hp->info_header.g_mask = 0x000000F0;
+		hp->info_header.b_mask = 0x00000F00;
+		hp->info_header.a_mask = 0x0000F000;
+		break;
+	default: // GU_PSM_8888
+		hp->info_header.r_mask = 0x000000FF;
+		hp->info_header.g_mask = 0x0000FF00;
+		hp->info_header.b_mask = 0x00FF0000;
+		hp->info_header.a_mask = 0xFF000000;
+		break;
 	}
 
-	ri.FS_WriteFile(checkname, buffer, size, FS_PATH_GAMEDIR);
+	sceKernelDcacheWritebackRange(gu_render.buffer.disp_ptr, gu_render.screen.height * src_stride);
+
+	dst = buffer + sizeof(bmp_header_t);
+	src = (byte *)gu_render.buffer.disp_ptr + gu_render.screen.height * src_stride;
+
+	for (i = 0; i < vid.height; i++)
+	{
+		src -= src_stride;
+		memcpy (dst, src, vid.width * gu_render.buffer.bpp);
+		dst += dst_stride;
+	}
+
+	ri.FS_WriteFile (checkname, buffer, size, FS_PATH_GAMEDIR);
 
 	free (buffer);
 
