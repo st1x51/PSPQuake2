@@ -153,6 +153,7 @@ void R_RenderDlights (void)
 	sceGuColor (GU_HCOLOR_DEFAULT);
 	sceGuDisable (GU_BLEND);
 	sceGuEnable (GU_TEXTURE_2D);
+	sceGuShadeModel (GU_FLAT);
 	sceGuBlendFunc (GU_ADD, GU_SRC_ALPHA, GU_ONE_MINUS_SRC_ALPHA, 0, 0);
 	sceGuDepthMask (GU_FALSE);
 }
