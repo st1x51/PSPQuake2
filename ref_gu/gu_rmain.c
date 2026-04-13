@@ -1164,54 +1164,29 @@ void R_SetPalette (const unsigned char *palette)
 
 	byte *rp = (byte *)r_rawpalette;
 
-#if 0
-	if (palette)
+	if ( palette )
 	{
 		for (i = 0; i < 256; i++)
 		{
-			rp[i*4+0] = palette[i*3+0];
-			rp[i*4+1] = palette[i*3+1];
-			rp[i*4+2] = palette[i*3+2];
-			rp[i*4+3] = 0xff;
+
+			rp[i * 4 + 0] = gl_state.gammatable[palette[i * 3 + 0]];
+			rp[i * 4 + 1] = gl_state.gammatable[palette[i * 3 + 1]];
+			rp[i * 4 + 2] = gl_state.gammatable[palette[i * 3 + 2]];
+			rp[i * 4 + 3] = 0xff;
 		}
 	}
 	else
 	{
 		for (i = 0; i < 256; i++)
 		{
-			rp[i*4+0] = d_8to24table[i] & 0xff;
-			rp[i*4+1] = (d_8to24table[i] >> 8) & 0xff;
-			rp[i*4+2] = (d_8to24table[i] >> 16) & 0xff;
-			rp[i*4+3] = 0xff;
+			rp[i * 4 + 0] = gl_state.gammatable[ d_8to24table[i] & 0xff];
+			rp[i * 4 + 1] = gl_state.gammatable[(d_8to24table[i] >> 8) & 0xff];
+			rp[i * 4 + 2] = gl_state.gammatable[(d_8to24table[i] >> 16) & 0xff];
+			rp[i * 4 + 3] = (d_8to24table[i] >> 24) & 0xff;
 		}
-	}
-	GL_SetTexturePalette( r_rawpalette );
-#else
-	for (i = 0; i < 256; i++)
-	{
-		if ( palette )
-		{
-			color[0] = palette[i * 3 + 0];
-			color[1] = palette[i * 3 + 1];
-			color[2] = palette[i * 3 + 2];
-			color[3] = 0xff;
-		}
-		else
-		{
-			color[0] = d_8to24table[i] & 0xff;
-			color[1] = (d_8to24table[i] >> 8) & 0xff;
-			color[2] = (d_8to24table[i] >> 16) & 0xff;
-			color[3] = (d_8to24table[i] >> 24) & 0xff;
-		}
-
-		rp[i * 4 + 0] = gl_state.gammatable[color[0]];
-		rp[i * 4 + 1] = gl_state.gammatable[color[1]];
-		rp[i * 4 + 2] = gl_state.gammatable[color[2]];
-		rp[i * 4 + 3] = color[3];
 	}
 
 	GL_SetTexturePalette (r_rawpalette);
-#endif
 
 	sceGuClearColor (0x00000000);
 	sceGuClear (GU_COLOR_BUFFER_BIT | GU_FAST_CLEAR_BIT);
