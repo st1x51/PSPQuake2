@@ -383,35 +383,33 @@ void GL_DrawAliasShadow (dmdl_t *paliashdr, int posenum)
 R_CullAliasModel
 =============
 */
-static qboolean R_CullAliasModel (dmdl_t *paliashdr, vec3_t bbox[8], entity_t *e)
+static qboolean R_CullAliasModel (dmdl_t *paliashdr, vec3_t mins, vec3_t maxs, entity_t *e)
 {
 	int			i, clipstatus;
-	vec3_t		mins, maxs;
 	vec3_t		vectors[3];
+	float		thismm, oldmm;
 	vec3_t		thismins, oldmins, thismaxs, oldmaxs;
 	daliasframe_t *pframe, *poldframe;
 	vec3_t		angles;
 
-	if ( ( e->frame >= paliashdr->num_frames ) || ( e->frame < 0 ) )
+	if ((e->frame >= paliashdr->num_frames) || (e->frame < 0))
 	{
 		ri.Con_Printf (PRINT_ALL, "R_CullAliasModel %s: no such frame %d\n",
 			currentmodel->name, e->frame);
 		e->frame = 0;
 	}
-	if ( ( e->oldframe >= paliashdr->num_frames ) || ( e->oldframe < 0 ) )
+	if ((e->oldframe >= paliashdr->num_frames) || (e->oldframe < 0))
 	{
 		ri.Con_Printf (PRINT_ALL, "R_CullAliasModel %s: no such oldframe %d\n",
 			currentmodel->name, e->oldframe);
 		e->oldframe = 0;
 	}
 
-	pframe = ( daliasframe_t * ) ( ( byte * ) paliashdr +
-		                              paliashdr->ofs_frames +
-									  e->frame * paliashdr->framesize);
+	pframe = (daliasframe_t *)((byte *)paliashdr + paliashdr->ofs_frames +
+										e->frame * paliashdr->framesize);
 
-	poldframe = ( daliasframe_t * ) ( ( byte * ) paliashdr +
-		                              paliashdr->ofs_frames +
-									  e->oldframe * paliashdr->framesize);
+	poldframe = (daliasframe_t *)((byte *)paliashdr + paliashdr->ofs_frames +
+										e->oldframe * paliashdr->framesize);
 
 	/*
 	** compute axially aligned mins and maxs
@@ -421,59 +419,23 @@ static qboolean R_CullAliasModel (dmdl_t *paliashdr, vec3_t bbox[8], entity_t *e
 		for ( i = 0; i < 3; i++ )
 		{
 			mins[i] = pframe->translate[i];
-			maxs[i] = mins[i] + pframe->scale[i]*255;
+			maxs[i] = mins[i] + pframe->scale[i] * 255.0f;
 		}
 	}
 	else
 	{
 		for ( i = 0; i < 3; i++ )
 		{
-			thismins[i] = pframe->translate[i];
-			thismaxs[i] = thismins[i] + pframe->scale[i]*255;
+			thismm = pframe->translate[i];
+			oldmm  = poldframe->translate[i];
+			mins[i] = Q_min (thismm, oldmm);
 
-			oldmins[i]  = poldframe->translate[i];
-			oldmaxs[i]  = oldmins[i] + poldframe->scale[i]*255;
-
-			if ( thismins[i] < oldmins[i] )
-				mins[i] = thismins[i];
-			else
-				mins[i] = oldmins[i];
-
-			if ( thismaxs[i] > oldmaxs[i] )
-				maxs[i] = thismaxs[i];
-			else
-				maxs[i] = oldmaxs[i];
+			thismm += pframe->scale[i] * 255.0f;
+			oldmm  += poldframe->scale[i] * 255.0f;
+			maxs[i] = Q_max (thismm, oldmm);
 		}
 	}
-
-	GU_ClipTransformAABBFromModelMatrix(mins, maxs, mins, maxs);
-
-#if DRAW_BBOX
-	/*
-	** compute a full bounding box
-	*/
-	for ( i = 0; i < 8; i++ )
-	{
-		vec3_t   tmp;
-
-		if ( i & 1 )
-			tmp[0] = mins[0];
-		else
-			tmp[0] = maxs[0];
-
-		if ( i & 2 )
-			tmp[1] = mins[1];
-		else
-			tmp[1] = maxs[1];
-
-		if ( i & 4 )
-			tmp[2] = mins[2];
-		else
-			tmp[2] = maxs[2];
-
-		VectorCopy( tmp, bbox[i] );
-	}
-#endif
+	GU_ClipTransformAABBFromModelMatrix (mins, maxs, mins, maxs);
 
 	return (GU_ClipCullBox(mins, maxs) == GU_CULL_OUTSIDE);
 }
@@ -660,15 +622,17 @@ R_DrawAliasModel
 */
 void R_DrawAliasModel (entity_t *e)
 {
-	int			i;
+	int			i, flags;
 	dmdl_t		*paliashdr;
 	float		an;
-	vec3_t		bbox[8];
+	vec3_t		mins, maxs;
 	image_t		*skin;
 	qboolean	light_en;
 	ScePspFVector3	scale;
 
-	if ( e->flags & RF_WEAPONMODEL )
+	flags = e->flags;
+
+	if (flags & RF_WEAPONMODEL)
 	{
 		if ( r_lefthand->value == 2 )
 			return;
@@ -681,12 +645,12 @@ void R_DrawAliasModel (entity_t *e)
 	R_RotateForEntity (e); // &proj update
 	e->angles[PITCH] = -e->angles[PITCH];	// sigh.
 
-	if ( !( e->flags & RF_WEAPONMODEL ) )
+	if (!(flags & RF_WEAPONMODEL))
 	{
-		if (R_CullAliasModel ( paliashdr, bbox, e))
+		if (R_CullAliasModel (paliashdr, mins, maxs, e))
 		{
-			sceGumPopMatrix();
-			sceGumUpdateMatrix();
+			sceGumPopMatrix ();
+			sceGumUpdateMatrix ();
 			return;
 		}
 	}
@@ -705,10 +669,10 @@ void R_DrawAliasModel (entity_t *e)
 	//
 	// draw all the triangles
 	//
-	if (currententity->flags & RF_DEPTHHACK) // hack the depth range to prevent view model from poking into walls
+	if (flags & RF_DEPTHHACK) // hack the depth range to prevent view model from poking into walls
 		sceGuDepthRange (gldepthmin, gldepthmin + 0.3 * (gldepthmax - gldepthmin));
 
-	if ((currententity->flags & RF_WEAPONMODEL) && (r_lefthand->value == 1.0f))
+	if ((flags & RF_WEAPONMODEL) && (r_lefthand->value == 1.0f))
 	{
 		sceGumMatrixMode (GU_PROJECTION);
 		sceGumPushMatrix ();
@@ -747,12 +711,10 @@ void R_DrawAliasModel (entity_t *e)
 	sceGuShadeModel (GU_SMOOTH);
 
 	GL_TexEnv (GU_TFX_MODULATE);
-	if (currententity->flags & RF_TRANSLUCENT)
+	if (flags & RF_TRANSLUCENT)
 		sceGuEnable (GU_BLEND);
 
-
-	if ( (currententity->frame >= paliashdr->num_frames)
-		|| (currententity->frame < 0) )
+	if ((currententity->frame >= paliashdr->num_frames) || (currententity->frame < 0))
 	{
 		ri.Con_Printf (PRINT_ALL, "R_DrawAliasModel %s: no such frame %d\n",
 			currentmodel->name, currententity->frame);
@@ -760,8 +722,7 @@ void R_DrawAliasModel (entity_t *e)
 		currententity->oldframe = 0;
 	}
 
-	if ( (currententity->oldframe >= paliashdr->num_frames)
-		|| (currententity->oldframe < 0))
+	if ((currententity->oldframe >= paliashdr->num_frames) || (currententity->oldframe < 0))
 	{
 		ri.Con_Printf (PRINT_ALL, "R_DrawAliasModel %s: no such oldframe %d\n",
 			currentmodel->name, currententity->oldframe);
@@ -769,7 +730,7 @@ void R_DrawAliasModel (entity_t *e)
 		currententity->oldframe = 0;
 	}
 
-	if ( !r_lerpmodels->value )
+	if (!r_lerpmodels->value)
 		currententity->backlerp = 0;
 	GL_DrawAliasFrameLerp (paliashdr, currententity->backlerp);
 
@@ -778,7 +739,7 @@ void R_DrawAliasModel (entity_t *e)
 
 	sceGumPopMatrix();
 
-	if ((currententity->flags & RF_WEAPONMODEL ) && (r_lefthand->value == 1.0F))
+	if ((flags & RF_WEAPONMODEL) && (r_lefthand->value == 1.0f))
 	{
 		sceGumMatrixMode (GU_PROJECTION);
 		sceGumPopMatrix ();
@@ -786,16 +747,16 @@ void R_DrawAliasModel (entity_t *e)
 		sceGuFrontFace (GU_CW); // GL_FRONT
 	}
 
-	if ( currententity->flags & RF_TRANSLUCENT )
+	if (flags & RF_TRANSLUCENT)
 		sceGuDisable (GU_BLEND);
 
-	if (currententity->flags & RF_DEPTHHACK)
+	if (flags & RF_DEPTHHACK)
 		sceGuDepthRange (gldepthmin, gldepthmax);
 
 	if (light_en)
 		sceGuDisable (GU_LIGHTING);
 #if 1
-	if (gl_shadows->value && !(currententity->flags & (RF_TRANSLUCENT | RF_WEAPONMODEL)))
+	if (gl_shadows->value && !(flags & (RF_TRANSLUCENT | RF_WEAPONMODEL)))
 	{
 		sceGumPushMatrix ();
 		R_RotateForEntity (e);
@@ -810,22 +771,11 @@ void R_DrawAliasModel (entity_t *e)
 #endif
 	sceGumUpdateMatrix();
 
-
-#if DRAW_BBOX
-	sceGuDisable (GU_CULL_FACE);
-	sceGuDisable (GU_TEXTURE_2D);
-	sceGuColor (0xFFFFFF00);
-	gu_vert_fv_t *bboxverts = sceGuGetMemory (sizeof(gu_vert_fv_t) * 8);
-	for (i = 0; i < 8; i++)
-	{
-		VectorCopy (bbox[i], bboxverts[i].xyz);
-	}
-	sceGuDrawArray (GU_LINE_STRIP, GU_VERTEX_32BITF, 8, 0, bboxverts);
-	sceGuEnable (GU_TEXTURE_2D);
-	if (gl_cull->value)
-		sceGuEnable (GU_CULL_FACE);
-#endif
 	sceGuColor (GU_HCOLOR_DEFAULT);
+#if CULLING_DEBUGGING
+	if (!(flags & RF_WEAPONMODEL))
+		DEBUG_DrawAliasAABB (mins, maxs);
+#endif
 }
 
 

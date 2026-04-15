@@ -343,7 +343,20 @@ void GL_BuildGammaTable (float gamma, float intensity);
 //
 // gu_clipping.c
 //
-#define CLIPPING_DEBUGGING 0
+#define CLIPPING_DEBUGGING	0
+#define CULLING_DEBUGGING	0
+
+#if CULLING_DEBUGGING
+#define DEBUG_DrawBModelAABB(mins, maxs)	GU_ClipDrawAABB(mins, maxs, 0xFFFFFF00) // cyan
+#define DEBUG_DrawAliasAABB(mins, maxs)		GU_ClipDrawAABB(mins, maxs, 0xFF00FFFF) // yellow
+#define DEBUG_DrawSpriteAABB(mins, maxs)	GU_ClipDrawAABB(mins, maxs, 0xFF00FF00) // green
+#define DEBUG_DrawBeamAABB(mins, maxs)		GU_ClipDrawAABB(mins, maxs, 0xFF0000FF) // red
+#else
+#define DEBUG_DrawBModelAABB(mins, maxs)
+#define DEBUG_DrawAliasAABB(mins, maxs)
+#define DEBUG_DrawSpriteAABB(mins, maxs)
+#define DEBUG_DrawBeamAABB(mins, maxs)
+#endif
 
 #define GU_CULL_INSIDE	0
 #define GU_CULL_CLIP	1
@@ -354,6 +367,7 @@ void GU_ClipRestoreWorldFrustum (void);
 void GU_ClipSetModelFrustum (void);
 void GU_ClipTransformAABBFromModelMatrix(const vec3_t mins, const vec3_t maxs, vec3_t out_mins, vec3_t out_maxs);
 int GU_ClipCullBox(const vec3_t mins, const vec3_t maxs);
+void GU_ClipDrawAABB(const vec3_t mins, const vec3_t maxs, unsigned int color);
 int GU_ClipIsRequired (gu_vert_ftv_t* uv, int uvc);
 void GU_Clip (gu_vert_ftv_t *uv, int uvc, gu_vert_ftv_t **cv, int* cvc);
 

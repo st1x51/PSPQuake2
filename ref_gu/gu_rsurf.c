@@ -803,6 +803,8 @@ void R_DrawBrushModel (entity_t *e)
 
 	sceGumPopMatrix ();
 	sceGumUpdateMatrix ();
+
+	DEBUG_DrawBModelAABB (mins, maxs);
 }
 
 /*

@@ -322,6 +322,46 @@ int GU_ClipCullBox(const vec3_t mins, const vec3_t maxs)
 
 /*
 =================
+GU_ClipDrawAABB
+
+debug drawing bbox
+=================
+*/
+#if CULLING_DEBUGGING
+void GU_ClipDrawAABB(const vec3_t mins, const vec3_t maxs, unsigned int color)
+{
+	static const byte bbox_indices[] =
+	{
+		0, 1,  1, 3,  3, 2,  2, 0, // down square
+		4, 5,  5, 7,  7, 6,  6, 4, // up square
+		0, 4,  1, 5,  2, 6,  3, 7  // vertical lines
+	};
+
+	sceGuDisable (GU_TEXTURE_2D);
+	sceGuColor (color);
+
+	sceGuDepthMask (GU_TRUE);
+	sceGuDisable (GU_CULL_CLIP);
+
+	gu_vert_fv_t *bbox_verts = sceGuGetMemory (sizeof(gu_vert_fv_t) * 8);
+	for (int i = 0; i < 8; i++)
+	{
+		bbox_verts[i].x = (i & 1) ? maxs[0] : mins[0];
+		bbox_verts[i].y = (i & 2) ? maxs[1] : mins[1];
+		bbox_verts[i].z = (i & 4) ? maxs[2] : mins[2];
+	}
+	sceGuDrawArray (GU_LINES, GU_VERTEX_32BITF | GU_INDEX_8BIT, 24, bbox_indices, bbox_verts);
+
+	sceGuEnable (GU_CULL_CLIP);
+	sceGuDepthMask (GU_FALSE);
+
+	sceGuEnable (GU_TEXTURE_2D);
+	sceGuColor (GU_HCOLOR_DEFAULT);
+}
+#endif
+
+/*
+=================
 GU_ClipIsRequired
 
 Is clipping required?
