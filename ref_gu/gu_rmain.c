@@ -146,11 +146,13 @@ R_DrawSpriteModel
 */
 void R_DrawSpriteModel (entity_t *e)
 {
-	float alpha = 1.0F;
-	vec3_t	point;
+	float		alpha = 1.0F;
+	vec3_t		point;
 	dsprframe_t	*frame;
 	float		*up, *right;
-	dsprite_t		*psprite;
+	int			frame_radius, frame_up, frame_right;
+	dsprite_t	*psprite;
+	vec3_t		mins, maxs;
 
 	// don't even bother culling, because it's just a single
 	// polygon without a surface cache
@@ -168,6 +170,15 @@ void R_DrawSpriteModel (entity_t *e)
 
 	frame = &psprite->frames[e->frame];
 
+	frame_up    = frame->height - frame->origin_y;
+	frame_right = frame->width - frame->origin_x;
+	frame_radius = Q_max(Q_max(frame->origin_y, frame_up), Q_max(frame->origin_x, frame_right));
+
+	VectorSet(mins, e->origin[0] - frame_radius, e->origin[1] - frame_radius, e->origin[2] - frame_radius);
+	VectorSet(maxs, e->origin[0] + frame_radius, e->origin[1] + frame_radius, e->origin[2] + frame_radius);
+
+	if (GU_ClipCullBox(mins, maxs) == GU_CULL_OUTSIDE)
+		return;
 #if 0
 	if (psprite->type == SPR_ORIENTED)
 	{	// bullet marks on walls
@@ -205,16 +216,16 @@ void R_DrawSpriteModel (entity_t *e)
 	VectorMA (out[0].xyz, -frame->origin_x, right, out[0].xyz);
 	out[1].uv[0] = 0.0f;
 	out[1].uv[1] = 0.0f;
-	VectorMA (e->origin, frame->height - frame->origin_y, up, out[1].xyz);
+	VectorMA (e->origin, frame_up, up, out[1].xyz);
 	VectorMA (out[1].xyz, -frame->origin_x, right, out[1].xyz);
 	out[2].uv[0] = 1.0f;
 	out[2].uv[1] = 0.0f;
-	VectorMA (e->origin, frame->height - frame->origin_y, up, out[2].xyz);
-	VectorMA (out[2].xyz, frame->width - frame->origin_x, right, out[2].xyz);
+	VectorMA (e->origin, frame_up, up, out[2].xyz);
+	VectorMA (out[2].xyz, frame_right, right, out[2].xyz);
 	out[3].uv[0] = 1.0f;
 	out[3].uv[1] = 1.0f;
 	VectorMA (e->origin, -frame->origin_y, up, out[3].xyz);
-	VectorMA (out[3].xyz, frame->width - frame->origin_x, right, out[3].xyz);
+	VectorMA (out[3].xyz, frame_right, right, out[3].xyz);
 	sceGuDrawArray (GU_TRIANGLE_FAN, GU_TEXTURE_32BITF | GU_VERTEX_32BITF, 4, 0, out);
 
 	GL_TexEnv (GU_TFX_REPLACE);
@@ -225,6 +236,8 @@ void R_DrawSpriteModel (entity_t *e)
 		sceGuDisable (GU_ALPHA_TEST);
 
 	sceGuColor (GU_HCOLOR_DEFAULT);
+
+	DEBUG_DrawSpriteAABB (mins, maxs);
 }
 
 //==================================================================================
