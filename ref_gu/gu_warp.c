@@ -671,6 +671,7 @@ void R_DrawSkyBox (void)
 	}
 
 	sceGumPopMatrix ();
+	sceGumUpdateMatrix ();
 }
 #else
 /*
