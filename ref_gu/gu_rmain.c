@@ -1211,65 +1211,83 @@ void R_SetPalette (const unsigned char *palette)
 */
 void R_DrawBeam( entity_t *e )
 {
-#define NUM_BEAM_SEGS 6
+#define BEAM_SEGS_LENGTH 64.0f
 
-	int		i;
-	byte	color[4];
+	vec3_t	mins, maxs;
+	vec3_t	start, end, beam_vec, side_vec, cam_vec, beam_norm;
+	vec3_t	step_vec, core_pos;
+	float	length, radius;
+	int		i, num_segs, num_verts;
 
-	vec3_t	perpvec;
-	vec3_t	direction, normalized_direction;
-	vec3_t	start_points[NUM_BEAM_SEGS], end_points[NUM_BEAM_SEGS];
-	vec3_t	oldorigin, origin;
+	radius = e->frame * 0.5f;
 
-	oldorigin[0] = e->oldorigin[0];
-	oldorigin[1] = e->oldorigin[1];
-	oldorigin[2] = e->oldorigin[2];
+	for (i = 0 ; i < 3 ; i++)
+	{
+		if (e->origin[i] < e->oldorigin[i])
+		{
+			mins[i] = e->origin[i] - radius;
+			maxs[i] = e->oldorigin[i] + radius;
+		}
+		else
+		{
+			mins[i] = e->oldorigin[i] - radius;
+			maxs[i] = e->origin[i] + radius;
+		}
+	}
 
-	origin[0] = e->origin[0];
-	origin[1] = e->origin[1];
-	origin[2] = e->origin[2];
-
-	normalized_direction[0] = direction[0] = oldorigin[0] - origin[0];
-	normalized_direction[1] = direction[1] = oldorigin[1] - origin[1];
-	normalized_direction[2] = direction[2] = oldorigin[2] - origin[2];
-
-	if ( VectorNormalize( normalized_direction ) == 0 )
+	if (GU_ClipCullBox (mins, maxs) == GU_CULL_OUTSIDE)
 		return;
 
-	PerpendicularVector( perpvec, normalized_direction );
-	VectorScale( perpvec, e->frame / 2, perpvec );
+	VectorCopy (e->origin, start);
+	VectorCopy (e->oldorigin, end);
 
-	for ( i = 0; i < NUM_BEAM_SEGS; i++ )
-	{
-		RotatePointAroundVector( start_points[i], normalized_direction, perpvec, (360.0/NUM_BEAM_SEGS)*i );
-		VectorAdd( start_points[i], origin, start_points[i] );
-		VectorAdd( start_points[i], direction, end_points[i] );
-	}
+	VectorSubtract (end, start, beam_vec);
+
+	// beam length
+	length = VectorLength (beam_vec);
+	if (length < 1.0f)
+		return;
+
+	// beam segments count
+	num_segs = (int)(length / BEAM_SEGS_LENGTH);
+	num_segs = Q_bound (1, num_segs, 32);
+
+	num_verts = (num_segs + 1) * 2;
+
+	// create sprite
+	VectorScale (beam_vec, 1.0f / length, beam_norm);
+	VectorSubtract (start, r_newrefdef.vieworg, cam_vec);
+	CrossProduct (beam_norm, cam_vec, side_vec);
+
+	VectorNormalize (side_vec);
+	VectorScale (side_vec, radius, side_vec);
+
+	gu_color_32_t color;
+	color.c = d_8to24table[e->skinnum & 0xFF];
+	color.a = (byte)(e->alpha * 255.0f);
 
 	sceGuDisable (GU_TEXTURE_2D);
 	sceGuEnable (GU_BLEND);
-	sceGuDepthMask (GU_TRUE);
+	sceGuColor (color.c);
 
-	color[0] = ( d_8to24table[e->skinnum & 0xFF] ) & 0xFF;
-	color[1] = ( d_8to24table[e->skinnum & 0xFF] >> 8 ) & 0xFF;
-	color[2] = ( d_8to24table[e->skinnum & 0xFF] >> 16 ) & 0xFF;
-	color[3] = e->alpha*255;
+	VectorScale (beam_vec, 1.0f / (float)num_segs, step_vec);
+	VectorCopy (start, core_pos);
 
-	sceGuColor (GU_HCOLOR_4UBV(color));
-
-	gu_vert_fv_t* const out = (gu_vert_fv_t*)sceGuGetMemory (sizeof(gu_vert_fv_t) * NUM_BEAM_SEGS * 4);
-	for ( i = 0; i < NUM_BEAM_SEGS; i++ )
+	gu_vert_fv_t* out = (gu_vert_fv_t*)sceGuGetMemory (sizeof(gu_vert_fv_t) * num_verts);
+	gu_vert_fv_t* out_ptr = out;
+	for (i = 0; i <= num_segs; i++, out_ptr += 2)
 	{
-		VectorCopy (start_points[i],                        out[i * 4 + 0].xyz);
-		VectorCopy (end_points[i],                          out[i * 4 + 1].xyz);
-		VectorCopy (start_points[(i + 1) % NUM_BEAM_SEGS],  out[i * 4 + 2].xyz);
-		VectorCopy (end_points[(i + 1) % NUM_BEAM_SEGS],    out[i * 4 + 3].xyz);
+		VectorSubtract(core_pos, side_vec, out_ptr[0].xyz);
+		VectorAdd(core_pos, side_vec, out_ptr[1].xyz);
+		VectorAdd(core_pos, step_vec, core_pos);
 	}
-	sceGuDrawArray (GU_TRIANGLE_STRIP, GU_VERTEX_32BITF, NUM_BEAM_SEGS * 4, 0, out);
+	sceGuDrawArray (GU_TRIANGLE_STRIP,  GU_VERTEX_32BITF, num_verts, 0, out);
 
 	sceGuEnable (GU_TEXTURE_2D);
 	sceGuDisable (GU_BLEND);
-	sceGuDepthMask (GU_TRUE);
+	sceGuColor (GU_HCOLOR_DEFAULT);
+
+	DEBUG_DrawBeamAABB (mins, maxs);
 }
 
 //===================================================================

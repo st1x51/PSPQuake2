@@ -19,6 +19,8 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 
 */
 
+// --- VERTICES ---
+
 typedef struct
 {
 	union
@@ -328,3 +330,49 @@ typedef struct
 		};
 	};
 } gu_vert_htcv_t;
+
+// --- COLOR ---
+
+typedef union
+{
+	unsigned int c;
+	unsigned char rgba[4];
+
+	struct
+	{
+		unsigned char r;
+		unsigned char g;
+		unsigned char b;
+		unsigned char a;
+	};
+} gu_color_32_t;
+
+typedef union
+{
+	unsigned short c;
+
+	struct
+	{
+		unsigned short r : 4;
+		unsigned short g : 4;
+		unsigned short b : 4;
+		unsigned short a : 4;
+	} c4444;
+
+	struct
+	{
+		unsigned short r : 5;
+		unsigned short g : 5;
+		unsigned short b : 5;
+		unsigned short a : 1;
+	} c5551;
+
+	struct
+	{
+		unsigned short r : 5;
+		unsigned short g : 6;
+		unsigned short b : 5;
+	} c565;
+} __attribute__((packed)) gu_color_16_t;
+
+
