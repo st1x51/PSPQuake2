@@ -888,6 +888,7 @@ int		*leaf_list;
 float	*leaf_mins, *leaf_maxs;
 int		leaf_topnode;
 
+#if 0
 void CM_BoxLeafnums_r (int nodenum)
 {
 	cplane_t	*plane;
@@ -922,7 +923,6 @@ void CM_BoxLeafnums_r (int nodenum)
 			CM_BoxLeafnums_r (node->children[0]);
 			nodenum = node->children[1];
 		}
-
 	}
 }
 
@@ -943,6 +943,60 @@ int	CM_BoxLeafnums_headnode (vec3_t mins, vec3_t maxs, int *list, int listsize, 
 
 	return leaf_count;
 }
+#else
+int CM_BoxLeafnums_r (int nodenum, int lcount, int lmaxcount, int *llist, 
+						cnode_t *nodes, const float *lmins, const float *lmaxs)
+{
+	cnode_t		*node;
+	cplane_t	*plane;
+	int			s;
+
+	while (1)
+	{
+		if (nodenum < 0)
+			break;
+
+		node = &nodes[nodenum];
+		plane = node->plane;
+		s = BOX_ON_PLANE_SIDE (lmins, lmaxs, plane);
+		if (s == 1)
+			nodenum = node->children[0];
+		else if (s == 2)
+			nodenum = node->children[1];
+		else
+		{
+			if (leaf_topnode == -1)
+				leaf_topnode = nodenum;
+
+			lcount = CM_BoxLeafnums_r (node->children[0], lcount, 
+										lmaxcount, llist, nodes, lmins, lmaxs);
+			nodenum = node->children[1];
+		}
+	}
+
+	if (lcount < lmaxcount)
+		llist[lcount++] = -1 - nodenum;
+
+	return lcount;
+}
+
+int	CM_BoxLeafnums_headnode (vec3_t mins, vec3_t maxs, int *list, int listsize, int headnode, int *topnode)
+{
+	leaf_list = list;
+	leaf_maxcount = listsize;
+	leaf_mins = mins;
+	leaf_maxs = maxs;
+
+	leaf_topnode = -1;
+
+	leaf_count = CM_BoxLeafnums_r(headnode, 0, listsize, list, cm.nodes, mins, maxs);
+
+	if (topnode)
+		*topnode = leaf_topnode;
+
+	return leaf_count;
+}
+#endif
 
 int	CM_BoxLeafnums (vec3_t mins, vec3_t maxs, int *list, int listsize, int *topnode)
 {
