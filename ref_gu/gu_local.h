@@ -376,6 +376,54 @@ void GU_Clip (gu_vert_ftv_t *uv, int uvc, gu_vert_ftv_t **cv, int* cvc);
 */
 void GL_DrawParticles( int n, const particle_t particles[] );
 
+
+
+typedef struct
+{
+	float inverse_intensity;
+	qboolean fullscreen;
+
+	int	prev_mode;
+
+	unsigned char *d_16to8table;
+
+	image_t	*lightmap_textures[MAX_LIGHTMAPS];
+
+	image_t	*currenttexture;
+	int		currenttexenv;
+
+	float camera_separation;
+	qboolean stereo_enabled;
+
+	byte	gammatable[256];
+	byte	intensitytable[256];
+} glstate_t;
+
+extern glstate_t	gl_state;
+
+/*
+====================================================================
+
+IMPORTED FUNCTIONS
+
+====================================================================
+*/
+
+extern	refimport_t	ri;
+
+
+/*
+====================================================================
+
+IMPLEMENTATION SPECIFIC FUNCTIONS
+
+====================================================================
+*/
+
+#define SWAP_EVENT_START	(1 << 0)
+#define SWAP_EVENT_DONE		(1 << 1)
+#define SWAP_EVENT_SHUTDOWN	(1 << 2)
+
 typedef struct
 {
 	struct
@@ -399,50 +447,12 @@ typedef struct
 		void	*ptr;
 		size_t	size;
 	} list;
+
+	SceUID	swap_thread_handle;
+	SceUID	swap_event_handle;
 } gurender_t;
 
-typedef struct
-{
-	float inverse_intensity;
-	qboolean fullscreen;
-
-	int	prev_mode;
-
-	unsigned char *d_16to8table;
-
-	image_t	*lightmap_textures[MAX_LIGHTMAPS];
-
-	image_t	*currenttexture;
-	int		currenttexenv;
-
-	float camera_separation;
-	qboolean stereo_enabled;
-
-	byte	gammatable[256];
-	byte	intensitytable[256];
-} glstate_t;
-
 extern gurender_t	gu_render;
-extern glstate_t	gl_state;
-
-/*
-====================================================================
-
-IMPORTED FUNCTIONS
-
-====================================================================
-*/
-
-extern	refimport_t	ri;
-
-
-/*
-====================================================================
-
-IMPLEMENTATION SPECIFIC FUNCTIONS
-
-====================================================================
-*/
 
 void		GU_BeginFrame (float camera_separation);
 void		GU_EndFrame (void);

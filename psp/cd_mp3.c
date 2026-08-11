@@ -36,6 +36,9 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #define MP3_ID3V2_SIZE_SZ		4
 #define MP3_ID3V2_HEADER_SZ		10
 
+#define MP3_ID3V2_GETSIZE(ptr)	((((int)(ptr)[0] & 0x7F) << 21) | (((int)(ptr)[1] & 0x7F) << 14) | \
+								(((int)(ptr)[2] & 0x7F) << 7)   | (((int)(ptr)[3] & 0x7F)))
+
 #define	MP3_ERRORS_MAX			3
 
 #define MP3_FLAG_RES_THREAD			0x00000001
@@ -72,7 +75,12 @@ static struct
 		int				samples;
 		int				samplerate;
 	} pcm;
-} mp3;
+} mp3 =
+{
+	.thread = -1,
+	.file = -1
+	// rest defaults to 0
+};
 
 cvar_t	*cd_volume;
 cvar_t	*cd_nocd;
@@ -84,57 +92,23 @@ void CDAudio_Resume (void);
 
 /*
 =================
-Sound_GetID3V2SizeMPG
-=================
-*/
-static inline int CDAudio_GetID3V2Size (const byte *tagsize)
-{
-	int		size;
-	byte	*sizeptr = (byte*)&size;
-
-	// 7 bit per byte, invert endian
-	sizeptr[0] = ((tagsize[3] >> 0) & 0x7f) | ((tagsize[2] & 0x01) << 7);
-	sizeptr[1] = ((tagsize[2] >> 1) & 0x3f) | ((tagsize[1] & 0x03) << 6);
-	sizeptr[2] = ((tagsize[1] >> 2) & 0x1f) | ((tagsize[0] & 0x07) << 5);
-	sizeptr[3] = ((tagsize[0] >> 3) & 0x0f);
-
-	return size;
-}
-
-/*
-=================
 CDAudio_FindHead
 =================
 */
-int CDAudio_FindHead (int file)
+static int CDAudio_FindHead (SceUID file)
 {
-	int		result;
-	byte	tagid[MP3_ID3V2_ID_SZ];
-	byte	tagsize[MP3_ID3V2_SIZE_SZ];
-
-	result = 0;
+	byte header[MP3_ID3V2_HEADER_SZ];
 
 	if (sceIoLseek32 (file, 0, SEEK_SET) < 0)
-	{
-		Com_Printf ("CDAudio_FindHead: ID3V2 ID read error\n");
 		return 0;
-	}
 
-	if (sceIoRead (file, tagid,  MP3_ID3V2_ID_SZ) < MP3_ID3V2_ID_SZ)
-	{
-		Com_Printf ("CDAudio_FindHead: ID3V2 ID read error\n");
+	if (sceIoRead (file, header, MP3_ID3V2_HEADER_SZ) < MP3_ID3V2_HEADER_SZ)
 		return 0;
-	}
 
-	if (!memcmp (tagid, MP3_ID3V2_ID, MP3_ID3V2_ID_SZ))
-	{
-		sceIoLseek32 (file, MP3_ID3V2_SIZE_OFF, SEEK_SET);
-		if (sceIoRead (file, tagsize, MP3_ID3V2_SIZE_SZ) < MP3_ID3V2_SIZE_SZ)
-			Com_Printf ("CDAudio_FindHead: ID3V2 SIZE read error\n");
-		else result = CDAudio_GetID3V2Size (tagsize) + MP3_ID3V2_HEADER_SZ;
-	}
+	if (!memcmp (header, MP3_ID3V2_ID, MP3_ID3V2_ID_SZ))
+		return MP3_ID3V2_GETSIZE(&header[MP3_ID3V2_SIZE_OFF]) + MP3_ID3V2_HEADER_SZ;
 
-	return result;
+	return 0;
 }
 
 /*
@@ -142,34 +116,25 @@ int CDAudio_FindHead (int file)
 CDAudio_FindTail
 =================
 */
-int CDAudio_FindTail (int file)
+static int CDAudio_FindTail (SceUID file)
 {
-	int		result;
+	int		tagoffset;
 	byte	tagid[MP3_ID3V1_ID_SZ];
 
-	result = sceIoLseek32 (file, 0, SEEK_END);
-	if (result < 0)
+	tagoffset = sceIoLseek32 (file, -MP3_ID3V1_SZ, SEEK_END);
+	if (tagoffset < 0)
 	{
-		Com_Printf ("CDAudio_FindTail: ID3V1 ID read error\n");
-		return 0;
-	}
-
-	if (sceIoLseek32 (file, result - MP3_ID3V1_SZ, SEEK_SET) < 0)
-	{
-		Com_Printf ("CDAudio_FindTail: ID3V1 ID read error\n");
-		return 0;
+		tagoffset = sceIoLseek32 (file, 0, SEEK_END);
+		return (tagoffset < 0) ? 0 : tagoffset;
 	}
 
 	if (sceIoRead (file, tagid,  MP3_ID3V1_ID_SZ) < MP3_ID3V1_ID_SZ)
-	{
-		Com_Printf ("CDAudio_FindTail: ID3V1 ID read error\n");
-		return 0;
-	}
+		return tagoffset + MP3_ID3V1_SZ;
 
 	if (!memcmp(tagid, MP3_ID3V1_ID, MP3_ID3V1_ID_SZ))
-		result -= MP3_ID3V1_SZ;
+		return tagoffset;
 
-	return result;
+	return tagoffset + MP3_ID3V1_SZ;
 }
 
 /*
@@ -463,9 +428,6 @@ CDAudio_Update
 */
 void CDAudio_Update (void)
 {
-	if (!(mp3.flags & MP3_FLAG_STATE_INIT))
-		return;
-
 	if (cd_nocd->modified)
 	{
 		if (cd_nocd->value)
@@ -475,6 +437,9 @@ void CDAudio_Update (void)
 
 		cd_nocd->modified = false;
 	}
+
+	if (!(mp3.flags & MP3_FLAG_STATE_INIT))
+		return;
 
 	if (cd_volume->modified)
 	{
@@ -585,6 +550,7 @@ int CDAudio_Init (void)
 	if (ret < 0)
 	{
 		Com_Printf ("CDAudio_Init: PSP_MODULE_AV_MP3 (0x%x)\n", ret);
+		CDAudio_Shutdown();
 		return -1;
 	}
 	mp3.flags |= MP3_FLAG_RES_MP3_MOD;
@@ -593,6 +559,7 @@ int CDAudio_Init (void)
 	if (ret < 0)
 	{
 		Com_Printf ("CDAudio_Init: sceMp3InitResource (0x%x)\n", ret);
+		CDAudio_Shutdown();
 		return -1;
 	}
 	mp3.flags |= MP3_FLAG_RES_MP3_RES;
@@ -600,7 +567,8 @@ int CDAudio_Init (void)
 	mp3.thread = sceKernelCreateThread ("mp3decode_thread", CDAudio_MainThread, 0x1e, 0x2000, 0, 0);
 	if (mp3.thread < 0)
 	{
-		Com_Printf ("CDAudio_Init: sceKernelCreateThread (0x%x)\n", ret);
+		Com_Printf ("CDAudio_Init: sceKernelCreateThread (0x%x)\n", mp3.thread);
+		CDAudio_Shutdown();
 		return -1;
 	}
 	mp3.flags |= MP3_FLAG_RES_THREAD;
@@ -620,11 +588,15 @@ CDAudio_Shutdown
 */
 void CDAudio_Shutdown (void)
 {
-	Com_Printf ("Shutting down MP3 Audio\n");
+	if (mp3.flags & MP3_FLAG_STATE_INIT)
+	{
+		Com_Printf ("Shutting down MP3 Audio\n");
+		
+		CDAudio_Stop ();
+		Cmd_RemoveCommand ("cd");
 
-	CDAudio_Stop ();
-
-	Cmd_RemoveCommand ("cd");
+		mp3.flags &= ~MP3_FLAG_STATE_INIT;
+	}
 
 	if (mp3.flags & MP3_FLAG_RES_THREAD)
 	{
@@ -650,6 +622,4 @@ void CDAudio_Shutdown (void)
 		sceUtilityUnloadModule(PSP_MODULE_AV_AVCODEC);
 		mp3.flags &= ~MP3_FLAG_RES_AVC_MOD;
 	}
-
-	mp3.flags &= ~MP3_FLAG_STATE_INIT;
 }
