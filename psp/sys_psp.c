@@ -156,9 +156,7 @@ Sys_Quit
 */
 void Sys_Quit (void)
 {
-	CL_Shutdown();
 	Qcommon_Shutdown();
-
 	Dbg_Shutdown();
 
 #ifdef USE_GPROF
