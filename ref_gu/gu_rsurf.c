@@ -903,10 +903,10 @@ void R_RecursiveWorldNode (mnode_t *node)
 		{
 			surf = &firstsurf[c];
 
-			// Fill cache surf + 1
+			// Fill cache surf + 3
 			__asm__ volatile (
-				"cache	0x1e, %1(%0)\n" // 0x1e - Fill(D)
-				::	"r" (surf), "i" (sizeof(msurface_t))
+				"lw			$zero, %1(%0)\n"
+				::	"r" (surf), "i" (sizeof(msurface_t) * 3)
 			);
 
 			if (surf->visframe != framecount)
