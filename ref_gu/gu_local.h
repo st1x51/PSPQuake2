@@ -156,8 +156,6 @@ typedef enum
 void GL_BeginRendering (int *x, int *y, int *width, int *height);
 void GL_EndRendering (void);
 
-void GL_SetDefaultState( void );
-
 extern int	gldepthmin, gldepthmax;
 
 #define	MAX_LBM_HEIGHT		480
