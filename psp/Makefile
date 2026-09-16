@@ -59,9 +59,9 @@ XATRIX_DIR        = $(BUILDDIR)/xatrix
 STLINK_CFLAGS = -DREF_HARD_LINKED
 OPT_CFLAGS = -DUSE_HASH_FOR_TEXTURES -DUSE_HASH_FOR_SFX -DUSE_HASH_FOR_FILES -DUSE_CACHED_SKY
 
-BASE_CFLAGS = -MD -mno-gpopt -Dstricmp=strcasecmp $(STLINK_CFLAGS) $(OPT_CFLAGS) -DEXT_VERSION=\"$(PSP_APP_VERSION)\"
+BASE_CFLAGS = -MD -mno-gpopt -fsingle-precision-constant -fno-math-errno -Dstricmp=strcasecmp $(STLINK_CFLAGS) $(OPT_CFLAGS) -DEXT_VERSION=\"$(PSP_APP_VERSION)\"
 
-release_CFLAGS = $(BASE_CFLAGS) -O3 -falign-loops=2 -falign-jumps=2 -falign-functions=2
+release_CFLAGS = $(BASE_CFLAGS) -Ofast -falign-loops=2 -falign-jumps=2 -falign-functions=2
 debug_CFLAGS= -g $(BASE_CFLAGS) -DUSE_STDIN -DDEBUG
 prof_CFLAGS= -g -pg -O0 $(BASE_CFLAGS) -DUSE_GPROF
 

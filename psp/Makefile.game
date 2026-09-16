@@ -45,9 +45,9 @@ XATRIX_DIR        = $(BUILDDIR)/xatrix
 # FLAGS
 #############################################################################
 
-BASE_CFLAGS = -MD -G0 -Dstricmp=strcasecmp
+BASE_CFLAGS = -MD -G0 -Dstricmp=strcasecmp -fsingle-precision-constant -fno-math-errno
 
-release_CFLAGS = $(BASE_CFLAGS) -O3 \
+release_CFLAGS = $(BASE_CFLAGS) -Ofast \
 	-fomit-frame-pointer -fexpensive-optimizations -falign-loops=2 \
 	-falign-jumps=2 -falign-functions=2
 debug_CFLAGS= -g $(BASE_CFLAGS)
