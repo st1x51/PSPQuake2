@@ -423,20 +423,14 @@ void R_BlendLightmaps (void)
 
 		for ( surf = gl_lms.lightmap_surfaces[0]; surf != 0; surf = surf->lightmapchain )
 		{
-			int		smax, tmax;
+			int		extents, smax, tmax;
 			byte	*base;
 
-			smax = (surf->extents[0]>>4)+1;
-			tmax = (surf->extents[1]>>4)+1;
+			extents = *(int *)surf->extents;
+			smax = ((extents >> 4) & 0xFFFF) + 1;
+			tmax = (extents >> 20) + 1;
 
-			if ( LM_AllocBlock( smax, tmax, &surf->dlight_s, &surf->dlight_t ) )
-			{
-				base = gl_lms.lightmap_buffer;
-				base += ( surf->dlight_t * BLOCK_WIDTH + surf->dlight_s ) * LIGHTMAP_BYTES;
-
-				R_BuildLightMap (surf, base, BLOCK_WIDTH*LIGHTMAP_BYTES);
-			}
-			else
+			if ( !LM_AllocBlock( smax, tmax, &surf->dlight_s, &surf->dlight_t ) )
 			{
 				msurface_t *drawsurf;
 
@@ -448,8 +442,8 @@ void R_BlendLightmaps (void)
 				{
 					if ( drawsurf->polys )
 						DrawGLPolyChain( drawsurf,
-							              ( drawsurf->light_s - drawsurf->dlight_s ) * ( 1.0 / 128.0 ),
-										( drawsurf->light_t - drawsurf->dlight_t ) * ( 1.0 / 128.0 ) );
+							              ( drawsurf->light_s - drawsurf->dlight_s ) * ( 1.0 / BLOCK_WIDTH ),
+										( drawsurf->light_t - drawsurf->dlight_t ) * ( 1.0 / BLOCK_HEIGHT ) );
 				}
 
 				newdrawsurf = drawsurf;
@@ -462,25 +456,27 @@ void R_BlendLightmaps (void)
 				{
 					ri.Sys_Error( ERR_FATAL, "Consecutive calls to LM_AllocBlock(%d,%d) failed (dynamic)\n", smax, tmax );
 				}
-
-				base = gl_lms.lightmap_buffer;
-				base += ( surf->dlight_t * BLOCK_WIDTH + surf->dlight_s ) * LIGHTMAP_BYTES;
-
-				R_BuildLightMap (surf, base, BLOCK_WIDTH*LIGHTMAP_BYTES);
 			}
+
+			base = gl_lms.lightmap_buffer;
+			base += ( surf->dlight_t * BLOCK_WIDTH + surf->dlight_s ) * LIGHTMAP_BYTES;
+
+			R_BuildLightMap (surf, base, BLOCK_WIDTH*LIGHTMAP_BYTES);
 		}
 
 		/*
 		** draw remainder of dynamic lightmaps that haven't been uploaded yet
 		*/
 		if ( newdrawsurf )
-			LM_UploadBlock( true );
-
-		for ( surf = newdrawsurf; surf != 0; surf = surf->lightmapchain )
 		{
-			if ( surf->polys )
-				DrawGLPolyChain( surf, ( surf->light_s - surf->dlight_s ) * ( 1.0 / 128.0 ), ( surf->light_t - surf->dlight_t ) * ( 1.0 / 128.0 ) );
+			LM_UploadBlock( true );
 		}
+			for ( surf = newdrawsurf; surf != 0; surf = surf->lightmapchain )
+			{
+				if ( surf->polys )
+					DrawGLPolyChain( surf, ( surf->light_s - surf->dlight_s ) * ( 1.0 / BLOCK_WIDTH ), ( surf->light_t - surf->dlight_t ) * ( 1.0 / BLOCK_HEIGHT ) );
+			}
+
 	}
 
 	/*
@@ -1231,14 +1227,15 @@ GL_CreateSurfaceLightmap
 */
 void GL_CreateSurfaceLightmap (msurface_t *surf)
 {
-	int		smax, tmax;
+	int		extents, smax, tmax;
 	byte	*base;
 
 	if (surf->flags & (SURF_DRAWSKY|SURF_DRAWTURB))
 		return;
 
-	smax = (surf->extents[0]>>4)+1;
-	tmax = (surf->extents[1]>>4)+1;
+	extents = *(int *)surf->extents;
+	smax = ((extents >> 4) & 0xFFFF) + 1;
+	tmax = (extents >> 20) + 1;
 
 	if ( !LM_AllocBlock( smax, tmax, &surf->light_s, &surf->light_t ) )
 	{

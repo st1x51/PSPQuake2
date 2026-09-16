@@ -257,6 +257,7 @@ int RecursiveLightPoint (mnode_t *node, vec3_t start, vec3_t end)
 	cplane_t	*plane;
 	vec3_t		mid;
 	msurface_t	*surf;
+	int			smin, tmin, smax, tmax;
 	int			s, t, ds, dt;
 	int			i;
 	mtexinfo_t	*tex;
@@ -306,15 +307,20 @@ int RecursiveLightPoint (mnode_t *node, vec3_t start, vec3_t end)
 		tex = surf->texinfo;
 
 		s = DotProduct (mid, tex->vecs[0]) + tex->vecs[0][3];
-		t = DotProduct (mid, tex->vecs[1]) + tex->vecs[1][3];;
+		t = DotProduct (mid, tex->vecs[1]) + tex->vecs[1][3];
 
-		if (s < surf->texturemins[0] || t < surf->texturemins[1])
+		smin = surf->texturemins[0];
+		tmin = surf->texturemins[1];
+		smax = surf->extents[0];
+		tmax = surf->extents[1];
+
+		if (s < smin || t < tmin)
 			continue;
 
-		ds = s - surf->texturemins[0];
-		dt = t - surf->texturemins[1];
+		ds = s - smin;
+		dt = t - tmin;
 
-		if ( ds > surf->extents[0] || dt > surf->extents[1] )
+		if ( ds > smax || dt > tmax )
 			continue;
 
 		if (!surf->samples)
@@ -323,13 +329,16 @@ int RecursiveLightPoint (mnode_t *node, vec3_t start, vec3_t end)
 		ds >>= 4;
 		dt >>= 4;
 
+		smax = (smax >> 4) + 1;
+		tmax = (tmax >> 4) + 1;
+
 		lightmap = surf->samples;
 		VectorCopy (vec3_origin, pointcolor);
 		if (lightmap)
 		{
 			vec3_t scale;
 
-			lightmap += 3 * (dt * ((surf->extents[0] >> 4) + 1) + ds);
+			lightmap += 3 * (dt * smax + ds);
 
 			for (maps = 0; maps < MAXLIGHTMAPS && surf->styles[maps] != 255; maps++)
 			{
@@ -339,7 +348,7 @@ int RecursiveLightPoint (mnode_t *node, vec3_t start, vec3_t end)
 				pointcolor[0] += lightmap[0] * scale[0] * (1.0 / 255);
 				pointcolor[1] += lightmap[1] * scale[1] * (1.0 / 255);
 				pointcolor[2] += lightmap[2] * scale[2] * (1.0 / 255);
-				lightmap += 3 * ((surf->extents[0] >> 4) + 1) * ((surf->extents[1] >> 4) + 1);
+				lightmap += smax * tmax * 3;
 			}
 		}
 
