@@ -24,6 +24,9 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 
 void S_Play(void);
 void S_SoundList(void);
+#ifdef KINGPIN_ENGINE
+void S_SoundListOut(void);
+#endif
 void S_Update_();
 void S_StopAllSounds(void);
 
@@ -84,6 +87,12 @@ cvar_t		*s_khz;
 cvar_t		*s_show;
 cvar_t		*s_mixahead;
 cvar_t		*s_primary;
+#ifdef KINGPIN_ENGINE
+cvar_t		*s_reverb_delay;
+cvar_t		*s_reverb_count;
+cvar_t		*s_reverb_volscale;
+cvar_t		*s_reverb_test;
+#endif
 
 
 int		s_rawend;
@@ -139,17 +148,43 @@ void S_Init (void)
 #endif
 
 		s_volume = Cvar_Get ("s_volume", "0.7", CVAR_ARCHIVE);
+#ifdef KINGPIN_ENGINE
+		// kingpin.exe @00436440 selects 22 kHz/16-bit mixing on machines
+		// with at least 128 MB; its software reverb only runs in that mode.
+		if (Cvar_VariableValue ("cl_physical_memory") >= 128)
+		{
+			s_loadas8bit = Cvar_Get ("s_loadas8bit", "0", CVAR_ARCHIVE);
+			s_khz = Cvar_Get ("s_khz", "22", CVAR_ARCHIVE);
+		}
+		else
+		{
+			s_loadas8bit = Cvar_Get ("s_loadas8bit", "1", CVAR_ARCHIVE);
+			s_khz = Cvar_Get ("s_khz", "11", CVAR_ARCHIVE);
+			Cvar_ForceSet ("s_loadas8bit", "1");
+			Cvar_ForceSet ("s_khz", "11");
+		}
+#else
 		s_khz = Cvar_Get ("s_khz", "11", CVAR_ARCHIVE);
 		s_loadas8bit = Cvar_Get ("s_loadas8bit", "1", CVAR_ARCHIVE);
+#endif
 		s_mixahead = Cvar_Get ("s_mixahead", "0.2", CVAR_ARCHIVE);
 		s_show = Cvar_Get ("s_show", "0", 0);
 		s_testsound = Cvar_Get ("s_testsound", "0", 0);
 		s_primary = Cvar_Get ("s_primary", "0", CVAR_ARCHIVE);	// win32 specific
+#ifdef KINGPIN_ENGINE
+		s_reverb_delay = Cvar_Get ("s_reverb_delay", "1500", 0);
+		s_reverb_count = Cvar_Get ("s_reverb_count", "4", 0);
+		s_reverb_volscale = Cvar_Get ("s_reverb_volscale", "0.4", 0);
+		s_reverb_test = Cvar_Get ("s_reverb_test", "0", 0);
+#endif
 
 		Cmd_AddCommand("play", S_Play);
 		Cmd_AddCommand("stopsound", S_StopAllSounds);
 		Cmd_AddCommand("soundlist", S_SoundList);
 		Cmd_AddCommand("soundinfo", S_SoundInfo_f);
+#ifdef KINGPIN_ENGINE
+		Cmd_AddCommand("soundlistout", S_SoundListOut);
+#endif
 
 		if (!SNDDMA_Init())
 			return;
@@ -415,6 +450,19 @@ void S_EndRegistration (void)
 
 //=============================================================================
 
+#if defined(KINGPIN_ENGINE) && !defined(__psp__)
+/* Pitched sounds are private allocations made by S_PitchSound. */
+void S_FreePitchedSound (sfx_t *sfx)
+{
+	if (!sfx || sfx->pitch == 0 || sfx->pitch == 1.0f)
+		return;
+	
+	if (Cache_Check (&sfx->cache)) 
+		Cache_Free (&sfx->cache);
+	Z_Free (sfx);
+}
+#endif
+
 /*
 =================
 S_PickChannel
@@ -458,6 +506,9 @@ channel_t *S_PickChannel(int entnum, int entchannel)
 		return NULL;
 
 	ch = &channels[first_to_die];
+#if defined(KINGPIN_ENGINE) && !defined(__psp__)
+	S_FreePitchedSound (ch->sfx);
+#endif
 	memset (ch, 0, sizeof(*ch));
 
     return ch;
@@ -515,6 +566,15 @@ void S_SpatializeOrigin (vec3_t origin, float master_vol, float dist_mult, int *
 	*left_vol = (int) (master_vol * scale);
 	if (*left_vol < 0)
 		*left_vol = 0;
+
+#ifdef KINGPIN_ENGINE
+	// kingpin.exe @00436b9f: sounds close to straight ahead or behind
+	// also get the other side's volume on the quieter side
+	if (dot > -0.3 && dot < 0)
+		*left_vol += *right_vol;
+	else if (dot < 0.3 && dot > 0)
+		*right_vol += *left_vol;
+#endif
 }
 
 /*
@@ -625,8 +685,23 @@ void S_IssuePlaysound (playsound_t *ps)
 	S_Spatialize(ch);
 
 	ch->pos = 0;
+#if defined(KINGPIN_ENGINE) && defined(__psp__)
+	ch->pitch_samplepos = 0;
+	ch->pitch_samplestep = S_PITCH_UNIT;
+	if (ps->pitch > 0.0f)
+	{
+		ch->pitch_samplestep = (int)(ps->pitch * S_PITCH_UNIT + 0.5f);
+		if (ch->pitch_samplestep < 1)
+			ch->pitch_samplestep = 1;
+	}
+#endif
 	sc = S_LoadSound (ch->sfx);
+#if defined(KINGPIN_ENGINE) && defined(__psp__)
+	ch->end = paintedtime + (int)(((unsigned long long)sc->length * S_PITCH_UNIT +
+		ch->pitch_samplestep - 1) / ch->pitch_samplestep);
+#else
     ch->end = paintedtime + sc->length;
+#endif
 
 	// free the playsound
 	S_FreePlaysound (ps);
@@ -656,6 +731,15 @@ struct sfx_s *S_RegisterSexedSound (entity_state_t *ent, char *base)
 				*p = 0;
 		}
 	}
+
+#ifdef KINGPIN_ENGINE
+	// kingpin.exe @00436da0: only the sex of the model matters, the voices
+	// are shared under actors/player/male and actors/player/female
+	Com_sprintf (sexedFilename, sizeof(sexedFilename), "actors/player/%s/%s",
+		strstr (model, "female") ? "female" : "male", base+1);
+	return S_FindName (sexedFilename, true);
+#else
+
 	// if we can't figure it out, they're male
 	if (!model[0])
 		strcpy(model, "male");
@@ -681,6 +765,7 @@ struct sfx_s *S_RegisterSexedSound (entity_state_t *ent, char *base)
 	}
 
 	return sfx;
+#endif
 }
 
 
@@ -724,6 +809,20 @@ void S_StartSound(vec3_t origin, int entnum, int entchannel, sfx_t *sfx, float f
 	ps = S_AllocPlaysound ();
 	if (!ps)
 		return;
+
+#ifdef KINGPIN_ENGINE
+	// a negative time offset is a pitch, 16 bit samples only
+	if (sc->width != 2 || timeofs >= 0)
+		ps->pitch = 1.0;
+	else
+		ps->pitch = -timeofs;
+#ifndef __psp__
+	if (ps->pitch != 0 && ps->pitch != 1.0)
+		sfx = S_PitchSound (sfx, ps->pitch);
+#endif
+	if (timeofs < 0)
+		timeofs = 0;
+#endif
 
 	if (origin)
 	{
@@ -899,7 +998,12 @@ void S_AddLoopSounds (void)
 			continue;		// bad sound effect
 		sc = Cache_Check (&sfx->cache);
 		if (!sc)
+		{
+#ifdef KINGPIN_ENGINE // FIXME: verify Kingpin engine behavior
+			S_LoadSound (sfx);	// kingpin.exe @004372cb
+#endif
 			continue;
+		}
 
 		num = (cl.frame.parse_entities + i)&(MAX_PARSE_ENTITIES-1);
 		ent = &cl_parse_entities[num];
@@ -939,6 +1043,10 @@ void S_AddLoopSounds (void)
 		ch->autosound = true;	// remove next frame
 		ch->sfx = sfx;
 		ch->pos = paintedtime % sc->length;
+#if defined(KINGPIN_ENGINE) && defined(__psp__)
+		ch->pitch_samplepos = ch->pos * S_PITCH_UNIT;
+		ch->pitch_samplestep = S_PITCH_UNIT;
+#endif
 		ch->end = paintedtime + sc->length - ch->pos;
 	}
 }
@@ -1043,6 +1151,91 @@ void S_RawSamples (int samples, int rate, int width, int channels, byte *data)
 }
 
 //=============================================================================
+
+#ifdef KINGPIN_ENGINE
+/*
+================
+S_UpdateReverb
+
+kingpin.exe @0040f050.  Kingpin estimates room height with an upward trace,
+then drives the software mixer's echo delay/count/decay.  The ten-sample
+hysteresis prevents doorways and low beams from toggling the effect at once.
+================
+*/
+void S_UpdateReverb (vec3_t origin)
+{
+	static vec3_t last_origin;
+	static int enclosed_samples;
+	vec3_t end;
+	trace_t tr;
+	float height;
+	float scale;
+
+	if (!s_reverb_test)
+		return;
+
+	if (s_khz->value != 22.0f)
+	{
+		s_reverb_test->value = 0;
+		return;
+	}
+
+	if (VectorDistance (origin, last_origin) <= 8.0f)
+		return;
+
+	VectorCopy (origin, last_origin);
+	VectorCopy (origin, end);
+
+	end[2] += 2048.0f;
+	tr = CL_PMTrace (origin, vec3_origin, vec3_origin, end);
+	height = tr.endpos[2] - origin[2];
+
+	if (tr.fraction >= 1.0f || height <= 64.0f ||
+		!tr.surface || (tr.surface->flags & SURF_SKY))
+	{
+		enclosed_samples -= 2;
+		if (enclosed_samples <= 0)
+		{
+			enclosed_samples = 0;
+			s_reverb_test->value = 0;
+		}
+		return;
+	}
+
+	if (!s_reverb_test->value && ++enclosed_samples > 9)
+		s_reverb_test->value = 1;
+
+	if (!s_reverb_test->value)
+		return;
+
+	if (height < 256.0f)
+		s_reverb_delay->value = 1000.0f;
+	else if (height > 512.0f)
+		s_reverb_delay->value = 1500.0f;
+	else
+		s_reverb_delay->value = 1000.0f + (height - 256.0f) * (500.0f / 256.0f);
+
+	if (height < 512.0f)
+	{
+		scale = (height - 64.0f) / 448.0f;
+		s_reverb_count->value = 4.0f - floor (scale * 3.0f);
+		s_reverb_volscale->value = 0.55f - scale * 0.3f;
+	}
+	else
+	{
+		s_reverb_count->value = 1.0f;
+		if (height > 800.0f)
+		{
+			s_reverb_volscale->value = 0.7f;
+			s_reverb_delay->value = 2000.0f;
+		}
+		else
+		{
+			s_reverb_volscale->value = 0.25f;
+		}
+	}
+}
+#endif
 
 /*
 ============
@@ -1270,4 +1463,39 @@ void S_SoundList(void)
 	Com_Printf ("Total hash collisions: %i\n", hcollisions);
 #endif
 }
+
+#ifdef KINGPIN_ENGINE
+/*
+=================
+S_SoundListOut
+
+kingpin.exe @00437ad0 writes a game-DLL sound precache list to sound.log.
+Leading '*' placeholder markers are deliberately omitted from the output.
+=================
+*/
+void S_SoundListOut(void)
+{
+	file_t *file;
+	int i;
+	sfx_t *sfx;
+	char *name;
+
+	file = FS_FOpen("sound.log", FS_MODE_WRITE | FS_PATH_ROOTDIR);
+	if (!file)
+		return;
+
+	for (sfx=known_sfx, i=0 ; i<num_sfx ; i++, sfx++)
+	{
+		if (!sfx->registration_sequence)
+			continue;
+
+		name = sfx->name;
+		if (name[0] == '*')
+			name++;
+		FS_FPrintf (file, "gi.soundindex (\"%s\");\n", name);
+	}
+
+	FS_FClose (file);
+}
+#endif
 

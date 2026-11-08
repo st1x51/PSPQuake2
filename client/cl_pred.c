@@ -160,6 +160,30 @@ trace_t		CL_PMTrace (vec3_t start, vec3_t mins, vec3_t maxs, vec3_t end)
 	return t;
 }
 
+#ifdef KINGPIN_ENGINE
+
+trace_t CL_PMTraceEx(vec3_t start, vec3_t mins, vec3_t maxs, vec3_t end, int flags)
+{
+    trace_t t;
+    int mask;
+
+    mask = MASK_PLAYERSOLID;
+    if (flags & CL_PMTRACE_WATER)
+        mask |= MASK_WATER;
+
+    t = CM_BoxTrace(start, end, mins, maxs, 0, mask);
+
+    if (t.fraction < 1.0)
+        t.ent = (struct edict_s *)1;
+
+    if (flags & CL_PMTRACE_ENTITIES)
+        CL_ClipMoveToEntities(start, mins, maxs, end, &t);
+
+    return t;
+}
+#endif
+
+
 int		CL_PMpointcontents (vec3_t point)
 {
 	int			i;
@@ -238,7 +262,9 @@ void CL_PredictMovement (void)
 	pm.trace = CL_PMTrace;
 	pm.pointcontents = CL_PMpointcontents;
 
+#ifndef KINGPIN_ENGINE
 	pm_airaccelerate = atof(cl.configstrings[CS_AIRACCEL]);
+#endif
 
 	pm.s = cl.frame.playerstate.pmove;
 
@@ -257,6 +283,10 @@ void CL_PredictMovement (void)
 
 		// save for debug checking
 		VectorCopy (pm.s.origin, cl.predicted_origins[frame]);
+#ifdef KINGPIN_ENGINE
+		if (pm.s.pm_type == PM_HOVERCAR_GROUND || pm.s.pm_type == PM_BIKE)
+			VectorCopy (pm_vehicle_angles, cl.vehicle_groundangles);
+#endif
 	}
 
 	oldframe = (ack-2) & (CMD_BACKUP-1);

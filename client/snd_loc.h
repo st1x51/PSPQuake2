@@ -43,6 +43,9 @@ typedef struct sfx_s
 	int			registration_sequence;
 	cache_user_t	cache;
 	char 		*truename;
+#ifdef KINGPIN_ENGINE
+	float		pitch;			// set on the resampled copies made for pitched sounds
+#endif
 #ifdef USE_HASH_FOR_SFX
 	uint		hashkey;
 	struct sfx_s	*nexthash;
@@ -63,7 +66,16 @@ typedef struct playsound_s
 	qboolean	fixed_origin;	// use origin field instead of entnum's origin
 	vec3_t		origin;
 	unsigned	begin;			// begin on this sample
+#ifdef KINGPIN_ENGINE
+	float		pitch;			// 1.0 = normal
+#endif
 } playsound_t;
+
+#if defined(KINGPIN_ENGINE) && defined(__psp__)
+#define S_PITCH_FRACBITS	12
+#define S_PITCH_UNIT		(1 << S_PITCH_FRACBITS)
+#define S_PITCH_FRACMASK	(S_PITCH_UNIT - 1)
+#endif
 
 typedef struct
 {
@@ -92,6 +104,10 @@ typedef struct
 	int			master_vol;		// 0-255 master volume
 	qboolean	fixed_origin;	// use origin instead of fetching entnum's origin
 	qboolean	autosound;		// from an entity->sound, cleared each frame
+#if defined(KINGPIN_ENGINE) && defined(__psp__)
+	int			pitch_samplepos;	// 20.12 source-sample position for pitched playback
+	int			pitch_samplestep;	// 20.12 source samples consumed per output sample
+#endif
 } channel_t;
 
 typedef struct
@@ -151,14 +167,26 @@ extern cvar_t	*s_show;
 extern cvar_t	*s_mixahead;
 extern cvar_t	*s_testsound;
 extern cvar_t	*s_primary;
+#ifdef KINGPIN_ENGINE
+extern cvar_t	*s_reverb_delay;
+extern cvar_t	*s_reverb_count;
+extern cvar_t	*s_reverb_volscale;
+extern cvar_t	*s_reverb_test;
+#endif
 
 wavinfo_t GetWavinfo (char *name, byte *wav, int wavlength);
 
 void S_InitScaletable (void);
 
 sfxcache_t *S_LoadSound (sfx_t *s);
+#ifdef KINGPIN_ENGINE
+sfx_t *S_PitchSound (sfx_t *s, float pitch);
+#endif
 
 void S_IssuePlaysound (playsound_t *ps);
+#ifdef KINGPIN_ENGINE
+void S_FreePitchedSound (sfx_t *sfx);
+#endif
 
 void S_PaintChannels(int endtime);
 

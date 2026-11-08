@@ -59,7 +59,11 @@ typedef struct _tag_menuframework
 	const char *statusbar;
 
 	void (*cursordraw)( struct _tag_menuframework *m );
-	
+
+#ifdef KINGPIN_ENGINE
+	int xoffset;
+	int yoffset;
+#endif
 } menuframework_s;
 
 typedef struct

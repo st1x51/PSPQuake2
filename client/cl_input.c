@@ -59,8 +59,19 @@ kbutton_t	in_left, in_right, in_forward, in_back;
 kbutton_t	in_lookup, in_lookdown, in_moveleft, in_moveright;
 kbutton_t	in_strafe, in_speed, in_use, in_attack;
 kbutton_t	in_up, in_down;
+#ifdef KINGPIN_ENGINE
+kbutton_t	in_activate;
+#endif
 
 int			in_impulse;
+
+#ifdef KINGPIN_ENGINE
+qboolean	cl_moveleft_held;
+qboolean	cl_moveright_held;	// for the bike lean
+static qboolean	cl_left_held;
+static qboolean	cl_right_held;
+static short	cl_keyboard_sidemove;			// before IN_Move adds mouse/controller input
+#endif
 
 
 void KeyDown (kbutton_t *b)
@@ -175,6 +186,16 @@ void IN_UseUp (void) {KeyUp(&in_use);}
 
 void IN_Impulse (void) {in_impulse=atoi(Cmd_Argv(1));}
 
+#ifdef KINGPIN_ENGINE
+void CL_ActivateButton (qboolean down)
+{
+	if (down)
+		KeyDown (&in_activate);
+	else
+		KeyUp (&in_activate);
+}
+#endif
+
 /*
 ===============
 CL_KeyState
@@ -242,7 +263,14 @@ void CL_AdjustAngles (void)
 {
 	float	speed;
 	float	up, down;
-	
+
+#ifdef KINGPIN_ENGINE
+	cl_right_held = in_right.state & 1;
+	cl_left_held = in_left.state & 1;
+	cl_moveleft_held = in_moveleft.state & 1;
+	cl_moveright_held = in_moveright.state & 1;
+#endif
+
 	if (in_speed.state & 1)
 		speed = cls.frametime * cl_anglespeedkey->value;
 	else
@@ -252,6 +280,14 @@ void CL_AdjustAngles (void)
 	{
 		cl.viewangles[YAW] -= speed*cl_yawspeed->value*CL_KeyState (&in_right);
 		cl.viewangles[YAW] += speed*cl_yawspeed->value*CL_KeyState (&in_left);
+#ifdef KINGPIN_ENGINE
+		// the strafe keys steer a bike
+		if (cl.frame.playerstate.pmove.pm_type == PM_BIKE)
+		{
+			cl.viewangles[YAW] += speed*cl_yawspeed->value*(in_moveleft.state & 1);
+			cl.viewangles[YAW] -= speed*cl_yawspeed->value*(in_moveright.state & 1);
+		}
+#endif
 	}
 	if (in_klook.state & 1)
 	{
@@ -306,12 +342,28 @@ void CL_BaseMove (usercmd_t *cmd)
 		cmd->forwardmove *= 2;
 		cmd->sidemove *= 2;
 		cmd->upmove *= 2;
-	}	
+	}
+
+#ifdef KINGPIN_ENGINE
+	// Retail caches this before IN_Move modifies the completed usercmd.
+	cl_keyboard_sidemove = cmd->sidemove;
+#endif
 }
 
 void CL_ClampPitch (void)
 {
 	float	pitch;
+#ifdef KINGPIN_ENGINE
+	pmtype_t	type = cl.frame.playerstate.pmove.pm_type;
+	float		yawspeed, turnspeed, speed, diff, step;
+	vec3_t		velocity;
+	int			i;
+
+	static vec3_t	oldangles = {-999, -999, -999};
+	static vec3_t	lastturn;
+	static vec3_t	turnaccel;
+	static float	last_frametime;
+#endif
 
 	pitch = SHORT2ANGLE(cl.frame.playerstate.pmove.delta_angles[PITCH]);
 	if (pitch > 180)
@@ -321,6 +373,122 @@ void CL_ClampPitch (void)
 		cl.viewangles[PITCH] += 360; // wrapped
 	if (cl.viewangles[PITCH] + pitch > 360)
 		cl.viewangles[PITCH] -= 360; // wrapped
+
+#ifdef KINGPIN_ENGINE
+	if (type == PM_HOVERCAR || type == PM_HOVERCAR_GROUND || type == PM_BIKE)
+	{
+		if (type == PM_BIKE)
+		{
+			for (i = 0; i < 3; i++)
+				velocity[i] = cl.frame.playerstate.pmove.velocity[i] * 0.125f;
+			speed = VectorLength (velocity);
+
+			if (speed <= 10)
+			{
+				yawspeed = 0;
+				turnspeed = 6.75f;
+			}
+			else if (speed < 50)
+			{
+				yawspeed = 45;
+				turnspeed = 6.75f;
+			}
+			else if (speed <= 100)
+			{
+				yawspeed = speed * 0.01f * 90;
+				turnspeed = speed * 0.01f * 13.5f;
+			}
+			else
+			{
+				yawspeed = 90;
+				turnspeed = 13.5f;
+			}
+
+			if (fabs (turnaccel[YAW] / last_frametime) < 5)
+				turnspeed *= (fabs (turnaccel[YAW] / last_frametime) * 0.2f + 1) * 0.5f;
+
+			diff = AngleDiff (cl.viewangles[YAW], oldangles[YAW]);
+			if ((!cl_keyboard_sidemove ||
+				(diff < 0 && cl_keyboard_sidemove > 0) ||
+				(diff > 0 && cl_keyboard_sidemove < 0)) &&
+				!cl_right_held && !cl_left_held)
+			{
+				if (speed >= 100)
+					speed = 0.4f;
+				else
+					speed = (100 - speed) * 0.01f * 0.6f + 0.4f;
+				yawspeed *= speed;
+			}
+		}
+		else
+		{
+			yawspeed = 180;
+			turnspeed = 45;
+		}
+
+		if (type == PM_HOVERCAR_GROUND || type == PM_BIKE)
+			cl.viewangles[PITCH] = -pitch;
+		else
+		{
+			if (cl.viewangles[PITCH] + pitch > 59)
+				cl.viewangles[PITCH] = 59 - pitch;
+			if (cl.viewangles[PITCH] + pitch < -59)
+				cl.viewangles[PITCH] = -59 - pitch;
+		}
+
+		if (oldangles[YAW] <= -990)
+			VectorCopy (cl.viewangles, oldangles);
+		else
+		{
+			if (cls.frametime > (1.0f / 30.0f))
+				turnspeed *= 1 - (1 - cls.frametime * 30) * 0.5f;
+
+			diff = AngleDiff (cl.viewangles[YAW], oldangles[YAW]);
+			step = yawspeed * cls.frametime;
+			if (step < fabs (diff))
+			{
+				cl.viewangles[YAW] = anglemod (oldangles[YAW] + (diff <= 0 ? step : -step));
+				if (cl.viewangles[YAW] > 180)
+					cl.viewangles[YAW] -= 360;
+			}
+
+			diff = AngleDiff (cl.viewangles[PITCH], oldangles[PITCH]);
+			step = cls.frametime * 90;
+			if (step < fabs (diff))
+			{
+				cl.viewangles[PITCH] = anglemod (oldangles[PITCH] + (diff <= 0 ? step : -step));
+				if (cl.viewangles[PITCH] > 180)
+					cl.viewangles[PITCH] -= 360;
+			}
+
+			for (i = 0; i < 3; i++)
+			{
+				if (i == PITCH && type == PM_BIKE)
+					continue;
+				diff = AngleDiff (cl.viewangles[i], oldangles[i]);
+				step = turnspeed * cls.frametime;
+				if (step < fabs (diff - lastturn[i]))
+				{
+					cl.viewangles[i] = anglemod (oldangles[i] - lastturn[i] +
+						(diff - lastturn[i] <= 0 ? step : -step));
+					if (cl.viewangles[i] > 180)
+						cl.viewangles[i] -= 360;
+				}
+			}
+		}
+
+		for (i = 0; i < 3; i++)
+		{
+			diff = AngleDiff (cl.viewangles[i], oldangles[i]);
+			turnaccel[i] = diff - lastturn[i];
+			lastturn[i] = diff;
+			oldangles[i] = cl.viewangles[i];
+		}
+		last_frametime = cls.frametime;
+
+		return;
+	}
+#endif
 
 	if (cl.viewangles[PITCH] + pitch > 89)
 		cl.viewangles[PITCH] = 89 - pitch;
@@ -348,6 +516,12 @@ void CL_FinishMove (usercmd_t *cmd)
 	if (in_use.state & 3)
 		cmd->buttons |= BUTTON_USE;
 	in_use.state &= ~2;
+
+#ifdef KINGPIN_ENGINE
+	if (in_activate.state & 3)
+		cmd->buttons |= BUTTON_ACTIVATE;
+	in_activate.state &= ~2;
+#endif
 
 	if (anykeydown && cls.key_dest == key_game)
 		cmd->buttons |= BUTTON_ANY;
@@ -537,7 +711,11 @@ void CL_SendCmd (void)
 	// calculate a checksum over the move commands
 	buf.data[checksumIndex] = COM_BlockSequenceCRCByte(
 		buf.data + checksumIndex + 1, buf.cursize - checksumIndex - 1,
+#ifdef KINGPIN_ENGINE
+		cls.netchan.outgoing_sequence, cls.challenge);
+#else
 		cls.netchan.outgoing_sequence);
+#endif
 
 	//
 	// deliver the message

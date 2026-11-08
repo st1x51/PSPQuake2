@@ -64,7 +64,27 @@ typedef struct
 	vec3_t		lerp_origin;		// for trails (variable hz)
 
 	int			fly_stoptime;
+#ifdef KINGPIN_ENGINE
+	int			flame_serverframe;	// CL_FlameTrail: spawn at most once per frame when not moving
+	vec3_t		flame_lastorigin;
+#endif
 } centity_t;
+
+#ifdef KINGPIN_ENGINE
+
+#define MAX_CLIENTWEAPONMODELS	16
+#define	MAX_CLIENTMODELPARTS	8	// head, legs, body and extras
+
+typedef struct
+{
+	char	name[MAX_QPATH];
+	struct image_s	*icon;
+	char	iconname[MAX_QPATH];
+	struct model_s	*model[MAX_CLIENTMODELPARTS];
+	struct image_s	*skin[MAX_CLIENTMODELPARTS];
+	struct model_s	*weaponmodel[MAX_CLIENTWEAPONMODELS];
+} clientinfo_t;
+#else
 
 #define MAX_CLIENTWEAPONMODELS		20		// PGM -- upped from 16 to fit the chainfist vwep
 
@@ -78,6 +98,7 @@ typedef struct
 	struct model_s	*model;
 	struct model_s	*weaponmodel[MAX_CLIENTWEAPONMODELS];
 } clientinfo_t;
+#endif
 
 extern char cl_weaponmodels[MAX_CLIENTWEAPONMODELS][MAX_QPATH];
 extern int num_cl_weaponmodels;
@@ -168,6 +189,9 @@ typedef struct
 
 	clientinfo_t	clientinfo[MAX_CLIENTS];
 	clientinfo_t	baseclientinfo;
+#ifdef KINGPIN_ENGINE
+	vec3_t			vehicle_groundangles;
+#endif
 } client_state_t;
 
 extern	client_state_t	cl;
@@ -293,6 +317,22 @@ extern	cvar_t	*cl_timedemo;
 
 extern	cvar_t	*cl_vwep;
 
+#ifdef KINGPIN_ENGINE
+extern	cvar_t	*cl_fireworks;
+extern	cvar_t	*cl_bloodtime;
+
+extern	cvar_t	*cam_dist;
+extern	cvar_t	*cam_speed;
+extern	cvar_t	*cam_zofs;
+
+extern	cvar_t	*cl_parental_lock;
+extern	cvar_t	*cl_parental_override;
+
+extern	cvar_t	*hudtalk;
+extern	cvar_t	*hudguys;
+
+#endif
+
 typedef struct
 {
 	int		key;				// so entities can reuse same entry
@@ -306,6 +346,31 @@ typedef struct
 
 extern	centity_t	cl_entities[MAX_EDICTS];
 extern	cdlight_t	cl_dlights[MAX_DLIGHTS];
+#ifdef KINGPIN_ENGINE
+extern	flamejunc_t	*cl_flameactive[MAX_EDICTS];
+extern	flamejunc_t	*cl_flameshooteractive[MAX_EDICTS];
+
+typedef struct
+{
+	vec3_t	origin;
+	vec3_t	color;
+	float	intensity;
+	byte	style;
+} cmlight_t;
+
+#define	MAX_MODELLIGHTS	MAX_JUNIOR_STRINGS
+
+extern	cmlight_t	cl_modellights[MAX_MODELLIGHTS];
+extern	int			cl_nummodellights;
+
+// light flares from the CS_LIGHTFLARES configstrings
+extern	lightflare_t	cl_lightflares[MAX_LIGHTFLARES];
+extern	int				cl_numlightflares;
+
+extern	vec3_t		cl_vehicle_angles;
+extern	model_lighting_t	cl_playerlighting;
+extern	qboolean	cl_moveleft_held, cl_moveright_held;
+#endif
 
 // the cl_parse_entities must be large enough to hold UPDATE_BACKUP frames of
 // entities, so that when a delta compressed message arives from the server
@@ -368,7 +433,68 @@ typedef struct particle_s
 	float		colorvel;
 	float		alpha;
 	float		alphavel;
+#ifdef KINGPIN_ENGINE
+	int			type;		// passed to the renderer
+	float		delay;		// seconds before a type >= 50 particle starts
+#endif
 } cparticle_t;
+
+#ifdef KINGPIN_ENGINE
+// rain and snow: they never die, falling particles restart at the top
+typedef struct particle2_s
+{
+	struct particle2_s	*next;
+	float		time;
+	vec3_t		org;
+	vec3_t		vel;
+	vec3_t		accel;
+	float		color;
+	float		colorvel;
+	float		alpha;
+	float		alphavel;
+	int			type;
+	float		top;		// z the particle restarts at
+	float		bottom;		// z of the floor under it
+} cparticle2_t;
+
+// sparks: moving emitters that leave particle or smoke sprite trails
+// and bounce off the world (cl_kpfx.c)
+typedef struct
+{
+	int		inuse;
+	int		starttime;
+	float	age;
+	float	lifetime;
+	float	start_alpha;		// of the trail particles
+	float	end_alpha;
+	vec3_t	vel;
+	vec3_t	dir;
+	vec3_t	origin;
+	float	ptlife;				// lifetime of the trail particles
+	float	spiral;				// radius of the spiral around the path, 0 = none
+	float	spiral_grow;
+	float	spiral_angle;
+	float	spiral_speed;
+	vec3_t	right, up;
+	float	gravity;
+	int		type;				// trail particle type, SPARK_SMOKE = smoke sprites
+	float	density;			// trail spacing factor
+	float	bounce;				// 0 = die on impact
+	int		spiral_flags;		// 1 = offset the particles, 2 = give them velocity
+	float	light;				// dynamic light intensity, 0 = none
+	float	smoke_scale;		// SPARK_SMOKE sprite growth, 0 = default sizes
+	vec3_t	lastorigin;
+} cspark_t;
+
+#define	SPARK_SMOKE		0x34
+
+cspark_t *CL_AllocSpark (vec3_t org, vec3_t vel, float lifetime, float ptlife);
+void CL_UpdateSparks (void);
+void CL_MetalSparks (vec3_t org, vec3_t dir, int count);
+void CL_RailSparks (vec3_t start, vec3_t end, vec3_t dir);
+void CL_ExplosionDebris (vec3_t org, vec3_t dir, int count, float speed,
+	float lifescale, float ptlifescale, float gravity, float smoke_scale);
+#endif
 
 
 #define	PARTICLE_GRAVITY	40
@@ -380,6 +506,16 @@ typedef struct particle_s
 
 void CL_ClearEffects (void);
 void CL_ClearTEnts (void);
+#ifdef KINGPIN_ENGINE
+void CL_ClearParticles (void);
+void CL_AddParticles2 (void);
+void CL_SnowParticle (vec3_t org, float top, float bottom);
+void CL_RainParticle (vec3_t org, float top, float bottom);
+void CL_BloodEffect (vec3_t org, vec3_t dir, int type, int count);
+void CL_BlasterParticles (vec3_t org, vec3_t dir);
+void CL_ExplosionParticles (vec3_t org);
+void CL_BFGExplosionParticles (vec3_t org);
+#endif
 void CL_BlasterTrail (vec3_t start, vec3_t end);
 void CL_QuadTrail (vec3_t start, vec3_t end);
 void CL_RailTrail (vec3_t start, vec3_t end);
@@ -397,7 +533,9 @@ void CL_DebugTrail (vec3_t start, vec3_t end);
 void CL_SmokeTrail (vec3_t start, vec3_t end, int colorStart, int colorRun, int spacing);
 void CL_Flashlight (int ent, vec3_t pos);
 void CL_ForceWall (vec3_t start, vec3_t end, int color);
+#ifndef KINGPIN_ENGINE
 void CL_FlameEffects (centity_t *ent, vec3_t origin);
+#endif
 void CL_GenericParticleEffect (vec3_t org, vec3_t dir, int color, int count, int numcolors, int dirspread, float alphavel);
 void CL_BubbleTrail2 (vec3_t start, vec3_t end, int dist);
 void CL_Heatbeam (vec3_t start, vec3_t end);
@@ -413,6 +551,16 @@ void CL_ParticleSmokeEffect (vec3_t org, vec3_t dir, int color, int count, int m
 void CL_Widowbeamout (cl_sustain_t *self);
 void CL_Nukeblast (cl_sustain_t *self);
 void CL_WidowSplash (vec3_t org);
+
+#ifdef KINGPIN_ENGINE
+void CL_GetModel (entity_t *ent, int modelindex);
+void CL_FlameEffects (entity_t *ent, entity_state_t *s1, int player);
+void CL_FlameShooter (entity_t *ent, entity_state_t *s1, vec3_t origin);
+void CL_ClearFlames (void);
+void CL_GCFlames (void);
+void CL_FlameTrail (centity_t *cent, vec3_t origin);
+void CL_GrenadeSmoke (vec3_t origin);
+#endif
 // PGM
 // ========
 
@@ -424,6 +572,9 @@ void CL_ParseTEnt (void);
 void CL_ParseConfigString (void);
 void CL_ParseMuzzleFlash (void);
 void CL_ParseMuzzleFlash2 (void);
+#ifdef KINGPIN_ENGINE
+void CL_ParseMuzzleFlash3 (void);
+#endif
 void SmokeAndFlash(vec3_t origin);
 
 void CL_SetLightstyle (int i);
@@ -513,6 +664,9 @@ void CL_LoadClientinfo (clientinfo_t *ci, char *s);
 void SHOWNET(char *s);
 void CL_ParseClientinfo (int player);
 void CL_Download_f (void);
+#ifdef KINGPIN_ENGINE
+void CL_ConfigStringChanged (int i);
+#endif
 
 //
 // cl_view.c
@@ -526,6 +680,12 @@ void V_AddEntity (entity_t *ent);
 void V_AddParticle (vec3_t org, int color, float alpha);
 void V_AddLight (vec3_t org, float intensity, float r, float g, float b);
 void V_AddLightStyle (int style, float r, float g, float b);
+#ifdef KINGPIN_ENGINE
+void V_ClearFlares (void);
+void V_AddParticleEx (vec3_t org, int color, float alpha, int type, int frame);
+void V_AddParticle2 (vec3_t org, int color, float alpha, int type, int frame);
+void V_AddSurfLight (vec3_t org, float radius, float intensity, float r, float g, float b);
+#endif
 
 //
 // cl_tent.c
@@ -541,6 +701,20 @@ void CL_SmokeAndFlash(vec3_t origin);
 void CL_InitPrediction (void);
 void CL_PredictMove (void);
 void CL_CheckPredictionError (void);
+
+#ifdef KINGPIN_ENGINE
+
+// client-side CL_PMTraceEx flags
+#define CL_PMTRACE_WATER       0x0001  // include water, slime and lava
+#define CL_PMTRACE_ENTITIES    0x0002  // clip against packet entities
+
+#define CL_PMTRACE_DEFAULT     CL_PMTRACE_ENTITIES
+#define CL_PMTRACE_ALL         (CL_PMTRACE_WATER | CL_PMTRACE_ENTITIES)
+
+trace_t CL_PMTraceEx (vec3_t start, vec3_t mins, vec3_t maxs, vec3_t end, int flags);
+
+trace_t CL_PMTrace (vec3_t start, vec3_t mins, vec3_t maxs, vec3_t end);
+#endif
 
 //
 // cl_fx.c
@@ -563,8 +737,17 @@ void M_Init (void);
 void M_Keydown (int key);
 void M_Draw (void);
 void M_Menu_Main_f (void);
+#ifdef KINGPIN_ENGINE
+void M_Menu_Credits_f (void);
+#endif
 void M_ForceMenuOff (void);
 void M_AddToServerList (netadr_t adr, char *info);
+
+#ifdef KINGPIN_ENGINE
+extern	qboolean	m_mainmenu_active;
+
+void M_ClearPlayerSkinMemory (void);	// the main menu hides the 3D view
+#endif
 
 //
 // osk.c

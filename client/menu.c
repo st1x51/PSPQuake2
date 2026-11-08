@@ -31,9 +31,20 @@ static int	m_main_cursor;
 
 #define NUM_CURSOR_FRAMES 15
 
+#ifdef KINGPIN_ENGINE
+// kingpin.exe @00459ce0
+static char *menu_in_sound		= "misc/menu1.wav";
+static char *menu_move_sound	= "misc/menu1.wav";
+static char *menu_back_sound	= "misc/menu1.wav";
+static char *menu_out_sound		= "misc/menu3.wav";
+static char *menu_ambient_sound	= "misc/menuamb.wav";
+
+qboolean	m_mainmenu_active;
+#else
 static char *menu_in_sound		= "misc/menu1.wav";
 static char *menu_move_sound	= "misc/menu2.wav";
 static char *menu_out_sound		= "misc/menu3.wav";
+#endif
 
 void M_Menu_Main_f (void);
 	void M_Menu_Game_f (void);
@@ -75,6 +86,9 @@ typedef struct
 menulayer_t	m_layers[MAX_MENU_DEPTH];
 int		m_menudepth;
 
+#ifdef KINGPIN_ENGINE
+#define M_Banner(x)
+#else
 static void M_Banner( char *name )
 {
 	int w, h;
@@ -82,6 +96,7 @@ static void M_Banner( char *name )
 	re.DrawGetPicSize (&w, &h, name );
 	re.DrawPic( viddef.width / 2 - w / 2, viddef.height / 2 - 110, name );
 }
+#endif
 
 void M_PushMenu ( void (*draw) (void), const char *(*key) (int k) )
 {
@@ -125,11 +140,20 @@ void M_ForceMenuOff (void)
 	m_menudepth = 0;
 	Key_ClearStates ();
 	Cvar_Set ("paused", "0");
+#ifdef KINGPIN_ENGINE
+	m_mainmenu_active = false;
+#endif
 }
 
 void M_PopMenu (void)
 {
+#ifdef KINGPIN_ENGINE
+	// kingpin.exe @00428560: the back sound, and the out sound only when
+	// the last menu closes
+	S_StartLocalSound( menu_back_sound );
+#else
 	S_StartLocalSound( menu_out_sound );
+#endif
 	if (m_menudepth < 1)
 		Com_Error (ERR_FATAL, "M_PopMenu: depth < 1");
 	m_menudepth--;
@@ -138,7 +162,12 @@ void M_PopMenu (void)
 	m_keyfunc = m_layers[m_menudepth].key;
 
 	if (!m_menudepth)
+	{
 		M_ForceMenuOff ();
+#ifdef KINGPIN_ENGINE
+		S_StartLocalSound( menu_out_sound );
+#endif
+	}
 }
 
 
@@ -165,7 +194,11 @@ const char *Default_MenuKey( menuframework_s *m, int key )
 	case K_START_BUTTON:
 	case K_B_BUTTON:
 		M_PopMenu();
+#ifdef KINGPIN_ENGINE
+		return menu_back_sound;
+#else
 		return menu_out_sound;
+#endif
 	case K_KP_UPARROW:
 	case K_UPARROW:
 		if ( m )
@@ -415,7 +448,159 @@ MAIN MENU
 */
 #define	MAIN_ITEMS	5
 
+#ifdef KINGPIN_ENGINE
 
+#define MENU_AMBIENT_INTERVAL	500		// msec between menuamb.wav restarts
+#define MENU_PULSE_INTERVAL		25		// msec between animation ticks
+#define MENU_FRAME_MAX			11		// max frame index for the active item
+
+// menu item structure, matches the 16-byte layout in the original engine
+typedef struct
+{
+	const char	*name;		// +0
+	int			x;			// +4   base X on the 640x480 canvas
+	int			y;			// +8   base Y on the 640x480 canvas
+	int			frame;		// +12  animation frame counter
+} menu_item_t;
+
+// main menu items, coordinates taken from the original data segment
+static menu_item_t	menu_main_items[] =
+{
+	{ "m_game",    108,  65, 0 },
+	{ "m_gang",     64, 105, 0 },
+	{ "m_option",   56, 155, 0 },
+	{ "m_visuals", 100, 201, 0 },
+	{ "m_exit",     98, 237, 0 },
+	{ NULL, 0, 0, 0 }
+};
+
+// frame suffixes: "", "2", "3"
+static const char *menu_item_suffix[MENU_FRAME_MAX + 1] =
+{
+	"", "", "", "", "",			// 0..4
+	"2", "2", "2", "2", "2",	// 5..9
+	"3", "3"					// 10..11
+};
+
+static int	menu_ambient_timeout = 0;
+static int	menu_pulse_timeout = 0;
+
+
+/*
+=================
+M_Main_Draw (FUN_0042ba40)
+=================
+*/
+void M_Main_Draw (void)
+{
+	int			i;
+	int			w, h;
+	float		scale_x, scale_y;
+	int			current_time;
+	int			pulse_tick;
+	int			jitter_state;
+	int			jitter_offset;
+	char		built_path[MAX_QPATH];
+	const char	*suffix;
+	const char	*name;
+	menu_item_t	*item;
+
+	// kingpin.exe @0042babc: suppress the 3D view behind the full-screen menu.
+	m_mainmenu_active = true;
+
+	// base canvas is 640x480, same as the original engine
+	scale_x = (float)viddef.width / 640.0f;
+	scale_y = (float)viddef.height / 480.0f;
+
+	current_time = Sys_Milliseconds();
+
+	// ambient loop
+	if (menu_ambient_timeout == 0 || menu_ambient_timeout <= current_time)
+	{
+		S_StartLocalSound("misc/menuamb.wav");
+		menu_ambient_timeout = current_time + MENU_AMBIENT_INTERVAL;
+	}
+
+	// pulse timer drives the item frame animation
+	pulse_tick = 0;
+	if (menu_pulse_timeout == 0 || menu_pulse_timeout <= current_time)
+	{
+		pulse_tick = 1;
+		menu_pulse_timeout = current_time + MENU_PULSE_INTERVAL;
+	}
+
+	// random CRT jitter glitch, ~1/32 chance per frame
+	jitter_state = ((rand() & 0x1f) == 0x16) ? 1 : 0;
+
+	// screen background
+	re.DrawStretchPic(0, 0, viddef.width, viddef.height, "backround");
+
+	// left lantern screen frame console apparatus
+	re.DrawGetPicSize(&w, &h, "main");
+	re.DrawStretchPic(0, 0,
+					  (int)(w * scale_x), (int)(h * scale_y),
+					  "main");
+
+	// kingpin.exe @0042bbb5: fixed 640x480-canvas position, alpha path.
+	re.DrawGetPicSize(&w, &h, "kingpin");
+	re.DrawStretchPicTransparent((int)(373 * scale_x), (int)(349 * scale_y),
+								 (int)(w * scale_x), (int)(h * scale_y),
+								 "kingpin", 1.0f);
+
+	// main.tga contains the unlit labels; draw overlays only while fading out.
+	for (i = 0; menu_main_items[i].name != NULL; i++)
+	{
+		item = &menu_main_items[i];
+
+		if (i == m_main_cursor || !item->frame)
+			continue;
+
+		suffix = menu_item_suffix[item->frame];
+		name = item->name;
+
+		Com_sprintf(built_path, sizeof(built_path), "%s%s", name, suffix);
+
+		re.DrawGetPicSize(&w, &h, built_path);
+		re.DrawStretchPicTransparent((int)(item->x * scale_x),
+									 (int)(item->y * scale_y),
+									 (int)(w * scale_x), (int)(h * scale_y),
+									 built_path, 1.0f);
+
+		// kingpin.exe @0042bd1e: decrement after this frame was drawn.
+		if (pulse_tick)
+			item->frame--;
+	}
+
+	// draw the active focused item
+	item = &menu_main_items[m_main_cursor];
+
+	if (pulse_tick)
+	{
+		if (item->frame < MENU_FRAME_MAX)
+			item->frame++;
+	}
+
+	// jitter shifts the active item on both axes
+	jitter_offset = jitter_state * 2;
+
+	suffix = menu_item_suffix[item->frame];
+	name = item->name;
+
+	Com_sprintf(built_path, sizeof(built_path), "%s%s", name, suffix);
+
+	re.DrawGetPicSize(&w, &h, built_path);
+	re.DrawStretchPicTransparent((int)(item->x * scale_x) + jitter_offset,
+								 (int)(item->y * scale_y) + jitter_offset,
+								 (int)(w * scale_x), (int)(h * scale_y),
+								 built_path, 1.0f);
+}
+
+#else
+/*
+=================
+M_Main_Draw
+=================
+*/
 void M_Main_Draw (void)
 {
 	int i;
@@ -463,7 +648,7 @@ void M_Main_Draw (void)
 
 	re.DrawPic( xoffset - 30 - w, ystart + h + 5, "m_main_logo" );
 }
-
+#endif
 
 const char *M_Main_Key (int key)
 {
@@ -538,6 +723,9 @@ static menuframework_s	s_multiplayer_menu;
 static menuaction_s		s_join_network_server_action;
 static menuaction_s		s_start_network_server_action;
 static menuaction_s		s_player_setup_action;
+#if defined(KINGPIN_ENGINE) || !defined(__psp__) 
+static menuaction_s		s_heat_action;
+#endif
 
 #ifdef __psp__
 static menulist_s		s_network_mode_list;
@@ -629,6 +817,18 @@ static void StartNetworkServerFunc( void *unused )
 	M_Menu_StartServer_f ();
 }
 
+#if defined(KINGPIN_ENGINE) || !defined(__psp__) 
+// kingpin.exe @00428fe0: hand over to the HEAT.NET launcher and quit
+static void HeatFunc( void *unused )
+{
+#ifdef _WIN32
+	WinExec (".\\heat\\gotoheat.exe 5185", SW_SHOWNORMAL);
+#endif
+	CL_Disconnect ();
+	Com_Quit ();
+}
+#endif
+
 void Multiplayer_MenuInit( void )
 {
 	int		offset_y;
@@ -655,6 +855,11 @@ void Multiplayer_MenuInit( void )
 	s_multiplayer_menu.x = viddef.width / 2;
 	s_multiplayer_menu.y = viddef.height / 2 - 58;
 	s_multiplayer_menu.nitems = 0;
+
+#ifdef KINGPIN_ENGINE
+	s_multiplayer_menu.xoffset = 0;
+	s_multiplayer_menu.yoffset = 15;
+#endif
 
 	offset_y = 30;
 
@@ -716,6 +921,25 @@ void Multiplayer_MenuInit( void )
 	Menu_AddItem( &s_multiplayer_menu, ( void * ) &s_start_network_server_action );
 	Menu_AddItem( &s_multiplayer_menu, ( void * ) &s_player_setup_action );
 
+#if defined(KINGPIN_ENGINE) || !defined(__psp__)
+	// kingpin.exe @00428e50 offers HEAT.NET when the system language has
+	// the default sub-language
+#ifdef _WIN32
+	if ((GetSystemDefaultLangID () >> 10) == SUBLANG_DEFAULT)
+#else
+	if (0)
+#endif
+	{
+		s_heat_action.generic.type	= MTYPE_ACTION;
+		s_heat_action.generic.flags  = QMF_LEFT_JUSTIFY;
+		s_heat_action.generic.x		= 0;
+		s_heat_action.generic.y		= offset_y + 40;
+		s_heat_action.generic.name	= " play on heat.net";
+		s_heat_action.generic.callback = HeatFunc;
+		Menu_AddItem( &s_multiplayer_menu, ( void * ) &s_heat_action );
+	}
+#endif
+
 	Menu_SetStatusBar( &s_multiplayer_menu, NULL );
 
 	Menu_Center( &s_multiplayer_menu );
@@ -744,6 +968,47 @@ KEYS MENU
 
 =======================================================================
 */
+#ifdef KINGPIN_ENGINE
+// kingpin.exe @00459d58. The reference executable is the Russian release,
+// a string-patched English one; the English labels are restored here, the
+// key1..key3 ones reconstructed from the readme.
+char *bindnames[][2] =
+{
+{"+attack",		"attack"},
+{"weapnext",		"next weapon"},
+{"+forward",		"walk forward"},
+{"+back",		"backpedal"},
+{"+left",		"turn left"},
+{"+right",		"turn right"},
+{"+speed",		"run"},
+{"+moveleft",		"step left"},
+{"+moveright",		"step right"},
+{"+strafe",		"sidestep"},
+{"+lookup",		"look up"},
+{"+lookdown",		"look down"},
+{"centerview",		"center view"},
+{"+mlook",		"mouse look"},
+{"+klook",		"keyboard look"},
+{"+moveup",		"up / jump"},
+{"+movedown",		"down / crouch"},
+{"inven",		"inventory"},
+{"invuse",		"use item"},
+{"invdrop",		"drop item"},
+{"invprev",		"prev item"},
+{"invnext",		"next item"},
+{"cmd help",		"notebook"},
+{"+activate",		"activate"},
+{"holster",		"holster"},
+{"flashlight",		"flashlight"},
+{"hud",			"hud"},
+{"reload",		"reload"},
+{"key1",		"positive / follow"},
+{"key2",		"special order"},
+{"key3",		"negative / hold"},
+{ 0, 0 }
+};
+#define NUM_BINDNAMES	31
+#else
 char *bindnames[][2] =
 {
 {"+attack", 		"attack"},
@@ -773,11 +1038,13 @@ char *bindnames[][2] =
 {"cmd help", 		"help computer" },
 { 0, 0 }
 };
+#endif
 
 int				keys_cursor;
 static int		bind_grab;
 
 static menuframework_s	s_keys_menu;
+#ifndef KINGPIN_ENGINE
 static menuaction_s		s_keys_attack_action;
 static menuaction_s		s_keys_change_weapon_action;
 static menuaction_s		s_keys_walk_forward_action;
@@ -802,6 +1069,9 @@ static menuaction_s		s_keys_inv_prev_action;
 static menuaction_s		s_keys_inv_next_action;
 
 static menuaction_s		s_keys_help_computer_action;
+#else
+static menuaction_s		s_keys_actions[NUM_BINDNAMES];
+#endif
 
 static void M_UnbindCommand (char *command)
 {
@@ -849,10 +1119,18 @@ static void M_FindKeysForCommand (char *command, int *twokeys)
 
 static void KeyCursorDrawFunc( menuframework_s *menu )
 {
+#ifdef KINGPIN_ENGINE
+	// kingpin.exe @004299a0: shifted like the rest of the menu text
+	if ( bind_grab )
+		re.DrawChar( viddef.width/5 + menu->x, menu->y + menu->cursor * 9, '=' );
+	else
+		re.DrawChar( viddef.width/5 + menu->x, menu->y + menu->cursor * 9, 12 + ( ( int ) ( Sys_Milliseconds() / 250 ) & 1 ) );
+#else
 	if ( bind_grab )
 		re.DrawChar( menu->x, menu->y + menu->cursor * 9, '=' );
 	else
 		re.DrawChar( menu->x, menu->y + menu->cursor * 9, 12 + ( ( int ) ( Sys_Milliseconds() / 250 ) & 1 ) );
+#endif
 }
 
 static void DrawKeyBindingFunc( void *self )
@@ -900,6 +1178,39 @@ static void KeyBindingFunc( void *self )
 	Menu_SetStatusBar( &s_keys_menu, "press a key or button for this action" );
 }
 
+#ifdef KINGPIN_ENGINE
+// kingpin.exe @004290c0: one line per bindnames entry, 9 pixels apart
+static void Keys_MenuInit( void )
+{
+	int i;
+
+	s_keys_menu.x = viddef.width * 0.50;
+	s_keys_menu.nitems = 0;
+	s_keys_menu.cursordraw = KeyCursorDrawFunc;
+	s_keys_menu.xoffset = 10;
+	s_keys_menu.yoffset = -30;
+
+	for (i = 0; i < NUM_BINDNAMES; i++)
+	{
+		s_keys_actions[i].generic.type			= MTYPE_ACTION;
+		s_keys_actions[i].generic.flags			= QMF_GRAYED;
+		s_keys_actions[i].generic.x				= 0;
+		s_keys_actions[i].generic.y				= i * 9;
+		s_keys_actions[i].generic.ownerdraw		= DrawKeyBindingFunc;
+		s_keys_actions[i].generic.localdata[0]	= i;
+		s_keys_actions[i].generic.name			= bindnames[i][1];
+
+		Menu_AddItem( &s_keys_menu, ( void * ) &s_keys_actions[i] );
+	}
+
+#if __psp__
+	Menu_SetStatusBar( &s_keys_menu, "CROSS to change, SQUARE to clear" );
+#else
+	Menu_SetStatusBar( &s_keys_menu, "enter to change, backspace to clear" );
+#endif
+	Menu_Center( &s_keys_menu );
+}
+#else
 static void Keys_MenuInit( void )
 {
 	int y = 0;
@@ -1126,6 +1437,7 @@ static void Keys_MenuInit( void )
 #endif
 	Menu_Center( &s_keys_menu );
 }
+#endif
 
 static void Keys_MenuDraw (void)
 {
@@ -1749,6 +2061,11 @@ void Options_MenuInit( void )
 	s_options_menu.y = viddef.height / 2 - 58;
 	s_options_menu.nitems = 0;
 
+#ifdef KINGPIN_ENGINE
+	s_options_menu.xoffset = 30;
+	s_options_menu.yoffset = -15;
+#endif
+
 	position_y = 0;
 
 	s_options_sfxvolume_slider.generic.type	= MTYPE_SLIDER;
@@ -1993,7 +2310,25 @@ END GAME MENU
 */
 static int credits_start_time;
 static const char **credits;
+#ifdef KINGPIN_ENGINE
+// kingpin.exe keeps its 453 line credits (@00459e9c) inside the executable;
+// the port reads them from a "credits" file, which re/extract_credits.py
+// writes from the original executable. Without it only the title shows.
+#define MAX_CREDITS_LINES	1024
+static char *creditsIndex[MAX_CREDITS_LINES];
+static const char *kpcredits[] =
+{
+	"+KINGPIN",
+	"+LIFE OF CRIME",
+	"",
+	"+BY",
+	"",
+	"+XATRIX ENTERTAINMENT, INC.",
+	0
+};
+#else
 static char *creditsIndex[256];
+#endif
 static char *creditsBuffer;
 static const char *idcredits[] =
 {
@@ -2346,6 +2681,11 @@ void M_Credits_MenuDraw( void )
 {
 	int i, y;
 
+#ifdef KINGPIN_ENGINE
+	// kingpin.exe @0042acf0
+	re.DrawStretchPic (0, 0, viddef.width, viddef.height, "credits");
+#endif
+
 	/*
 	** draw the credits
 	*/
@@ -2439,6 +2779,9 @@ void M_Menu_Credits_f( void )
 	}
 	else
 	{
+#ifdef KINGPIN_ENGINE
+		credits = kpcredits;
+#else
 		isdeveloper = Developer_searchpath (1);
 
 		if (isdeveloper == 1)			// xatrix
@@ -2449,7 +2792,7 @@ void M_Menu_Credits_f( void )
 		{
 			credits = idcredits;
 		}
-
+#endif
 	}
 
 	credits_start_time = cls.realtime;
@@ -2467,6 +2810,10 @@ GAME MENU
 static int		m_game_cursor;
 
 static menuframework_s	s_game_menu;
+#ifdef KINGPIN_ENGINE
+static menuaction_s		s_novice_game_action;
+static menuaction_s		s_real_game_action;
+#endif
 static menuaction_s		s_easy_game_action;
 static menuaction_s		s_medium_game_action;
 static menuaction_s		s_hard_game_action;
@@ -2481,14 +2828,50 @@ static void StartGame( void )
 	cl.servercount = -1;
 	M_ForceMenuOff ();
 	Cvar_SetValue( "deathmatch", 0 );
-	Cvar_SetValue( "coop", 0 );
 
+#ifndef KINGPIN_ENGINE
+	Cvar_SetValue( "coop", 0 );
 	Cvar_SetValue( "gamerules", 0 );		//PGM
+#endif
 
 	Cbuf_AddText ("loading ; killserver ; wait ; newgame\n");
 	cls.key_dest = key_game;
 }
 
+#ifdef KINGPIN_ENGINE
+// kingpin.exe @0042b120..@0042b1e0: five skill levels, 0 to 4 (the
+// reference executable's translation renamed the cvar to "HAB_K", which
+// the game dll does not read; the original "skill" is used)
+static void NoviceGameFunc( void *data )
+{
+	Cvar_ForceSet( "skill", "0" );
+	StartGame();
+}
+
+static void EasyGameFunc( void *data )
+{
+	Cvar_ForceSet( "skill", "1" );
+	StartGame();
+}
+
+static void MediumGameFunc( void *data )
+{
+	Cvar_ForceSet( "skill", "2" );
+	StartGame();
+}
+
+static void HardGameFunc( void *data )
+{
+	Cvar_ForceSet( "skill", "3" );
+	StartGame();
+}
+
+static void RealGameFunc( void *data )
+{
+	Cvar_ForceSet( "skill", "4" );
+	StartGame();
+}
+#else
 static void EasyGameFunc( void *data )
 {
 	Cvar_ForceSet( "skill", "0" );
@@ -2506,6 +2889,7 @@ static void HardGameFunc( void *data )
 	Cvar_ForceSet( "skill", "2" );
 	StartGame();
 }
+#endif
 
 static void LoadGameFunc( void *unused )
 {
@@ -2522,6 +2906,96 @@ static void CreditsFunc( void *unused )
 	M_Menu_Credits_f();
 }
 
+#ifdef KINGPIN_ENGINE
+void Game_MenuInit( void )
+{
+	static const char *difficulty_names[] =
+	{
+		"novice"
+		"easy",
+		"medium",
+		"hard",
+		"real",
+		0
+	};
+
+	s_game_menu.x = viddef.width * 0.50;
+	s_game_menu.nitems = 0;
+	s_game_menu.xoffset = -50;
+	s_game_menu.yoffset = 0;
+
+	s_novice_game_action.generic.type	= MTYPE_ACTION;
+	s_novice_game_action.generic.flags  = QMF_LEFT_JUSTIFY;
+	s_novice_game_action.generic.x		= 0;
+	s_novice_game_action.generic.y		= 0;
+	s_novice_game_action.generic.name	= "novice";
+	s_novice_game_action.generic.callback = EasyGameFunc;
+
+	s_easy_game_action.generic.type	= MTYPE_ACTION;
+	s_easy_game_action.generic.flags  = QMF_LEFT_JUSTIFY;
+	s_easy_game_action.generic.x		= 0;
+	s_easy_game_action.generic.y		= 10;
+	s_easy_game_action.generic.name	= "easy";
+	s_easy_game_action.generic.callback = EasyGameFunc;
+
+	s_medium_game_action.generic.type	= MTYPE_ACTION;
+	s_medium_game_action.generic.flags  = QMF_LEFT_JUSTIFY;
+	s_medium_game_action.generic.x		= 0;
+	s_medium_game_action.generic.y		= 20;
+	s_medium_game_action.generic.name	= "medium";
+	s_medium_game_action.generic.callback = MediumGameFunc;
+
+	s_hard_game_action.generic.type	= MTYPE_ACTION;
+	s_hard_game_action.generic.flags  = QMF_LEFT_JUSTIFY;
+	s_hard_game_action.generic.x		= 0;
+	s_hard_game_action.generic.y		= 30;
+	s_hard_game_action.generic.name	= "hard";
+	s_hard_game_action.generic.callback = HardGameFunc;
+
+	s_real_game_action.generic.type	= MTYPE_ACTION;
+	s_real_game_action.generic.flags  = QMF_LEFT_JUSTIFY;
+	s_real_game_action.generic.x		= 0;
+	s_real_game_action.generic.y		= 41;
+	s_real_game_action.generic.name	= "real";
+	s_real_game_action.generic.callback = RealGameFunc;
+
+	s_blankline.generic.type = MTYPE_SEPARATOR;
+
+	s_load_game_action.generic.type	= MTYPE_ACTION;
+	s_load_game_action.generic.flags  = QMF_LEFT_JUSTIFY;
+	s_load_game_action.generic.x		= 0;
+	s_load_game_action.generic.y		= 70;
+	s_load_game_action.generic.name	= "load game";
+	s_load_game_action.generic.callback = LoadGameFunc;
+
+	s_save_game_action.generic.type	= MTYPE_ACTION;
+	s_save_game_action.generic.flags  = QMF_LEFT_JUSTIFY;
+	s_save_game_action.generic.x		= 0;
+	s_save_game_action.generic.y		= 80;
+	s_save_game_action.generic.name	= "save game";
+	s_save_game_action.generic.callback = SaveGameFunc;
+
+	s_credits_action.generic.type	= MTYPE_ACTION;
+	s_credits_action.generic.flags  = QMF_LEFT_JUSTIFY;
+	s_credits_action.generic.x		= 0;
+	s_credits_action.generic.y		= 95;
+	s_credits_action.generic.name	= "credits";
+	s_credits_action.generic.callback = CreditsFunc;
+
+	Menu_AddItem( &s_game_menu, ( void * ) &s_novice_game_action );
+	Menu_AddItem( &s_game_menu, ( void * ) &s_easy_game_action );
+	Menu_AddItem( &s_game_menu, ( void * ) &s_medium_game_action );
+	Menu_AddItem( &s_game_menu, ( void * ) &s_hard_game_action );
+	Menu_AddItem( &s_game_menu, ( void * ) &s_real_game_action );
+	Menu_AddItem( &s_game_menu, ( void * ) &s_blankline );
+	Menu_AddItem( &s_game_menu, ( void * ) &s_load_game_action );
+	Menu_AddItem( &s_game_menu, ( void * ) &s_save_game_action );
+	Menu_AddItem( &s_game_menu, ( void * ) &s_blankline );
+	Menu_AddItem( &s_game_menu, ( void * ) &s_credits_action );
+
+	Menu_Center( &s_game_menu );
+}
+#else
 void Game_MenuInit( void )
 {
 	static const char *difficulty_names[] =
@@ -2590,6 +3064,7 @@ void Game_MenuInit( void )
 
 	Menu_Center( &s_game_menu );
 }
+#endif
 
 void Game_MenuDraw( void )
 {
@@ -2668,6 +3143,10 @@ void LoadGame_MenuInit( void )
 	s_loadgame_menu.x = viddef.width / 2 - 120;
 	s_loadgame_menu.y = viddef.height / 2 - 58;
 	s_loadgame_menu.nitems = 0;
+#ifdef KINGPIN_ENGINE
+	s_loadgame_menu.xoffset = 90;	// kingpin.exe @0042b370
+	s_loadgame_menu.yoffset = -10;
+#endif
 
 	Create_Savestrings();
 
@@ -2687,6 +3166,10 @@ void LoadGame_MenuInit( void )
 
 		Menu_AddItem( &s_loadgame_menu, &s_loadgame_actions[i] );
 	}
+#ifdef KINGPIN_ENGINE
+	// kingpin.exe @0042b370 applies xoff/yoff after all slots are present.
+	Menu_Center( &s_loadgame_menu );
+#endif
 }
 
 void LoadGame_MenuDraw( void )
@@ -2746,6 +3229,10 @@ void SaveGame_MenuInit( void )
 	s_savegame_menu.x = viddef.width / 2 - 120;
 	s_savegame_menu.y = viddef.height / 2 - 58;
 	s_savegame_menu.nitems = 0;
+#ifdef KINGPIN_ENGINE
+	s_savegame_menu.xoffset = 80;	// kingpin.exe @0042b500
+	s_savegame_menu.yoffset = -10;
+#endif
 
 	Create_Savestrings();
 
@@ -2764,6 +3251,10 @@ void SaveGame_MenuInit( void )
 
 		Menu_AddItem( &s_savegame_menu, &s_savegame_actions[i] );
 	}
+#ifdef KINGPIN_ENGINE
+	// kingpin.exe @0042b500 applies xoff/yoff after all slots are present.
+	Menu_Center( &s_savegame_menu );
+#endif
 }
 
 const char *SaveGame_MenuKey( int key )
@@ -2867,10 +3358,17 @@ void SearchLocalGames( void )
 	for (i=0 ; i<MAX_LOCAL_SERVERS ; i++)
 		strcpy (local_server_names[i], NO_SERVER_STRING);
 
+#ifdef KINGPIN_ENGINE
+	// kingpin.exe @0042b770: no text box
+	M_Print( 180, 192, "Searching for local servers, this" );
+	M_Print( 180, 200, "could take up to a minute, so" );
+	M_Print( 180, 208, "please be patient." );
+#else
 	M_DrawTextBox( 8, 120 - 48, 36, 3 );
 	M_Print( 16 + 16, 120 - 48 + 8,  "Searching for local servers, this" );
 	M_Print( 16 + 16, 120 - 48 + 16, "could take up to a minute, so" );
 	M_Print( 16 + 16, 120 - 48 + 24, "please be patient." );
+#endif
 
 	// the text box won't show up unless we do a buffer swap
 	re.EndFrame();
@@ -2890,6 +3388,10 @@ void JoinServer_MenuInit( void )
 
 	s_joinserver_menu.x = viddef.width * 0.50 - 120;
 	s_joinserver_menu.nitems = 0;
+#ifdef KINGPIN_ENGINE
+	s_joinserver_menu.xoffset = 70;	// kingpin.exe @0042b810
+	s_joinserver_menu.yoffset = 0;
+#endif
 
 	s_joinserver_address_book_action.generic.type	= MTYPE_ACTION;
 	s_joinserver_address_book_action.generic.name	= "address book";
@@ -2961,6 +3463,273 @@ START SERVER MENU
 
 =============================================================================
 */
+#ifdef KINGPIN_ENGINE
+/*
+kingpin.exe @0042ba20..@0042c360. Rules are deathmatch or bagman
+(teamplay 1), each with its own map list (maps.lst, teammaps.lst), and a
+cash limit field.
+*/
+static menuframework_s s_startserver_menu;
+static char **mapnames;
+static int	  nummaps;
+
+static menuaction_s	s_startserver_start_action;
+static menuaction_s	s_startserver_dmoptions_action;
+static menufield_s	s_timelimit_field;
+static menufield_s	s_fraglimit_field;
+static menufield_s	s_cashlimit_field;
+static menufield_s	s_maxclients_field;
+static menufield_s	s_hostname_field;
+static menulist_s	s_startmap_list;
+static menulist_s	s_rules_box;
+
+void DMOptionsFunc( void *self )
+{
+	M_Menu_DMOptions_f();
+}
+
+static void StartServer_FreeMaps( void )
+{
+	int i;
+
+	if ( mapnames )
+	{
+		for ( i = 0; i < nummaps; i++ )
+			free( mapnames[i] );
+		free( mapnames );
+	}
+	mapnames = 0;
+	nummaps = 0;
+}
+
+// kingpin.exe @0042ba20: "long name" "short name" pairs, one per line
+static void StartServer_LoadMaps( void )
+{
+	static char *listnames[2] = { "maps", "teammaps" };
+	char *buffer;
+	char  mapsname[MAX_QPATH];
+	char *s;
+	int length;
+	int i;
+	FILE *fp;
+
+	StartServer_FreeMaps ();
+
+#if 1
+	Com_sprintf( mapsname, sizeof( mapsname ), "%s.lst", listnames[s_rules_box.curvalue] );
+
+	if (!(buffer = FS_LoadFile(mapsname, &length, FS_PATH_GAMEDIR | FS_TYPE_RFS)))
+	{
+		if (!(buffer = FS_LoadFile(mapsname, &length, FS_PATH_ALL)))
+			Com_Error( ERR_DROP, "couldn't find %s.lst\n", listnames[s_rules_box.curvalue] );
+	}
+#else
+	Com_sprintf( mapsname, sizeof( mapsname ), "%s/%s.lst", FS_Gamedir(), listnames[s_rules_box.curvalue] );
+	if ( ( fp = fopen( mapsname, "rb" ) ) == 0 )
+	{
+		if ( ( length = FS_LoadFile( va( "%s.lst", listnames[s_rules_box.curvalue] ), ( void ** ) &buffer ) ) == -1 )
+			Com_Error( ERR_DROP, va( "couldn't find %s.lst\n", listnames[s_rules_box.curvalue] ) );
+	}
+	else
+	{
+		fseek(fp, 0, SEEK_END);
+		length = ftell(fp);
+		fseek(fp, 0, SEEK_SET);
+		buffer = malloc( length );
+		fread( buffer, length, 1, fp );
+	}
+#endif
+	for ( i = 0; i < length; i++ )
+		if ( buffer[i] == '\r' )
+			nummaps++;
+
+	if ( nummaps == 0 )
+		Com_Error( ERR_DROP, va( "no maps in %s.lst\n", listnames[s_rules_box.curvalue] ) );
+
+	mapnames = malloc( sizeof( char * ) * ( nummaps + 1 ) );
+	memset( mapnames, 0, sizeof( char * ) * ( nummaps + 1 ) );
+
+	s = buffer;
+
+	for ( i = 0; i < nummaps; i++ )
+	{
+		char  shortname[MAX_TOKEN_CHARS];
+		char  longname[MAX_TOKEN_CHARS];
+		char  scratch[200];
+		int		j, l;
+
+		strcpy( shortname, COM_Parse( &s ) );
+		l = strlen(shortname);
+		for (j=0 ; j<l ; j++)
+			shortname[j] = toupper(shortname[j]);
+		strcpy( longname, COM_Parse( &s ) );
+		Com_sprintf( scratch, sizeof( scratch ), "%s\n%s", longname, shortname );
+
+		mapnames[i] = malloc( strlen( scratch ) + 1 );
+		strcpy( mapnames[i], scratch );
+	}
+	mapnames[nummaps] = 0;
+
+	if ( fp != 0 )
+	{
+		fclose( fp );
+		free( buffer );
+	}
+	else
+	{
+		FS_FreeFile( buffer );
+	}
+}
+
+// kingpin.exe @0042bd20: switch map lists with the rules
+void RulesChangeFunc ( void *self )
+{
+	s_maxclients_field.generic.statusbar = NULL;
+	s_startserver_dmoptions_action.generic.statusbar = NULL;
+
+	StartServer_LoadMaps ();
+	s_startmap_list.curvalue = 0;
+	s_startmap_list.itemnames = (const char **)mapnames;
+}
+
+// kingpin.exe @0042bd50
+void StartServerActionFunc( void *self )
+{
+	char	startmap[1024];
+	int		timelimit;
+	int		fraglimit;
+	int		cashlimit;
+	int		maxclients;
+
+	strcpy( startmap, strchr( mapnames[s_startmap_list.curvalue], '\n' ) + 1 );
+
+	maxclients  = atoi( s_maxclients_field.buffer );
+	timelimit	= atoi( s_timelimit_field.buffer );
+	fraglimit	= atoi( s_fraglimit_field.buffer );
+	cashlimit	= atoi( s_cashlimit_field.buffer );
+
+	Cvar_SetValue( "maxclients", ClampCvar( 0, maxclients, maxclients ) );
+	Cvar_SetValue ("timelimit", ClampCvar( 0, timelimit, timelimit ) );
+	Cvar_SetValue ("fraglimit", ClampCvar( 0, fraglimit, fraglimit ) );
+	Cvar_SetValue ("cashlimit", ClampCvar( 0, cashlimit, cashlimit ) );
+	Cvar_Set("hostname", s_hostname_field.buffer );
+	Cvar_SetValue ("deathmatch", 1 );
+	Cvar_SetValue ("teamplay", s_rules_box.curvalue );
+	Cvar_SetValue ("coop", 0 );
+
+	Cbuf_AddText (va("map %s\n", startmap));
+
+	M_ForceMenuOff ();
+}
+
+static void StartServer_InitField( menufield_s *f, int y, char *name, char *cvar, int length, int flags )
+{
+	f->generic.type = MTYPE_FIELD;
+	f->generic.name = name;
+	f->generic.flags = flags;
+	f->generic.x	= 0;
+	f->generic.y	= y;
+	f->generic.statusbar = flags ? "0 = no limit" : NULL;
+	f->length = length;
+	f->visible_length = length;
+	strcpy( f->buffer, Cvar_VariableString(cvar) );
+}
+
+// kingpin.exe @0042bed0
+void StartServer_MenuInit( void )
+{
+	static const char *rules_names[] =
+	{
+		"deathmatch",
+		"bagman",
+		0
+	};
+
+	s_startserver_menu.x = viddef.width * 0.50;
+	s_startserver_menu.nitems = 0;
+
+	s_startmap_list.generic.type = MTYPE_SPINCONTROL;
+	s_startmap_list.generic.x	= 0;
+	s_startmap_list.generic.y	= 0;
+	s_startmap_list.generic.name	= "initial map";
+
+	s_rules_box.generic.type = MTYPE_SPINCONTROL;
+	s_rules_box.generic.x	= 0;
+	s_rules_box.generic.y	= 20;
+	s_rules_box.generic.name	= "rules";
+	s_rules_box.itemnames = rules_names;
+	s_rules_box.curvalue = Cvar_VariableValue("teamplay") != 0;
+	s_rules_box.generic.callback = RulesChangeFunc;
+
+	StartServer_LoadMaps ();
+	s_startmap_list.itemnames = (const char **)mapnames;
+
+	StartServer_InitField( &s_timelimit_field, 36, "time limit", "timelimit", 3, QMF_NUMBERSONLY );
+	StartServer_InitField( &s_fraglimit_field, 54, "frag limit", "fraglimit", 3, QMF_NUMBERSONLY );
+	StartServer_InitField( &s_cashlimit_field, 72, "cash limit", "cashlimit", 5, QMF_NUMBERSONLY );
+
+	/*
+	** maxclients determines the maximum number of players that can join
+	** the game.  If maxclients is only "1" then we should default the menu
+	** option to 8 players, otherwise use whatever its current value is.
+	*/
+	StartServer_InitField( &s_maxclients_field, 90, "max players", "maxclients", 3, QMF_NUMBERSONLY );
+	s_maxclients_field.generic.statusbar = NULL;
+	if ( Cvar_VariableValue( "maxclients" ) == 1 )
+		strcpy( s_maxclients_field.buffer, "8" );
+
+	StartServer_InitField( &s_hostname_field, 108, "hostname", "hostname", 12, 0 );
+
+	s_startserver_dmoptions_action.generic.type = MTYPE_ACTION;
+	s_startserver_dmoptions_action.generic.name	= " deathmatch flags";
+	s_startserver_dmoptions_action.generic.flags= QMF_LEFT_JUSTIFY;
+	s_startserver_dmoptions_action.generic.x	= 24;
+	s_startserver_dmoptions_action.generic.y	= 135;
+	s_startserver_dmoptions_action.generic.statusbar = NULL;
+	s_startserver_dmoptions_action.generic.callback = DMOptionsFunc;
+
+	s_startserver_start_action.generic.type = MTYPE_ACTION;
+	s_startserver_start_action.generic.name	= " begin";
+	s_startserver_start_action.generic.flags= QMF_LEFT_JUSTIFY;
+	s_startserver_start_action.generic.x	= 24;
+	s_startserver_start_action.generic.y	= 165;
+	s_startserver_start_action.generic.callback = StartServerActionFunc;
+
+	Menu_AddItem( &s_startserver_menu, &s_startmap_list );
+	Menu_AddItem( &s_startserver_menu, &s_rules_box );
+	Menu_AddItem( &s_startserver_menu, &s_timelimit_field );
+	Menu_AddItem( &s_startserver_menu, &s_fraglimit_field );
+	Menu_AddItem( &s_startserver_menu, &s_cashlimit_field );
+	Menu_AddItem( &s_startserver_menu, &s_maxclients_field );
+	Menu_AddItem( &s_startserver_menu, &s_hostname_field );
+	Menu_AddItem( &s_startserver_menu, &s_startserver_dmoptions_action );
+	Menu_AddItem( &s_startserver_menu, &s_startserver_start_action );
+
+	Menu_Center( &s_startserver_menu );
+
+	// call this now to set proper inital state
+	RulesChangeFunc ( NULL );
+}
+
+void StartServer_MenuDraw(void)
+{
+	Menu_Draw( &s_startserver_menu );
+}
+
+const char *StartServer_MenuKey( int key )
+{
+	if ( key == K_ESCAPE )
+		StartServer_FreeMaps ();
+
+	return Default_MenuKey( &s_startserver_menu, key );
+}
+
+void M_Menu_StartServer_f (void)
+{
+	StartServer_MenuInit();
+	M_PushMenu( StartServer_MenuDraw, StartServer_MenuKey );
+}
+#else
 static menuframework_s s_startserver_menu;
 static char **mapnames;
 static int	  nummaps;
@@ -3294,6 +4063,7 @@ void M_Menu_StartServer_f (void)
 	StartServer_MenuInit();
 	M_PushMenu( StartServer_MenuDraw, StartServer_MenuKey );
 }
+#endif
 
 /*
 =============================================================================
@@ -3302,6 +4072,173 @@ DMOPTIONS BOOK MENU
 
 =============================================================================
 */
+#ifdef KINGPIN_ENGINE
+/*
+kingpin.exe @0042c380: thirteen yes/no switches. Bit 2 (DF_NO_ITEMS in
+Quake II) is "auto assign teams" in Kingpin, and the teamplay switch only
+toggles DF_MODELTEAMS.
+*/
+static char dmoptions_statusbar[128];
+
+static menuframework_s s_dmoptions_menu;
+
+static menulist_s	s_falls_box;
+static menulist_s	s_weapons_stay_box;
+static menulist_s	s_health_box;
+static menulist_s	s_armor_box;
+static menulist_s	s_spawn_farthest_box;
+static menulist_s	s_samelevel_box;
+static menulist_s	s_force_respawn_box;
+static menulist_s	s_teamplay_box;
+static menulist_s	s_allow_exit_box;
+static menulist_s	s_infinite_ammo_box;
+static menulist_s	s_fixed_fov_box;
+static menulist_s	s_friendlyfire_box;
+static menulist_s	s_autoteams_box;
+
+// kingpin.exe @0042c790
+static void DMFlagCallback( void *self )
+{
+	menulist_s *f = ( menulist_s * ) self;
+	int flags;
+	int bit = 0;
+
+	flags = Cvar_VariableValue( "dmflags" );
+
+	if ( f == &s_friendlyfire_box )
+	{
+		if ( f->curvalue )
+			flags &= ~DF_NO_FRIENDLY_FIRE;
+		else
+			flags |= DF_NO_FRIENDLY_FIRE;
+		goto setvalue;
+	}
+	else if ( f == &s_falls_box )
+	{
+		if ( f->curvalue )
+			flags &= ~DF_NO_FALLING;
+		else
+			flags |= DF_NO_FALLING;
+		goto setvalue;
+	}
+	else if ( f == &s_weapons_stay_box )
+	{
+		bit = DF_WEAPONS_STAY;
+	}
+	else if ( f == &s_allow_exit_box )
+	{
+		bit = DF_ALLOW_EXIT;
+	}
+	else if ( f == &s_health_box )
+	{
+		if ( f->curvalue )
+			flags &= ~DF_NO_HEALTH;
+		else
+			flags |= DF_NO_HEALTH;
+		goto setvalue;
+	}
+	else if ( f == &s_spawn_farthest_box )
+	{
+		bit = DF_SPAWN_FARTHEST;
+	}
+	else if ( f == &s_teamplay_box )
+	{
+		if ( f->curvalue )
+			flags |= DF_MODELTEAMS;
+		else
+			flags &= ~DF_MODELTEAMS;
+		goto setvalue;
+	}
+	else if ( f == &s_samelevel_box )
+	{
+		bit = DF_SAME_LEVEL;
+	}
+	else if ( f == &s_force_respawn_box )
+	{
+		bit = DF_FORCE_RESPAWN;
+	}
+	else if ( f == &s_armor_box )
+	{
+		if ( f->curvalue )
+			flags &= ~DF_NO_ARMOR;
+		else
+			flags |= DF_NO_ARMOR;
+		goto setvalue;
+	}
+	else if ( f == &s_infinite_ammo_box )
+	{
+		bit = DF_INFINITE_AMMO;
+	}
+	else if ( f == &s_fixed_fov_box )
+	{
+		bit = DF_FIXED_FOV;
+	}
+	else if ( f == &s_autoteams_box )
+	{
+		bit = DF_AUTO_JOIN_TEAM;		// auto assign teams in Kingpin
+	}
+
+	if ( f )
+	{
+		if ( f->curvalue == 0 )
+			flags &= ~bit;
+		else
+			flags |= bit;
+	}
+
+setvalue:
+	Cvar_SetValue ("dmflags", flags);
+
+	Com_sprintf( dmoptions_statusbar, sizeof( dmoptions_statusbar ), "dmflags = %d", flags );
+}
+
+static void DMOptions_InitBox( menulist_s *box, int y, char *name, int curvalue )
+{
+	static const char *yes_no_names[] =
+	{
+		"no", "yes", 0
+	};
+
+	box->generic.type = MTYPE_SPINCONTROL;
+	box->generic.x	= 0;
+	box->generic.y	= y;
+	box->generic.name	= name;
+	box->generic.callback = DMFlagCallback;
+	box->itemnames = yes_no_names;
+	box->curvalue = curvalue;
+	Menu_AddItem( &s_dmoptions_menu, box );
+}
+
+void DMOptions_MenuInit( void )
+{
+	int dmflags = Cvar_VariableValue( "dmflags" );
+
+	s_dmoptions_menu.x = viddef.width * 0.50;
+	s_dmoptions_menu.nitems = 0;
+
+	DMOptions_InitBox( &s_falls_box, 0, "falling damage", ( dmflags & DF_NO_FALLING ) == 0 );
+	DMOptions_InitBox( &s_weapons_stay_box, 10, "weapons stay", ( dmflags & DF_WEAPONS_STAY ) != 0 );
+	DMOptions_InitBox( &s_health_box, 20, "allow health", ( dmflags & DF_NO_HEALTH ) == 0 );
+	DMOptions_InitBox( &s_armor_box, 30, "allow armor", ( dmflags & DF_NO_ARMOR ) == 0 );
+	DMOptions_InitBox( &s_spawn_farthest_box, 40, "spawn farthest", ( dmflags & DF_SPAWN_FARTHEST ) != 0 );
+	DMOptions_InitBox( &s_samelevel_box, 50, "same map", ( dmflags & DF_SAME_LEVEL ) != 0 );
+	// sic: kingpin.exe reads the switch from DF_MODELTEAMS, it sets DF_FORCE_RESPAWN
+	DMOptions_InitBox( &s_force_respawn_box, 60, "force respawn", ( dmflags & DF_MODELTEAMS ) != 0 );
+	// sic: kingpin.exe leaves this switch at its last value
+	DMOptions_InitBox( &s_teamplay_box, 70, "teamplay by model & skin", s_teamplay_box.curvalue );
+	DMOptions_InitBox( &s_allow_exit_box, 80, "allow exit", ( dmflags & DF_ALLOW_EXIT ) != 0 );
+	DMOptions_InitBox( &s_infinite_ammo_box, 90, "infinite ammo", ( dmflags & DF_INFINITE_AMMO ) != 0 );
+	DMOptions_InitBox( &s_fixed_fov_box, 100, "fixed FOV", ( dmflags & DF_FIXED_FOV ) != 0 );
+	DMOptions_InitBox( &s_friendlyfire_box, 110, "Friendly Damage", ( dmflags & DF_NO_FRIENDLY_FIRE ) == 0 );
+	DMOptions_InitBox( &s_autoteams_box, 120, "Auto Assign Teams", ( dmflags & DF_AUTO_JOIN_TEAM ) != 0 );
+
+	Menu_Center( &s_dmoptions_menu );
+
+	// set the original dmflags statusbar
+	DMFlagCallback( 0 );
+	Menu_SetStatusBar( &s_dmoptions_menu, dmoptions_statusbar );
+}
+#else
 static char dmoptions_statusbar[128];
 
 static menuframework_s s_dmoptions_menu;
@@ -3681,6 +4618,7 @@ void DMOptions_MenuInit( void )
 	DMFlagCallback( 0 );
 	Menu_SetStatusBar( &s_dmoptions_menu, dmoptions_statusbar );
 }
+#endif
 
 void DMOptions_MenuDraw(void)
 {
@@ -3909,6 +4847,828 @@ PLAYER CONFIG MENU
 
 =============================================================================
 */
+#ifdef KINGPIN_ENGINE
+/*
+kingpin.exe @0042cb10..@0042f740. A Kingpin player is a directory under
+players/ with head, body and legs .mdx parts, each with its own list of
+skins (head_*.tga, body_*.tga, legs_*.tga). skinfolder.txt can point each
+part's skins at another directory ("body:models/actors/thug"), extras.txt
+lists up to four groups of optional extra models ("1 Hats" "+cap" ...).
+The skin cvar is "model/HHH BBB LLL", the extras cvar one digit per group.
+*/
+char **FS_ListFiles( char *, int *, unsigned, unsigned );
+extern cvar_t *skin;
+
+static menuframework_s	s_player_config_menu;
+static menufield_s		s_player_name_field;
+static menuseparator_s	s_player_model_title;
+static menulist_s		s_player_model_box;
+static menuseparator_s	s_player_head_title;
+static menulist_s		s_player_head_box;
+static menuseparator_s	s_player_body_title;
+static menulist_s		s_player_body_box;
+static menuseparator_s	s_player_legs_title;
+static menulist_s		s_player_legs_box;
+static menuseparator_s	s_player_extras_title[4];
+static menulist_s		s_player_extras_box[4];
+static menuseparator_s	s_player_rate_title;
+static menulist_s		s_player_rate_box;
+
+#define MAX_DISPLAYNAME		16
+#define MAX_PLAYERMODELS	128
+#define MAX_EXTRAS			4
+#define MAX_EXTRA_MODELS	8
+
+typedef struct
+{
+	int		nbodyskins, nlegsskins, nheadskins;
+	char	**bodyskins, **legsskins, **headskins;	// "body_001", sorted
+	char	displayname[MAX_DISPLAYNAME];
+	char	directory[MAX_QPATH];
+	char	bodydir[MAX_QPATH], headdir[MAX_QPATH], legsdir[MAX_QPATH];	// where the skins are
+	char	extras[MAX_EXTRAS][MAX_EXTRA_MODELS][16];	// model names, [0] is "none" or "N/A"
+	char	extranames[MAX_EXTRAS][16];					// group names
+} playermodelinfo_s;
+
+static playermodelinfo_s s_pmi[MAX_PLAYERMODELS];
+static char *s_pmnames[MAX_PLAYERMODELS];
+static int s_numplayermodels;
+
+// the selection, kept between visits like kingpin.exe
+static int s_pm_model;
+static int s_pm_head = -1, s_pm_body = -1, s_pm_legs = -1;
+static int s_pm_extras[MAX_EXTRAS];
+static int s_pm_skinmemory[MAX_PLAYERMODELS][3];	// legs, head, body per model
+static char *s_pm_extranames[MAX_EXTRAS][MAX_EXTRA_MODELS + 1];
+
+static int rate_tbl[] = { 2500, 3200, 5000, 10000, 25000, 0 };
+static const char *rate_names[] = { "28.8 Modem", "33.6 Modem", "Single ISDN",
+	"Dual ISDN/Cable", "T1/LAN", "User defined", 0 };
+
+// kingpin.exe @0042caf0, from CL_InitLocal
+void M_ClearPlayerSkinMemory (void)
+{
+	memset (s_pm_skinmemory, 0, sizeof(s_pm_skinmemory));
+}
+
+static void RateCallback( void *unused )
+{
+	if (s_player_rate_box.curvalue != sizeof(rate_tbl) / sizeof(*rate_tbl) - 1)
+		Cvar_SetValue( "rate", rate_tbl[s_player_rate_box.curvalue] );
+}
+
+// kingpin.exe @0042e440: the extras choices of the current model
+static void PlayerConfig_UpdateExtras( void )
+{
+	playermodelinfo_s *pmi = &s_pmi[s_player_model_box.curvalue];
+	int i, j;
+
+	for (i = 0; i < MAX_EXTRAS; i++)
+	{
+		memset (s_pm_extranames[i], 0, sizeof(s_pm_extranames[i]));
+		for (j = 0; j < MAX_EXTRA_MODELS && pmi->extras[i][j][0]; j++)
+			s_pm_extranames[i][j] = pmi->extras[i][j];
+		s_player_extras_box[i].itemnames = (const char **)s_pm_extranames[i];
+		if (!pmi->extras[i][s_player_extras_box[i].curvalue][0])
+			s_player_extras_box[i].curvalue = 0;
+		s_player_extras_title[i].generic.name = pmi->extranames[i];
+	}
+}
+
+// kingpin.exe @0042e510: each model remembers its skin choice
+static void ModelCallback( void *unused )
+{
+	int m = s_player_model_box.curvalue;
+
+	s_player_body_box.curvalue = s_pm_skinmemory[m][2];
+	s_player_body_box.itemnames = (const char **)s_pmi[m].bodyskins;
+	s_player_legs_box.curvalue = s_pm_skinmemory[m][0];
+	s_player_head_box.curvalue = s_pm_skinmemory[m][1];
+	s_player_legs_box.itemnames = (const char **)s_pmi[m].legsskins;
+	s_player_head_box.itemnames = (const char **)s_pmi[m].headskins;
+	PlayerConfig_UpdateExtras ();
+}
+
+static void FreeFileList( char **list, int n )
+{
+	int i;
+
+	for ( i = 0; i < n; i++ )
+	{
+		if ( list[i] )
+		{
+			free( list[i] );
+			list[i] = 0;
+		}
+	}
+	free( list );
+}
+
+/*
+list the skins matching pattern ("body_*.tga") in the part's skin
+directory, without the p1/p2 pain skins, as sorted names without extension
+*/
+static char **PlayerConfig_ListSkins( char *dir, char *folder, char *pattern, int *count )
+{
+	char	path[1024], name[1024];
+	char	**files, **skins, *a, *b, *s;
+	int		nfiles, i, j, n;
+
+	strcpy (path, dir);
+	if (folder[0])
+		strcpy (strstr (path, "players/"), folder);
+	strcat (path, pattern);
+
+	files = FS_ListFiles (path, &nfiles, 0, SFF_SUBDIR | SFF_HIDDEN | SFF_SYSTEM);
+	if (!files)
+		return NULL;
+
+	skins = malloc (sizeof(char *) * (nfiles + 1));
+	memset (skins, 0, sizeof(char *) * (nfiles + 1));
+	n = 0;
+	for (i = 0; i < nfiles - 1; i++)
+	{
+		if (strstr (files[i], "p1.tga") || strstr (files[i], "p2.tga"))
+			continue;
+
+		a = strrchr (files[i], '/');
+		b = strrchr (files[i], '\\');
+		if (b < a)
+			b = a;
+		strcpy (name, b + 1);
+		if (strrchr (name, '.'))
+			*strrchr (name, '.') = 0;
+		s = strdup (name);
+
+		// insertion sort
+		for (j = 0; j < n; j++)
+			if (strcmp (skins[j], s) > 0)
+				break;
+		memmove (&skins[j + 1], &skins[j], sizeof(char *) * (n - j));
+		skins[j] = s;
+		n++;
+	}
+
+	FreeFileList (files, nfiles);
+	*count = n;
+	return skins;
+}
+
+// kingpin.exe @0042cee0
+static qboolean PlayerConfig_ScanDirectories( void )
+{
+	char	findname[1024];
+	char	scratch[1024];
+	char	folders[3][64];
+	char	*bodyfolder, *headfolder, *legsfolder;
+	char	*path = NULL, *s, *a, *b;
+	char	**dirnames;
+	int		ndirs = 0, i, j, group;
+	char	c;
+	FILE	*f;
+	playermodelinfo_s *pmi;
+
+	s_numplayermodels = 0;
+
+	/*
+	** get a list of directories
+	*/
+	do
+	{
+		path = FS_NextPath( path );
+		Com_sprintf( findname, sizeof(findname), "%s/players/*.*", path );
+
+		if ( ( dirnames = FS_ListFiles( findname, &ndirs, SFF_SUBDIR, 0 ) ) != 0 )
+			break;
+	} while ( path );
+
+	if ( !dirnames )
+		return false;
+
+	if ( ndirs > MAX_PLAYERMODELS )
+		ndirs = MAX_PLAYERMODELS;
+
+	for ( i = 0; i < ndirs; i++ )
+	{
+		if ( dirnames[i] == 0 )
+			continue;
+
+		// where the skins of each part are
+		memset (folders, 0, sizeof(folders));
+		bodyfolder = headfolder = legsfolder = folders[0];
+		strcpy( scratch, dirnames[i] );
+		strcat( scratch, "/skinfolder.txt" );
+		if ( ( f = fopen( scratch, "r" ) ) != 0 )
+		{
+			fscanf( f, "%s\n%s\n%s", folders[0], folders[1], folders[2] );
+			fclose( f );
+			if ( folders[0][0] )
+			{
+				if ( !strstr( folders[0], "body:" ) && !strstr( folders[0], "legs:" ) && !strstr( folders[0], "head:" ) )
+				{	// one folder for all parts
+					bodyfolder = headfolder = legsfolder = folders[0];
+				}
+				else
+				{
+					for ( j = 0; j < 3; j++ )
+					{
+						if ( strstr( folders[j], "body:" ) )
+							bodyfolder = folders[j] + 5;
+						else if ( strstr( folders[j], "head:" ) )
+							headfolder = folders[j] + 5;
+						else if ( strstr( folders[j], "legs:" ) )
+							legsfolder = folders[j] + 5;
+					}
+				}
+			}
+		}
+
+		// the extras groups
+		pmi = &s_pmi[s_numplayermodels];
+		memset( pmi->extras, 0, sizeof(pmi->extras) );
+		for ( j = 0; j < MAX_EXTRAS; j++ )
+		{
+			strcpy( pmi->extranames[j], "(unused)" );
+			strcpy( pmi->extras[j][0], "N/A" );
+		}
+		strcpy( scratch, dirnames[i] );
+		strcat( scratch, "/extras.txt" );
+		if ( ( f = fopen( scratch, "r" ) ) != 0 )
+		{
+			char unused[16];
+
+			group = 0;
+			while ( !feof( f ) )
+			{
+				fscanf( f, "%c", &c );
+				if ( c >= '1' && c <= '9' )
+				{
+					group = c - '1';
+					fscanf( f, " %s\n", pmi->extranames[group] );
+					strcpy( pmi->extras[group][0], "none" );
+				}
+				else if ( c == '+' )
+				{
+					for ( j = 0; j < MAX_EXTRA_MODELS; j++ )
+						if ( !pmi->extras[group][j][0] )
+							break;
+					fscanf( f, "%s\n", j == MAX_EXTRA_MODELS ? unused : pmi->extras[group][j] );
+				}
+			}
+			fclose( f );
+		}
+
+		// a player model needs a body
+		strcpy( scratch, dirnames[i] );
+		strcat( scratch, "/body.mdx" );
+		if ( !Sys_FindFirst( scratch, 0, SFF_SUBDIR | SFF_HIDDEN | SFF_SYSTEM ) )
+		{
+			free( dirnames[i] );
+			dirnames[i] = 0;
+			Sys_FindClose();
+			continue;
+		}
+		Sys_FindClose();
+
+		pmi->bodyskins = PlayerConfig_ListSkins( dirnames[i], bodyfolder, "/body_*.tga", &pmi->nbodyskins );
+		if ( pmi->bodyskins )
+			pmi->headskins = PlayerConfig_ListSkins( dirnames[i], headfolder, "/head_*.tga", &pmi->nheadskins );
+		if ( pmi->bodyskins && pmi->headskins )
+			pmi->legsskins = PlayerConfig_ListSkins( dirnames[i], legsfolder, "/legs_*.tga", &pmi->nlegsskins );
+		if ( !pmi->bodyskins || !pmi->headskins || !pmi->legsskins )
+		{
+			free( dirnames[i] );
+			dirnames[i] = 0;
+			continue;
+		}
+
+		a = strrchr( dirnames[i], '/' );
+		b = strrchr( dirnames[i], '\\' );
+		if ( b < a )
+			b = a;
+		strncpy( pmi->displayname, b + 1, MAX_DISPLAYNAME - 1 );
+		strcpy( pmi->directory, b + 1 );
+
+		if ( !bodyfolder[0] )
+		{
+			s = strstr( dirnames[i], "players" );
+			strcpy( pmi->bodydir, s );
+			strcpy( pmi->headdir, s );
+			strcpy( pmi->legsdir, s );
+		}
+		else
+		{
+			strcpy( pmi->bodydir, bodyfolder );
+			strcpy( pmi->headdir, headfolder );
+			strcpy( pmi->legsdir, legsfolder );
+		}
+
+		s_numplayermodels++;
+	}
+
+	if ( dirnames )
+		FreeFileList( dirnames, ndirs );
+
+	return true;
+}
+
+// kingpin.exe @0042de40: "male" and "female" first, then by name
+static int pmicmpfnc( const void *_a, const void *_b )
+{
+	const playermodelinfo_s *a = ( const playermodelinfo_s * ) _a;
+	const playermodelinfo_s *b = ( const playermodelinfo_s * ) _b;
+
+	if ( strcmp( a->directory, "male" ) == 0 )
+		return -1;
+	else if ( strcmp( b->directory, "male" ) == 0 )
+		return 1;
+
+	if ( strcmp( a->directory, "female" ) == 0 )
+		return -1;
+	else if ( strcmp( b->directory, "female" ) == 0 )
+		return 1;
+
+	return strcmp( a->directory, b->directory );
+}
+
+static int PlayerConfig_FindSkin( char **skins, int n, char *number, int old )
+{
+	int i;
+
+	for ( i = 0; i < n; i++ )
+		if ( !Q_stricmp( skins[i] + 5, number ) )
+			return i;
+	return old;
+}
+
+// kingpin.exe @0042cb10: scan the models and find the current choice
+static qboolean PlayerConfig_LoadModels( void )
+{
+	char currentdirectory[1024];
+	char currentskin[1024];
+	char *extras;
+	int i;
+
+	PlayerConfig_ScanDirectories();
+
+	if (s_numplayermodels == 0)
+		return false;
+
+	Cvar_SetValue( "hand", 0 );
+
+	strcpy( currentdirectory, skin->string );
+
+	if ( strchr( currentdirectory, '/' ) )
+	{
+		strcpy( currentskin, strchr( currentdirectory, '/' ) + 1 );
+		*strchr( currentdirectory, '/' ) = 0;
+	}
+	else if ( strchr( currentdirectory, '\\' ) )
+	{
+		strcpy( currentskin, strchr( currentdirectory, '\\' ) + 1 );
+		*strchr( currentdirectory, '\\' ) = 0;
+	}
+	else
+	{
+		strcpy( currentdirectory, "male_thug" );
+		strcpy( currentskin, "001 001 001" );
+	}
+
+	qsort( s_pmi, s_numplayermodels, sizeof( s_pmi[0] ), pmicmpfnc );
+
+	memset( s_pmnames, 0, sizeof( s_pmnames ) );
+	for ( i = 0; i < s_numplayermodels; i++ )
+	{
+		s_pmnames[i] = s_pmi[i].displayname;
+		if ( Q_stricmp( s_pmi[i].directory, currentdirectory ) == 0 )
+		{
+			s_pm_model = i;
+			if ( strlen( currentskin ) < 11 )
+				break;
+
+			// "HHH BBB LLL"
+			currentskin[3] = currentskin[7] = 0;
+			s_pm_head = PlayerConfig_FindSkin( s_pmi[i].headskins, s_pmi[i].nheadskins, currentskin, s_pm_head );
+			s_pm_body = PlayerConfig_FindSkin( s_pmi[i].bodyskins, s_pmi[i].nbodyskins, currentskin + 4, s_pm_body );
+			s_pm_legs = PlayerConfig_FindSkin( s_pmi[i].legsskins, s_pmi[i].nlegsskins, currentskin + 8, s_pm_legs );
+			currentskin[3] = currentskin[7] = ' ';
+		}
+	}
+	if ( s_pm_head < 0 )
+		s_pm_head = 0;
+	if ( s_pm_body < 0 )
+		s_pm_body = 0;
+	if ( s_pm_legs < 0 )
+		s_pm_legs = 0;
+
+	memset( s_pm_extras, 0, sizeof( s_pm_extras ) );
+	extras = Cvar_VariableString( "extras" );
+	for ( i = 0; i < MAX_EXTRAS && extras[i]; i++ )
+		s_pm_extras[i] = extras[i] - '0';
+
+	return true;
+}
+
+static void PlayerConfig_InitSpin( menuseparator_s *title, char *name, menulist_s *box, int y )
+{
+	title->generic.type = MTYPE_SEPARATOR;
+	title->generic.name = name;
+	title->generic.x = -16;
+	title->generic.y = y - 10;
+
+	box->generic.type = MTYPE_SPINCONTROL;
+	box->generic.name = 0;
+	box->generic.x = -86;
+	box->generic.y = y;
+	box->generic.callback = 0;
+	box->generic.cursor_offset = -8;
+}
+
+// kingpin.exe @0042df90
+qboolean PlayerConfig_MenuInit( void )
+{
+	extern cvar_t *name;
+	int i;
+
+	if ( !PlayerConfig_LoadModels() )
+		return false;
+
+	s_player_config_menu.x = viddef.width / 2;
+	s_player_config_menu.y = viddef.height / 2;
+	s_player_config_menu.nitems = 0;
+	s_player_config_menu.xoffset = -70;
+	s_player_config_menu.yoffset = -20;
+
+	s_player_name_field.generic.type = MTYPE_FIELD;
+	s_player_name_field.generic.name = "name";
+	s_player_name_field.generic.callback = 0;
+	s_player_name_field.generic.x		= 0;
+	s_player_name_field.generic.y		= 0;
+	s_player_name_field.length	= 20;
+	s_player_name_field.visible_length = 20;
+	strcpy( s_player_name_field.buffer, name->string );
+	s_player_name_field.cursor = strlen( name->string );
+
+	PlayerConfig_InitSpin( &s_player_model_title, "model", &s_player_model_box, 70 );
+	s_player_model_box.generic.callback = ModelCallback;
+	s_player_model_box.curvalue = s_pm_model;
+	s_player_model_box.itemnames = (const char **)s_pmnames;
+
+	PlayerConfig_InitSpin( &s_player_head_title, "head skin", &s_player_head_box, 100 );
+	s_player_head_box.curvalue = s_pm_head;
+	s_player_head_box.itemnames = (const char **)s_pmi[s_pm_model].headskins;
+
+	PlayerConfig_InitSpin( &s_player_body_title, "body skin", &s_player_body_box, 120 );
+	s_player_body_box.curvalue = s_pm_body;
+	s_player_body_box.itemnames = (const char **)s_pmi[s_pm_model].bodyskins;
+
+	PlayerConfig_InitSpin( &s_player_legs_title, "legs skin", &s_player_legs_box, 140 );
+	s_player_legs_box.curvalue = s_pm_legs;
+	s_player_legs_box.itemnames = (const char **)s_pmi[s_pm_model].legsskins;
+
+	for ( i = 0; i < MAX_EXTRAS; i++ )
+	{
+		PlayerConfig_InitSpin( &s_player_extras_title[i], "extras", &s_player_extras_box[i], 175 + i * 20 );
+		s_player_extras_box[i].curvalue = s_pm_extras[i];
+		s_player_extras_box[i].itemnames = rate_names;	// until PlayerConfig_UpdateExtras
+	}
+
+	for ( i = 0; i < sizeof( rate_tbl ) / sizeof( *rate_tbl ) - 1; i++ )
+		if ( Cvar_VariableValue( "rate" ) == rate_tbl[i] )
+			break;
+
+	PlayerConfig_InitSpin( &s_player_rate_title, "connect speed", &s_player_rate_box, 285 );
+	s_player_rate_box.generic.callback = RateCallback;
+	s_player_rate_box.curvalue = i;
+	s_player_rate_box.itemnames = rate_names;
+
+	Menu_AddItem( &s_player_config_menu, &s_player_name_field );
+	Menu_AddItem( &s_player_config_menu, &s_player_model_title );
+	Menu_AddItem( &s_player_config_menu, &s_player_model_box );
+	if ( s_player_head_box.itemnames )
+	{
+		Menu_AddItem( &s_player_config_menu, &s_player_head_title );
+		Menu_AddItem( &s_player_config_menu, &s_player_head_box );
+	}
+	if ( s_player_body_box.itemnames )
+	{
+		Menu_AddItem( &s_player_config_menu, &s_player_body_title );
+		Menu_AddItem( &s_player_config_menu, &s_player_body_box );
+	}
+	if ( s_player_legs_box.itemnames )
+	{
+		Menu_AddItem( &s_player_config_menu, &s_player_legs_title );
+		Menu_AddItem( &s_player_config_menu, &s_player_legs_box );
+	}
+	for ( i = 0; i < MAX_EXTRAS; i++ )
+	{
+		Menu_AddItem( &s_player_config_menu, &s_player_extras_title[i] );
+		Menu_AddItem( &s_player_config_menu, &s_player_extras_box[i] );
+	}
+	Menu_AddItem( &s_player_config_menu, &s_player_rate_title );
+	Menu_AddItem( &s_player_config_menu, &s_player_rate_box );
+
+	Menu_Center( &s_player_config_menu );
+	PlayerConfig_UpdateExtras ();
+
+	return true;
+}
+
+/*
+kingpin.exe @0042e580: the model turns towards the viewer under three
+directional lights, one of them wandering, and idles like the leader model
+on the HUD (now and then one of three gestures).
+*/
+float CalcFov( float fov_x, float w, float h );
+
+static int pc_anims[4][2] = {{0, 31}, {37, 46}, {47, 62}, {63, 77}};
+
+void PlayerConfig_MenuDraw( void )
+{
+	static int	lasttime, frame, oldframe, anim_start, anim_end = 31;
+	static int	yaw;
+	static float zoom;
+	playermodelinfo_s *pmi;
+	refdef_t	refdef;
+	entity_t	entities[4 + MAX_EXTRAS], *ent;
+	char		scratch[MAX_QPATH];
+	vec3_t		angles, dir;
+	float		backlerp;
+	int			m, i, n, r;
+
+	m = s_player_model_box.curvalue;
+	pmi = &s_pmi[m];
+	s_pm_skinmemory[m][1] = s_player_head_box.curvalue;
+	s_pm_skinmemory[m][2] = s_player_body_box.curvalue;
+	s_pm_skinmemory[m][0] = s_player_legs_box.curvalue;
+
+	memset( &refdef, 0, sizeof( refdef ) );
+	refdef.x = viddef.width / 8 + viddef.width / 2;
+	refdef.y = viddef.height / 5;
+	refdef.width = (int)(viddef.width * (1.0/640) * 220);
+	refdef.height = (int)(viddef.height * (1.0/480) * 350);
+	refdef.fov_x = 40;
+	refdef.fov_y = CalcFov( refdef.fov_x, refdef.width, refdef.height );
+	refdef.time = cls.realtime*0.001;
+
+	// a frame every 200 ms
+	if (!lasttime)
+	{
+		oldframe = anim_start;
+		frame = anim_start + 1;
+	}
+	else if (cls.realtime/200 != lasttime/200)
+	{
+		oldframe = frame;
+		frame++;
+		if (frame > anim_end)
+		{
+			if (!anim_start && rand()%100 < 20)
+			{
+				r = rand()%3 + 1;
+				anim_start = pc_anims[r][0];
+				anim_end = pc_anims[r][1];
+			}
+			else
+			{
+				anim_start = pc_anims[0][0];
+				anim_end = pc_anims[0][1];
+			}
+			frame = anim_start;
+		}
+	}
+	lasttime = cls.realtime;
+	backlerp = 1.0 - (cls.realtime*0.005 - cls.realtime/200);
+
+	memset( entities, 0, sizeof( entities ) );
+
+	// legs, body, head, weapon and the chosen extras
+	ent = &entities[0];
+	Com_sprintf( scratch, sizeof( scratch ), "players/%s/legs.mdx", pmi->directory );
+	ent->model = re.RegisterModel( scratch );
+	Com_sprintf( scratch, sizeof( scratch ), "%s/%s.tga", pmi->legsdir, pmi->legsskins[s_player_legs_box.curvalue] );
+	ent->skin = re.RegisterSkin( scratch );
+
+	ent = &entities[1];
+	Com_sprintf( scratch, sizeof( scratch ), "players/%s/body.mdx", pmi->directory );
+	ent->model = re.RegisterModel( scratch );
+	Com_sprintf( scratch, sizeof( scratch ), "%s/%s.tga", pmi->bodydir, pmi->bodyskins[s_player_body_box.curvalue] );
+	ent->skin = re.RegisterSkin( scratch );
+
+	ent = &entities[2];
+	r = pmi->headskins[s_player_head_box.curvalue][5];
+	if ( r > '4' )
+	{	// skins 5xx and up belong to the alternative heads
+		Com_sprintf( scratch, sizeof( scratch ), "players/%s/head%i.mdx", pmi->directory, r - '4' );
+		ent->model = re.RegisterModel( scratch );
+	}
+	if ( !ent->model )
+	{
+		Com_sprintf( scratch, sizeof( scratch ), "players/%s/head.mdx", pmi->directory );
+		ent->model = re.RegisterModel( scratch );
+	}
+	Com_sprintf( scratch, sizeof( scratch ), "%s/%s.tga", pmi->headdir, pmi->headskins[s_player_head_box.curvalue] );
+	ent->skin = re.RegisterSkin( scratch );
+
+	ent = &entities[3];
+	Com_sprintf( scratch, sizeof( scratch ), "players/%s/w_shotgun.mdx", pmi->directory );
+	ent->model = re.RegisterModel( scratch );
+
+	n = 4;
+	for ( i = 0; i < MAX_EXTRAS; i++ )
+	{
+		if ( s_player_extras_box[i].curvalue <= 0 )
+			continue;
+		ent = &entities[n++];
+		Com_sprintf( scratch, sizeof( scratch ), "players/%s/%s.mdx", pmi->directory,
+			s_pm_extranames[i][s_player_extras_box[i].curvalue] );
+		ent->model = re.RegisterModel( scratch );
+	}
+
+	for ( i = 0; i < n; i++ )
+	{
+		ent = &entities[i];
+		ent->flags = RF_DIMLIGHT;
+		ent->angles[1] = yaw;
+		VectorSet( ent->origin, 120, 0, -15 );
+		ent->origin[0] -= fabs( zoom );
+		ent->origin[2] -= zoom * 1.5;
+		ent->origin[0] -= 10;
+		ent->origin[2] += 10;
+		VectorCopy( ent->origin, ent->oldorigin );
+		ent->flags2 |= RF2_NOSHADOW | RF2_DIR_LIGHTS;
+		ent->model_lighting.num_dir_lights = 3;
+
+		// light 0 wanders around the model and changes colour
+		VectorSet( angles, (cls.realtime/50)%360 - 180, (cls.realtime/100)%360 - 180, 0 );
+		AngleVectors( angles, dir, NULL, NULL );
+		dir[0] = -(fabs( dir[0] )*fabs( dir[0] )) - 0.3;
+		dir[1] = -(fabs( dir[1] )*fabs( dir[1] )) - 0.3;
+		dir[2] = -(fabs( dir[2] )*fabs( dir[2] )) - 0.3;
+		ent->model_lighting.light_colors[0][0] = 1.0 - dir[0]*0.8;
+		ent->model_lighting.light_colors[0][1] = 1.0 - dir[1]*0.8;
+		ent->model_lighting.light_colors[0][2] = 1.0 - dir[2]*0.8;
+		VectorSet( angles, 0, (cls.realtime/20)%360 - 180, 0 );
+		AngleVectors( angles, dir, NULL, NULL );
+		dir[0] = -(fabs( dir[0] )*fabs( dir[0] )) - 0.3;
+		VectorMA( ent->origin, 80, dir, dir );
+		VectorSet( ent->model_lighting.light_orgs[0], dir[0], dir[1], -10 );
+		ent->model_lighting.light_intensities[0] = 300;
+
+		VectorSet( ent->model_lighting.light_colors[1], 1, 1, 1 );
+		VectorSet( ent->model_lighting.light_orgs[1], 60, 60, 0 );
+		ent->model_lighting.light_intensities[1] = 200;
+
+		VectorSet( ent->model_lighting.light_colors[2], 1, 1, 1 );
+		VectorSet( ent->model_lighting.light_orgs[2], -60, 60, 0 );
+		ent->model_lighting.light_intensities[2] = 200;
+
+		ent->frame = frame;
+		ent->oldframe = oldframe;
+		ent->backlerp = backlerp;
+	}
+	// sic: kingpin.exe starts facing away and pulled in for the first frame
+	yaw = 180;
+	zoom = 20;
+
+	refdef.viewangles[PITCH] = 20;
+	refdef.rdflags = RDF_NOWORLDMODELALPHA;
+	refdef.num_entities = n;
+	refdef.entities = entities;
+
+	Menu_Draw( &s_player_config_menu );
+
+	refdef.height += 4;
+	re.RenderFrame( &refdef );
+}
+
+// kingpin.exe @0042f550: the choice is applied when leaving the menu
+const char *PlayerConfig_MenuKey (int key)
+{
+	char	scratch[1024];
+	int		i;
+
+	if ( key == K_ESCAPE )
+	{
+		playermodelinfo_s *pmi = &s_pmi[s_player_model_box.curvalue];
+
+		Cvar_Set( "name", s_player_name_field.buffer );
+
+		Com_sprintf( scratch, sizeof( scratch ), "%s/%s %s %s", pmi->directory,
+			pmi->headskins[s_player_head_box.curvalue] + 5,
+			pmi->bodyskins[s_player_body_box.curvalue] + 5,
+			pmi->legsskins[s_player_legs_box.curvalue] + 5 );
+		Cvar_Set( "skin", scratch );
+
+		for ( i = 0; i < MAX_EXTRAS; i++ )
+			scratch[i] = s_player_extras_box[i].curvalue + '0';
+		scratch[i] = 0;
+		Cvar_Set( "extras", scratch );
+
+		for ( i = 0; i < s_numplayermodels; i++ )
+		{
+			FreeFileList( s_pmi[i].headskins, s_pmi[i].nheadskins );
+			FreeFileList( s_pmi[i].bodyskins, s_pmi[i].nbodyskins );
+			FreeFileList( s_pmi[i].legsskins, s_pmi[i].nlegsskins );
+			s_pmi[i].headskins = s_pmi[i].bodyskins = s_pmi[i].legsskins = 0;
+			s_pmi[i].nheadskins = s_pmi[i].nbodyskins = s_pmi[i].nlegsskins = 0;
+		}
+	}
+	return Default_MenuKey( &s_player_config_menu, key );
+}
+
+/*
+kingpin.exe @0042ef90, drawn by the inventory screen in single player: a
+thug slowly turning on the left. The player models are rescanned at most
+once a second (which also forces hand 0, as PlayerConfig_LoadModels does).
+*/
+void M_DrawInventoryModel (void)
+{
+	static int	lastscan;
+	static int	yaw;
+	refdef_t	refdef;
+	entity_t	entities[3];
+	float		sx, sy;
+	int			i;
+
+	sx = viddef.width * (1.0/640);
+	sy = viddef.height * (1.0/480);
+
+	if ( !Com_ServerState() || Cvar_VariableValue( "deathmatch" ) )
+		return;
+
+	if ( !lastscan || cls.realtime < lastscan || lastscan < cls.realtime - 1000 )
+	{
+		if ( !PlayerConfig_LoadModels() )
+		{
+			Com_Printf( "Unable to load player models\n" );
+			return;
+		}
+	}
+	lastscan = cls.realtime;
+
+	memset( &refdef, 0, sizeof( refdef ) );
+	refdef.x = 0;
+	refdef.y = 0;
+	refdef.width = (int)(sx * 320);
+	refdef.height = (int)(sy * 470);
+	refdef.fov_x = 40;
+	refdef.fov_y = CalcFov( refdef.fov_x, refdef.width, refdef.height );
+	refdef.time = cls.realtime*0.001;
+
+	memset( entities, 0, sizeof( entities ) );
+
+	// kingpin.exe has a players/ branch here that single player never takes
+	entities[2].model = re.RegisterModel( "models/actors/thug/head.mdx" );
+	entities[2].skin = re.RegisterSkin( "models/actors/thug/head_009.tga" );
+	entities[1].model = re.RegisterModel( "models/actors/thug/body.mdx" );
+	entities[1].skin = re.RegisterSkin( "models/actors/thug/body_019.tga" );
+	entities[0].model = re.RegisterModel( "models/actors/thug/legs.mdx" );
+	entities[0].skin = re.RegisterSkin( "models/actors/thug/legs_017.tga" );
+
+	for ( i = 0; i < 3; i++ )
+	{
+		entity_t *ent = &entities[i];
+
+		ent->flags = RF_DIMLIGHT;
+		ent->angles[1] = yaw;
+		VectorSet( ent->origin, 100, 0, -10 );
+		VectorCopy( ent->origin, ent->oldorigin );
+		ent->flags2 |= RF2_NOSHADOW | RF2_DIR_LIGHTS;
+		ent->model_lighting.num_dir_lights = 2;
+		VectorSet( ent->model_lighting.light_colors[0], 1, 1, 1 );
+		VectorSet( ent->model_lighting.light_orgs[0], 110, 80, -10 );
+		ent->model_lighting.light_intensities[0] = 512;
+		VectorSet( ent->model_lighting.light_colors[1], 1, 1, 1 );
+		VectorSet( ent->model_lighting.light_orgs[1], 0, 80, 0 );
+		ent->model_lighting.light_intensities[1] = 256;
+	}
+
+	// a degree per frame
+	if ( yaw + 1 > 360 )
+		yaw = yaw - 359;
+	else
+		yaw = yaw + 1;
+
+	refdef.height += 4;
+	refdef.rdflags = RDF_NOWORLDMODELALPHA;
+	refdef.num_entities = 3;
+	refdef.entities = entities;
+
+	re.RenderFrame( &refdef );
+}
+
+void M_Menu_PlayerConfig_f (void)
+{
+	if (!PlayerConfig_MenuInit())
+	{
+		Menu_SetStatusBar( &s_multiplayer_menu, "No valid player models found" );
+		return;
+	}
+	Menu_SetStatusBar( &s_multiplayer_menu, NULL );
+	M_PushMenu( PlayerConfig_MenuDraw, PlayerConfig_MenuKey );
+}
+#else
 static menuframework_s	s_player_config_menu;
 static menufield_s		s_player_name_field;
 static menulist_s		s_player_model_box;
@@ -4430,6 +6190,7 @@ void M_Menu_PlayerConfig_f (void)
 	Menu_SetStatusBar( &s_multiplayer_menu, NULL );
 	M_PushMenu( PlayerConfig_MenuDraw, PlayerConfig_MenuKey );
 }
+#endif
 
 
 /*
@@ -4489,6 +6250,10 @@ void M_Quit_Draw (void)
 {
 	int		w, h;
 
+#ifdef KINGPIN_ENGINE
+	// kingpin.exe @0042f830: on black
+	re.DrawFillRGBA (0, 0, viddef.width, viddef.height, 0, 0, 0, 1);
+#endif
 	re.DrawGetPicSize (&w, &h, "quit");
 	re.DrawPic ( (viddef.width-w)/2, (viddef.height-h)/2, "quit");
 }
@@ -4521,7 +6286,9 @@ void M_Init (void)
 		Cmd_AddCommand ("menu_startserver", M_Menu_StartServer_f);
 			Cmd_AddCommand ("menu_dmoptions", M_Menu_DMOptions_f);
 		Cmd_AddCommand ("menu_playerconfig", M_Menu_PlayerConfig_f);
+#ifndef KINGPIN_ENGINE
 			Cmd_AddCommand ("menu_downloadoptions", M_Menu_DownloadOptions_f);
+#endif
 		Cmd_AddCommand ("menu_credits", M_Menu_Credits_f );
 	Cmd_AddCommand ("menu_multiplayer", M_Menu_Multiplayer_f );
 	Cmd_AddCommand ("menu_video", M_Menu_Video_f);

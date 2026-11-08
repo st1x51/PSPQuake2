@@ -43,6 +43,10 @@ typedef struct
 
 	int		h_used[512];
 	int		h_count[512];
+#ifdef KINGPIN_ENGINE
+	qboolean	static_img;
+	char		static_img_name[MAX_OSPATH];
+#endif
 } cinematics_t;
 
 cinematics_t	cin;
@@ -83,7 +87,10 @@ void SCR_LoadPCX (char *filename, byte **pic, byte **palette, int *width, int *h
 	lowmark = Hunk_LowMark();
 	raw = FS_LoadFile (filename, &len, FS_PATH_ALL | FS_FLAG_MHUNK);
 	if (!raw)
+	{
+		Hunk_FreeToLowMark(lowmark);
 		return;	// Com_Printf ("Bad pcx file %s\n", filename);
+	}
 
 	//
 	// parse the PCX file
@@ -99,6 +106,7 @@ void SCR_LoadPCX (char *filename, byte **pic, byte **palette, int *width, int *h
 		|| pcx->ymax >= 480)
 	{
 		Com_Printf ("Bad pcx file %s\n", filename);
+		Hunk_FreeToLowMark(lowmark);
 		return;
 	}
 
@@ -177,6 +185,12 @@ SCR_StopCinematic
 void SCR_StopCinematic (void)
 {
 	cl.cinematictime = 0;	// done
+
+#ifdef KINGPIN_ENGINE
+	cin.static_img = false;
+	cin.static_img_name[0] = 0;
+#endif
+
 	if (cin.pic)
 	{
 		free (cin.pic);
@@ -496,6 +510,43 @@ should be skipped
 */
 qboolean SCR_DrawCinematic (void)
 {
+#ifdef KINGPIN_ENGINE
+	if (cin.static_img)
+	{
+		float remaining, alpha;
+
+		// kingpin.exe @00402420 treats the credits title specially: it
+		// becomes the credits menu background rather than a timed title card.
+		if (!strcmp (cin.static_img_name, "credits"))
+		{
+			re.DrawFillRGBA (0, 0, viddef.width, viddef.height, 0, 0, 0, 1);
+			M_Menu_Main_f ();
+			M_Menu_Credits_f ();
+			return false;
+		}
+
+		remaining = cl.cinematictime - cls.realtime;
+		if (remaining < 0)
+		{
+			re.DrawFillRGBA (0, 0, viddef.width, viddef.height, 0, 0, 0, 1);
+			cl.cinematictime = 0;
+			M_Menu_Main_f ();
+			return false;
+		}
+
+		if (remaining > 6000)
+			alpha = (remaining - 6000) / 3000.0f;
+		else if (remaining < 3000)
+			alpha = 1.0f - remaining / 3000.0f;
+		else
+			alpha = 0;
+
+		re.DrawStretchPic (0, 0, viddef.width, viddef.height, cin.static_img_name);
+		re.DrawFillRGBA (0, 0, viddef.width, viddef.height, 0, 0, 0, alpha);
+		return true;
+	}
+#endif
+
 	if (cl.cinematictime <= 0)
 		return false;
 
@@ -537,6 +588,10 @@ void SCR_PlayCinematic (char *arg)
 	// make sure CD isn't playing music
 	CDAudio_Stop();
 
+#ifdef KINGPIN_ENGINE
+	cin.static_img = false;
+	cin.static_img_name[0] = 0;
+#endif
 	cl.cinematicframe = 0;
 	dot = strstr (arg, ".");
 	if (dot && !strcmp (dot, ".pcx"))
@@ -555,6 +610,19 @@ void SCR_PlayCinematic (char *arg)
 		}
 		return;
 	}
+#ifdef KINGPIN_ENGINE
+	if (dot && !strcmp (dot, ".tga"))
+	{
+		// Kingpin displays static TGA title cards for nine seconds, with
+		// a three-second fade at each end (kingpin.exe @00402420/@00402570).
+		Com_sprintf (cin.static_img_name, sizeof(cin.static_img_name), "/pics/%s", arg);
+		cin.static_img = true;
+		cl.cinematicframe = -1;
+		cl.cinematictime = cls.realtime + 9000;
+		SCR_EndLoadingPlaque ();
+		return;
+	}
+#endif
 
 	Com_sprintf (name, sizeof(name), "video/%s", arg);
 	cl.cinematic_file = FS_FOpen (name, FS_MODE_READ);

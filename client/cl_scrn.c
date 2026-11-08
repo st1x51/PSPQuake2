@@ -45,6 +45,9 @@ vrect_t		scr_vrect;		// position of render window on screen
 
 
 cvar_t		*scr_viewsize;
+#ifdef KINGPIN_ENGINE
+cvar_t		*scr_hud;
+#endif
 cvar_t		*scr_conspeed;
 cvar_t		*scr_centertime;
 cvar_t		*scr_showturtle;
@@ -402,6 +405,14 @@ void SCR_Sky_f (void)
 	float	rotate;
 	vec3_t	axis;
 
+#ifdef KINGPIN_ENGINE
+	if (Cmd_Argc() < 2)
+	{
+		Com_Printf ("Usage: sky <basename>\n");
+		return;
+	}
+	re.SetSky (Cmd_Argv(1));
+#else
 	if (Cmd_Argc() < 2)
 	{
 		Com_Printf ("Usage: sky <basename> <rotate> <axis x y z>\n");
@@ -425,6 +436,7 @@ void SCR_Sky_f (void)
 	}
 
 	re.SetSky (Cmd_Argv(1), rotate, axis);
+#endif
 }
 
 //============================================================================
@@ -437,6 +449,9 @@ SCR_Init
 void SCR_Init (void)
 {
 	scr_viewsize = Cvar_Get ("viewsize", "100", CVAR_ARCHIVE);
+#ifdef KINGPIN_ENGINE
+	scr_hud = Cvar_Get ("scr_hud", "2", 0);
+#endif
 	scr_conspeed = Cvar_Get ("scr_conspeed", "3", 0);
 	scr_showturtle = Cvar_Get ("scr_showturtle", "0", 0);
 	scr_showpause = Cvar_Get ("scr_showpause", "1", 0);
@@ -510,8 +525,16 @@ void SCR_DrawLoading (void)
 		return;
 
 	scr_draw_loading = false;
+#ifdef KINGPIN_ENGINE
+	// kingpin.exe @004123e0: the processing plaque replaces the entire
+	// frame, rather than drawing Quake II's "loading" picture on top.
+	re.DrawStretchPic (0, 0, viddef.width, viddef.height, "conback");
+	re.DrawGetPicSize (&w, &h, "processing");
+	re.DrawPic ((viddef.width-w)/2, (viddef.height-h)/2, "processing");
+#else
 	re.DrawGetPicSize (&w, &h, "loading");
 	re.DrawPic ((viddef.width-w)/2, (viddef.height-h)/2, "loading");
+#endif
 }
 
 //=============================================================================
@@ -617,6 +640,9 @@ SCR_EndLoadingPlaque
 void SCR_EndLoadingPlaque (void)
 {
 	cls.disable_screen = 0;
+#ifdef KINGPIN_ENGINE
+	com_stoprender = false;
+#endif
 	Con_ClearNotify ();
 }
 
@@ -806,6 +832,21 @@ void SCR_TileClear (void)
 
 
 #define STAT_MINUS		10	// num frame for '-' stats digit
+#ifdef KINGPIN_ENGINE
+// white, green, red and dark red digits; only the first two are
+// precached by SCR_TouchPics (kingpin.exe @00412e40)
+char		*sb_nums[4][11] =
+{
+	{"hud_0", "hud_1", "hud_2", "hud_3", "hud_4", "hud_5",
+	"hud_6", "hud_7", "hud_8", "hud_9", "hud_-"},
+	{"ghud_0", "ghud_1", "ghud_2", "ghud_3", "ghud_4", "ghud_5",
+	"ghud_6", "ghud_7", "ghud_8", "ghud_9", "ghud_-"},
+	{"rhud_0", "rhud_1", "rhud_2", "rhud_3", "rhud_4", "rhud_5",
+	"rhud_6", "rhud_7", "rhud_8", "rhud_9", "rhud_-"},
+	{"rrhud_0", "rrhud_1", "rrhud_2", "rrhud_3", "rrhud_4", "rrhud_5",
+	"rrhud_6", "rrhud_7", "rrhud_8", "rrhud_9", "rrhud_-"}
+};
+#else
 char		*sb_nums[2][11] =
 {
 	{"num_0", "num_1", "num_2", "num_3", "num_4", "num_5",
@@ -813,7 +854,7 @@ char		*sb_nums[2][11] =
 	{"anum_0", "anum_1", "anum_2", "anum_3", "anum_4", "anum_5",
 	"anum_6", "anum_7", "anum_8", "anum_9", "anum_minus"}
 };
-
+#endif
 #define	ICON_WIDTH	24
 #define	ICON_HEIGHT	24
 #define	CHAR_WIDTH	16
@@ -894,6 +935,153 @@ void DrawHUDString (char *string, int x, int y, int centerwidth, int xor)
 
 /*
 ==============
+HUD scaling
+
+The layout code places elements in 640x480 units scaled to the screen, but
+the pictures keep their pixel size. On a small screen (PSP) shrink them too.
+==============
+*/
+static float SCR_HudScale (void)
+{
+	float	s = viddef.height * (1.0f/480);
+
+	return s < 1.0f ? s : 1.0f;
+}
+
+static void SCR_HudStretch (int x, int y, int w, int h, char *name, float alpha)
+{
+	float	s = SCR_HudScale ();
+
+	re.DrawStretchPicTransparent (x, y, (int)(w*s), (int)(h*s), name, alpha);
+}
+
+static void SCR_HudPic (int x, int y, char *name, float alpha)
+{
+	int		w, h;
+
+	if (SCR_HudScale () >= 1.0f)
+	{
+		re.DrawPicTransparent (x, y, name, alpha);
+		return;
+	}
+
+	re.DrawGetPicSize (&w, &h, name);
+	if (w <= 0 || h <= 0)
+	{
+		re.DrawPicTransparent (x, y, name, alpha);	// let the renderer report it
+		return;
+	}
+	SCR_HudStretch (x, y, w, h, name, alpha);
+}
+
+#ifdef KINGPIN_ENGINE
+/*
+==============
+SCR_DrawField
+==============
+*/
+/*
+kingpin.exe @00412bc0. color picks one of the sb_nums rows. offsets, when
+given, holds an extra (x, y) shift for every drawn digit (the slanted
+health and cash counters) and widens the dirty box by 10 pixels.
+*/
+void SCR_DrawField (int x, int y, int color, int width, int value, int (*offsets)[2])
+{
+	char	num[16], *ptr;
+	int		l;
+	int		frame;
+
+	if (width < 1)
+		return;
+
+	// draw number string
+	if (width > 5)
+		width = 5;
+
+	if (offsets)
+	{
+		SCR_AddDirtyPoint (x-10, y-10);
+		SCR_AddDirtyPoint (x+width*CHAR_WIDTH+12, y+33);
+	}
+	else
+	{
+		SCR_AddDirtyPoint (x, y);
+		SCR_AddDirtyPoint (x+width*CHAR_WIDTH+2, y+23);
+	}
+
+	Com_sprintf (num, sizeof(num), "%i", value);
+	l = strlen(num);
+	if (l > width)
+		l = width;
+	x += (int)((2 + CHAR_WIDTH*(width - l)) * SCR_HudScale ());
+
+	ptr = num;
+	while (*ptr && l)
+	{
+		if (*ptr == '-')
+			frame = STAT_MINUS;
+		else
+			frame = *ptr -'0';
+
+		if (offsets)
+		{
+			SCR_HudPic (x + (int)((*offsets)[0] * SCR_HudScale ()), y + (int)((*offsets)[1] * SCR_HudScale ()), sb_nums[color][frame], 0.75f);
+			offsets++;
+		}
+		else
+			SCR_HudPic (x, y, sb_nums[color][frame], 0.75f);
+		x += (int)(CHAR_WIDTH * SCR_HudScale ());
+		ptr++;
+		l--;
+	}
+}
+
+/*
+==============
+SCR_DrawScaledField
+==============
+*/
+/*
+kingpin.exe @00412d10: SCR_DrawField with the digits stretched by scale
+(the armor counters)
+*/
+void SCR_DrawScaledField (int x, int y, int color, int width, int value, float scale)
+{
+	scale *= SCR_HudScale ();
+	char	num[16], *ptr;
+	int		l;
+	int		frame;
+	int		w, h;
+
+	if (width < 1)
+		return;
+	if (width > 5)
+		width = 5;
+
+	Com_sprintf (num, sizeof(num), "%i", value);
+	l = strlen(num);
+	if (l > width)
+		l = width;
+	x += (int)((2 + CHAR_WIDTH*(width - l)) * scale);
+
+	ptr = num;
+	while (*ptr && l)
+	{
+		if (*ptr == '-')
+			frame = STAT_MINUS;
+		else
+			frame = *ptr -'0';
+
+		re.DrawGetPicSize (&w, &h, sb_nums[color][frame]);
+		SCR_HudStretch (x, y, (int)(w*scale), (int)(h*scale), sb_nums[color][frame], 0.75f);
+		x += (int)(CHAR_WIDTH*scale);
+		ptr++;
+		l--;
+	}
+}
+#else
+/*
+==============
 SCR_DrawField
 ==============
 */
@@ -933,7 +1121,7 @@ void SCR_DrawField (int x, int y, int color, int width, int value)
 		l--;
 	}
 }
-
+#endif
 
 /*
 ===============
@@ -955,13 +1143,910 @@ void SCR_TouchPics (void)
 		if (crosshair->value > 3 || crosshair->value < 0)
 			crosshair->value = 3;
 
+#ifdef KINGPIN_ENGINE
+		Com_sprintf (crosshair_pic, sizeof(crosshair_pic), "/pics/ch%i.pcx", (int)(crosshair->value));
+#else
 		Com_sprintf (crosshair_pic, sizeof(crosshair_pic), "ch%i", (int)(crosshair->value));
+#endif
 		re.DrawGetPicSize (&crosshair_width, &crosshair_height, crosshair_pic);
 		if (!crosshair_width)
 			crosshair_pic[0] = 0;
 	}
 }
 
+#ifdef KINGPIN_ENGINE
+float CalcFov (float fov_x, float width, float height);
+
+/*
+================
+DrawHUDString2
+
+kingpin.exe @00412af0: DrawHUDString with the second font and 12 pixel lines
+================
+*/
+static void DrawHUDString2 (char *string, int x, int y, int centerwidth, int xor)
+{
+	int		margin;
+	char	line[1024];
+	int		width;
+	int		i;
+
+	margin = x;
+
+	while (*string)
+	{
+		width = 0;
+		while (*string && *string != '\n')
+			line[width++] = *string++;
+		line[width] = 0;
+
+		if (centerwidth)
+			x = margin + (centerwidth - width*8)/2;
+		else
+			x = margin;
+		for (i=0 ; i<width ; i++)
+		{
+			re.DrawChar2 (x, y, line[i]^xor);
+			x += 8;
+		}
+		if (*string)
+		{
+			string++;	// skip the \n
+			y += 12;
+		}
+	}
+}
+
+/*
+================
+DrawBigString
+
+kingpin.exe @00421b50: big font, 10 pixels per character, tinted
+================
+*/
+static void DrawBigString (int x, int y, char *s, float *color)
+{
+	while (*s)
+	{
+		re.DrawBigChar (x, y, *s, color);
+		x += 10;
+		s++;
+	}
+}
+
+/*
+================
+SCR_SetHUDModelLights
+
+The two directional lights kingpin.exe gives models drawn on the HUD
+================
+*/
+static void SCR_SetHUDModelLights (entity_t *ent, vec3_t org0, float intensity0, float dark)
+{
+	model_lighting_t	*ml;
+
+	ml = &ent->model_lighting;
+	ent->flags2 |= RF2_DIR_LIGHTS;
+	ml->num_dir_lights = 2;
+	VectorSet (ml->light_colors[0], 1, 1, 1);
+	VectorCopy (org0, ml->light_orgs[0]);
+	ml->light_intensities[0] = intensity0;
+	VectorSet (ml->light_colors[1], dark, dark, dark);
+	VectorClear (ml->light_orgs[1]);
+	ml->light_intensities[1] = 1024;
+}
+
+/*
+================
+SCR_DrawHUDModel
+
+kingpin.exe @00412ef0: a slowly spinning model in a screen box (the
+teamplay money bag)
+================
+*/
+static void SCR_DrawHUDModel (int x, int y, char *model, int w, int h)
+{
+	refdef_t	refdef;
+	entity_t	entity;
+	vec3_t		org;
+
+	memset (&refdef, 0, sizeof(refdef));
+	refdef.x = x;
+	refdef.y = y;
+	refdef.width = w;
+	refdef.height = h;
+	refdef.fov_x = 40;
+	refdef.fov_y = CalcFov (40, w, h);
+	refdef.time = cls.realtime * 0.001;
+
+	memset (&entity, 0, sizeof(entity));
+	entity.model = re.RegisterModel (model);
+	entity.flags = RF_DEPTHHACK | RF_DIMLIGHT;
+	entity.flags2 = RF2_NOSHADOW | RF2_DIR_LIGHTS | RF2_PASSLIGHT | 0x1f;
+	VectorSet (entity.origin, 61, 10, 5);
+	VectorCopy (entity.origin, entity.oldorigin);
+	entity.angles[1] = cls.realtime * 0.001 * 22.5;
+	VectorSet (org, 100, 100, 0);
+	SCR_SetHUDModelLights (&entity, org, 512, 0.2f);
+
+	refdef.rdflags = RDF_NOWORLDMODELALPHA;
+	refdef.num_entities = 1;
+	refdef.entities = &entity;
+
+	re.RenderFrame (&refdef);
+}
+
+/*
+================
+SCR_DrawLeaderModel
+
+kingpin.exe @00413110: the current leader's player model for the "leader"
+layout command. It idles and now and then plays one of three gestures.
+================
+*/
+static int leader_anims[4][2] = {{0, 31}, {37, 46}, {47, 62}, {63, 77}};
+
+static void SCR_DrawLeaderModel (int x, int y, clientinfo_t *ci, int w, int h)
+{
+	static int	lasttime;
+	static int	frame, oldframe;
+	static int	anim_start, anim_end = 31;
+	refdef_t	refdef;
+	entity_t	entities[MAX_CLIENTMODELPARTS+1], *ent;
+	vec3_t		forward, org;
+	float		backlerp;
+	int			i, j, n, r;
+
+	memset (&refdef, 0, sizeof(refdef));
+	refdef.x = x;
+	refdef.y = y;
+	refdef.width = w;
+	refdef.height = h;
+	refdef.fov_x = 40;
+	refdef.fov_y = CalcFov (40, w, h);
+	refdef.time = cls.realtime * 0.001;
+
+	memset (entities, 0, sizeof(entities));
+
+	// a frame every 200 ms
+	if (!lasttime)
+	{
+		oldframe = anim_start;
+		frame = anim_start + 1;
+	}
+	else if (cls.realtime/200 != lasttime/200)
+	{
+		oldframe = frame;
+		frame++;
+		if (frame > anim_end)
+		{
+			if (!anim_start && rand()%100 < 20)
+			{
+				r = rand()%3 + 1;
+				anim_start = leader_anims[r][0];
+				anim_end = leader_anims[r][1];
+			}
+			else
+			{
+				anim_start = leader_anims[0][0];
+				anim_end = leader_anims[0][1];
+			}
+			frame = anim_start;
+		}
+	}
+	lasttime = cls.realtime;
+	backlerp = 1.0 - (cls.realtime*0.005 - cls.realtime/200);
+
+	AngleVectors (cl.viewangles, forward, NULL, NULL);
+
+	// the parts; like kingpin.exe the model and skin are taken from the
+	// next filled slot (j) while the scan walks all slots (i)
+	n = 0;
+	for (i=0, j=0 ; i<MAX_CLIENTMODELPARTS ; i++)
+	{
+		if (!ci->model[i])
+			continue;
+		ent = &entities[n++];
+		ent->model = ci->model[j];
+		ent->skin = ci->skin[j];
+		j++;
+	}
+	// and the weapon
+	entities[n++].model = ci->weaponmodel[0];
+
+	for (i=0 ; i<n ; i++)
+	{
+		ent = &entities[i];
+		ent->skinnum = 0;
+		ent->flags = RF_DEPTHHACK | RF_DIMLIGHT;
+		ent->flags2 |= RF2_NOSHADOW | RF2_DIR_LIGHTS;
+		ent->angles[1] = 200;
+		VectorSet (ent->origin, 120, 8, -10);
+		VectorCopy (ent->origin, ent->oldorigin);
+		ent->frame = frame;
+		ent->oldframe = oldframe;
+		ent->backlerp = backlerp;
+
+		VectorScale (forward, 128, org);
+		SCR_SetHUDModelLights (ent, org, 384, 0.15f);
+	}
+
+	refdef.height += 4;
+	refdef.rdflags = RDF_NOWORLDMODELALPHA;
+	refdef.num_entities = n;
+	refdef.entities = entities;
+
+	re.RenderFrame (&refdef);
+}
+
+// per digit shifts of the slanted counters
+static int hud_slant3[3][2] = {{0, 0}, {0, 3}, {0, 6}};
+static int hud_slant4[4][2] = {{0, 0}, {0, 3}, {0, 6}, {0, 9}};
+static int hud_slantup3[3][2] = {{0, 0}, {0, -3}, {0, -6}};
+static int hud_slantup2[2][2] = {{0, 0}, {0, -3}};
+static int hud_noslant[5][2];
+
+/*
+================
+SCR_BlinkColor
+
+red (2) and dark red (3) digits alternating about every quarter second
+================
+*/
+static int SCR_BlinkColor (void)
+{
+	return ((cl.time/255) & 1) ? 2 : 3;
+}
+
+/*
+================
+SCR_TeamScoreColor
+
+kingpin.exe teams/tscore: STAT_TEAMn_FLASH 0 and 1 = green, 2 = flashing red
+================
+*/
+static int SCR_TeamScoreColor (int flash)
+{
+	if (flash == 2)
+		return flash + ((cl.time/255) & 1);
+	if (flash == 0)
+		return 1;
+	return flash;
+}
+
+/*
+================
+SCR_DrawArmorPart
+
+one piece of the body armor figure (legs, body or head); 1024 is added to
+the value for heavy armor
+================
+*/
+static void SCR_DrawArmorPart (int x, int y, int value, char *part, float alpha)
+{
+	char	name[MAX_QPATH];
+
+	if (value > 1024)
+	{
+		Com_sprintf (name, sizeof(name), "armor_hv_%s", part);
+		SCR_HudPic (x, y, name, alpha);
+		value -= 1024;
+	}
+	else if (value)
+	{
+		Com_sprintf (name, sizeof(name), "armor_lt_%s", part);
+		SCR_HudPic (x, y, name, alpha);
+	}
+
+	// the colored overlay: green, yellow, red, flashing red
+	if (value >= 75)
+		Com_sprintf (name, sizeof(name), "armor_%cg", part[0]);
+	else if (value >= 50)
+		Com_sprintf (name, sizeof(name), "armor_%cy", part[0]);
+	else if (value >= 25 || (value && !((cl.time/255) & 1)))
+		Com_sprintf (name, sizeof(name), "armor_%cr", part[0]);
+	else if (value)
+		Com_sprintf (name, sizeof(name), "armor_%cr2", part[0]);
+	else
+		return;
+	SCR_HudPic (x, y, name, 1.0);
+}
+
+/*
+================
+SCR_DrawHireling
+
+kingpin.exe "hire": a hired gang member's health figure and order
+================
+*/
+static void SCR_DrawHireling (int x, int y, int health, int order)
+{
+	char	name[MAX_QPATH];
+	int		step;
+
+	if (health == 100)
+		step = 100;
+	else if (health >= 90)
+		step = 90;
+	else if (health >= 10)
+		step = health/10*10;
+	else
+		step = 0;
+	if (step >= 10)
+		Com_sprintf (name, sizeof(name), "h_man%i", step);
+	else
+		strcpy (name, "h_man00");
+	SCR_HudPic (x, y, name, 0.8f);
+
+	// 1 = attack, 2 = hold position, 3 = flashing attack
+	if (order == 1 || (order == 3 && (cl.frame.serverframe & 2)))
+		SCR_HudPic (x, y, "h_man_at", 0.8f);
+	else if (order == 2)
+		SCR_HudPic (x, y, "h_man_hold", 0.8f);
+}
+
+/*
+================
+SCR_ExecuteLayoutString
+
+kingpin.exe @004135a0. Most placement is in 640x480 units scaled to the
+screen. hud is the scr_hud detail level (STAT_FORCE_HUD raises it to 2).
+Quirks of the original are kept: "pic" does nothing, "ym" sets x and a few
+commands leave x and y at the values they drew with.
+================
+*/
+static char *hud_enemy_talk[4] = {"pos", "negx", "neg", "posq"};
+static char *hud_talk_suffix[6] = {"", "1", "2", "3", "2", "1"};
+
+void SCR_ExecuteLayoutString (char *s, int hud)
+{
+	static int hide_hud_frames;
+	int		x, y;
+	int		value;
+	char	*token;
+	int		index;
+	int		i;
+	float	sx, sy;
+	short	*stats;
+	clientinfo_t	*ci;
+	char	name[MAX_QPATH];
+	char	string[80];
+	vec3_t	color;
+	int		w, h;
+	float	alpha;
+
+	sx = viddef.width * (1.0/640);
+	sy = viddef.height * (1.0/480);
+	stats = cl.frame.playerstate.stats;
+
+	if (cls.state != ca_active || !cl.refresh_prepped)
+		return;
+
+	if (!s[0])
+		return;
+
+	// suppress status and layout drawing while STAT_HIDE_HUD is set (unless
+	// the end picture is fading in), then wait eight calls before drawing
+	if (stats[STAT_HIDE_HUD] && !stats[STAT_ENDPIC])
+	{
+		hide_hud_frames = 8;
+		return;
+	}
+	if (hide_hud_frames)
+	{
+		--hide_hud_frames;
+		return;
+	}
+
+	x = 0;
+	y = 0;
+	if (stats[STAT_FORCE_HUD])
+		hud = 2;
+
+	while (s)
+	{
+		token = COM_Parse (&s);
+		if (!strcmp(token, "xl"))
+		{
+			token = COM_Parse (&s);
+			x = atoi(token);
+			continue;
+		}
+		if (!strcmp(token, "xr"))
+		{
+			token = COM_Parse (&s);
+			x = viddef.width + atoi(token);
+			continue;
+		}
+		if (!strcmp(token, "xv"))
+		{
+			token = COM_Parse (&s);
+			x = viddef.width/2 - 160 + atoi(token);
+			continue;
+		}
+
+		if (!strcmp(token, "yt"))
+		{
+			token = COM_Parse (&s);
+			y = atoi(token);
+			continue;
+		}
+		if (!strcmp(token, "yb"))
+		{
+			token = COM_Parse (&s);
+			y = viddef.height + atoi(token);
+			continue;
+		}
+		if (!strcmp(token, "yv"))
+		{
+			token = COM_Parse (&s);
+			y = viddef.height/2 - 120 + atoi(token);
+			continue;
+		}
+		if (!strcmp(token, "xm"))
+		{
+			token = COM_Parse (&s);
+			x = viddef.width/2 + atoi(token);
+			continue;
+		}
+		if (!strcmp(token, "ym"))
+		{	// sic: sets x
+			token = COM_Parse (&s);
+			x = viddef.height/2 + atoi(token);
+			continue;
+		}
+
+		if (!strcmp(token, "pic"))
+			continue;	// a no-op; the stat number that follows is skipped as an unknown command
+
+		if (!strcmp(token, "leader"))
+		{	// the player model and name of the client in the lead
+			token = COM_Parse (&s);
+			index = atoi(token);
+			if (index >= MAX_CLIENTS || index < 0)
+				Com_Error (ERR_DROP, "client >= MAX_CLIENTS");
+			ci = &cl.clientinfo[index];
+			if (!ci->model[0])
+				ci = &cl.baseclientinfo;
+			SCR_DrawLeaderModel (0, 0, ci, viddef.width*2/3, viddef.height);
+
+			Com_sprintf (string, sizeof(string), "Current Kingpin");
+			VectorSet (color, 0.4f, 0.4f, 0.2f);
+			DrawBigString (viddef.width/4 - (int)(strlen(string)/2)*10, 30, string, color);
+			Com_sprintf (string, sizeof(string), "%s", ci->name);
+			VectorSet (color, 1, 1, 1);
+			DrawBigString (viddef.width/4 - (int)(strlen(string)/2)*10, viddef.height - 80, string, color);
+			continue;
+		}
+
+		if (!strcmp(token, "dmstr"))
+		{	// "rgb" digits 1..9 give the color in tenths, then the text
+			token = COM_Parse (&s);
+			color[0] = (token[0] - '1') * 0.1;
+			color[1] = (token[1] - '1') * 0.1;
+			color[2] = (token[2] - '1') * 0.1;
+			token = COM_Parse (&s);
+			DrawBigString (x, y, token, color);
+			continue;
+		}
+
+		if (!strcmp(token, "teampic"))
+		{
+			token = COM_Parse (&s);
+			Com_sprintf (name, sizeof(name), "team%i_icon", atoi(token));
+			SCR_HudPic (x + 80, y + 20, name, 0.9f);
+			continue;
+		}
+
+		if (!strcmp(token, "teams"))
+		{	// both team icons and scores at the right edge
+			float	ty;
+			int		flash;
+
+			ty = (int)(sy * 260);
+			SCR_HudPic (viddef.width - 37, (int)ty, "team1_icon", 0.75f);
+			flash = stats[STAT_TEAM1_FLASH];
+			if (flash != 1 || ((cl.time/255) & 1))	// 1 = flashing green
+				SCR_DrawField (viddef.width - 117, (int)(ty + 4), SCR_TeamScoreColor (flash),
+					5, stats[STAT_TEAM1_SCORE], NULL);
+
+			ty += 92;
+			SCR_HudPic (viddef.width - 37, (int)ty, "team2_icon", 0.75f);
+			flash = stats[STAT_TEAM2_FLASH];
+			if (flash != 1 || ((cl.time/255) & 1))
+				SCR_DrawField (viddef.width - 117, (int)(ty + 4), SCR_TeamScoreColor (flash),
+					5, stats[STAT_TEAM2_SCORE], NULL);
+			continue;
+		}
+
+		if (!strcmp(token, "tscore"))
+		{	// tscore <team 1|2>
+			token = COM_Parse (&s);
+			index = atoi(token);
+			SCR_DrawField (x, y, SCR_TeamScoreColor (stats[STAT_FORCE_HUD+2+index]),
+				5, stats[STAT_FORCE_HUD+index], NULL);
+			continue;
+		}
+
+		if (!strcmp(token, "bagcash"))
+		{	// money in the teamplay bag, with a spinning bag next to it
+			value = stats[STAT_BAGCASH];
+			i = (int)(sy * 32);
+			SCR_DrawField ((int)(sx * 570), i, 1, 4, value, NULL);
+			if (value < 10)
+				x = 585;
+			else if (value < 100)
+				x = 570;
+			else if (value < 1000)
+				x = 555;
+			else
+				x = 540;
+			SCR_DrawHUDModel ((int)(x * sx), i, "models/pu_icon/money/money_lg.md2", 32, 32);
+			continue;
+		}
+
+		if (!strcmp(token, "client"))
+		{	// draw a deathmatch client block
+			int		score, ping, time;
+
+			token = COM_Parse (&s);
+			x = viddef.width/2 - 160 + atoi(token);
+			token = COM_Parse (&s);
+			y = viddef.height/2 - 120 + atoi(token);
+			SCR_AddDirtyPoint (x, y);
+			SCR_AddDirtyPoint (x+159, y+31);
+
+			token = COM_Parse (&s);		// unused
+			token = COM_Parse (&s);
+			value = atoi(token);
+			if (value >= MAX_CLIENTS || value < 0)
+				Com_Error (ERR_DROP, "client >= MAX_CLIENTS");
+			ci = &cl.clientinfo[value];
+			if (!ci->model[0])
+				ci = &cl.baseclientinfo;
+
+			token = COM_Parse (&s);
+			score = atoi(token);
+			token = COM_Parse (&s);
+			ping = atoi(token);
+			token = COM_Parse (&s);
+			time = atoi(token);
+
+			DrawAltString (x+32, y, ci->name);
+			DrawString (x+32, y+8,  "Score: ");
+			DrawAltString (x+32+7*8, y+8,  va("%i", score));
+			DrawString (x+32, y+16, va("Ping:  %i", ping));
+			DrawString (x+32, y+24, va("Time:  %i", time));
+			continue;
+		}
+
+		if (!strcmp(token, "ctf"))
+		{	// draw a ctf client block
+			int		score, ping;
+
+			token = COM_Parse (&s);
+			x = viddef.width/2 - 160 + atoi(token);
+			token = COM_Parse (&s);
+			y = viddef.height/2 - 120 + atoi(token);
+			SCR_AddDirtyPoint (x, y);
+			SCR_AddDirtyPoint (x+159, y+31);
+
+			token = COM_Parse (&s);
+			value = atoi(token);
+			if (value >= MAX_CLIENTS || value < 0)
+				Com_Error (ERR_DROP, "client >= MAX_CLIENTS");
+			ci = &cl.clientinfo[value];
+
+			token = COM_Parse (&s);
+			score = atoi(token);
+			token = COM_Parse (&s);
+			ping = atoi(token);
+			if (ping > 999)
+				ping = 999;
+
+			Com_sprintf (string, sizeof(string), "%3d %3d %-12.12s", score, ping, ci->name);
+			if (value == cl.playernum)
+				DrawAltString (x, y, string);
+			else
+				DrawString (x, y, string);
+			continue;
+		}
+
+		if (!strcmp(token, "picn"))
+		{	// draw a pic from a name
+			token = COM_Parse (&s);
+			SCR_AddDirtyPoint (x, y);
+			SCR_AddDirtyPoint (x+23, y+23);
+			SCR_HudPic (x, y, token, 0.75f);
+			continue;
+		}
+
+		if (!strcmp(token, "picnote"))
+		{	// a note with two lines of text
+			x = -120 - (int)(sx * -325);
+			y = -160 - (int)(sy * -300);
+			SCR_HudPic (x, y, "note", 0.5f);
+			token = COM_Parse (&s);
+			DrawHUDString2 (token, x + 16, y + 27, 0, 0x80);
+			token = COM_Parse (&s);
+			DrawHUDString2 (token, x + 16, y + 75, 0, 0x80);
+			continue;
+		}
+
+		if (!strcmp(token, "num"))
+		{	// draw a number
+			token = COM_Parse (&s);
+			i = atoi(token);
+			token = COM_Parse (&s);
+			value = stats[atoi(token)];
+			SCR_DrawField (x, y, 0, i, value, NULL);
+			continue;
+		}
+
+		if (!strcmp(token, "hnum"))
+		{	// health and the armor figure
+			int		ay;
+
+			value = stats[STAT_ENDPIC];
+			if (value)
+			{	// the end picture fades in over everything
+				SCR_HudStretch (0, 0, viddef.width, viddef.height,
+					"end", value == 100 ? 0 : value * 0.1);
+				return;
+			}
+
+			value = stats[STAT_HEALTH];
+			SCR_DrawField ((int)(sx * 63), (int)(sy * 448), value > 25 ? 0 : SCR_BlinkColor (),
+				3, value, hud_slant3);
+
+			x = (int)(sx * 20);
+			y = (int)(sy * 384);
+			SCR_HudPic (x, y, "armor", 0.75f);
+			ay = (int)(sy * -384);
+
+			// the counters go at the left edge; sic: x is (int)sx
+			SCR_DrawArmorPart (x, y, stats[STAT_ARMOR3], "l", 0.75f);
+			value = stats[STAT_ARMOR3];
+			if (value > 1024)
+				value -= 1024;
+			SCR_DrawScaledField ((int)sx, 55 - ay, 0, 3, value, 0.5);
+
+			SCR_DrawArmorPart (x, y, stats[STAT_ARMOR2], "b", 1.0);
+			value = stats[STAT_ARMOR2];
+			if (value > 1024)
+				value -= 1024;
+			SCR_DrawScaledField ((int)sx, 35 - ay, 0, 3, value, 0.5);
+
+			SCR_DrawArmorPart (x, y, stats[STAT_ARMOR1], "h", 1.0);
+			value = stats[STAT_ARMOR1];
+			if (value > 1024)
+				value -= 1024;
+			SCR_DrawScaledField ((int)sx, 15 - ay, 0, 3, value, 0.5);
+
+			x = (int)sx;
+			y = 15 - ay;
+			continue;
+		}
+
+		if (!strcmp(token, "frags"))
+		{	// cash in deathmatch
+			value = stats[STAT_CASH];
+			SCR_DrawField ((int)(sy * 570), (int)(sy * 6), value >= 0 ? 1 : SCR_BlinkColor (),
+				4, value, hud_slant4);
+			continue;
+		}
+
+		if (!strcmp(token, "cnum"))
+		{	// cash, notepad and the inventory items (full hud only)
+			int		iy;
+
+			if (hud < 2)
+				continue;
+
+			iy = (int)(sy * 35);
+			if (stats[STAT_HELPICON])
+				SCR_HudPic ((int)(sx * 630 - 40), (int)(sy * 375),
+					"h_notepad3", stats[STAT_HELPICON] * 0.0025);
+
+			value = stats[STAT_CASH];
+			if (value >= 0 && value <= 9999)
+			{
+				SCR_DrawField ((int)(sy * 570), (int)(sy * 6), 1, 4, value, hud_slant4);
+				if (value < 10)
+					x = 585;
+				else if (value < 100)
+					x = 570;
+				else if (value < 1000)
+					x = 555;
+				else
+					x = 540;
+				SCR_HudPic ((int)(x * sx), (int)(sy * 3), "h_money", 0.25f);
+			}
+			else
+			{	// broke or rich: the money burns
+				SCR_HudPic ((int)(sx * 540), (int)(sy * 3), "h_money", 1.0);
+				for (i=0 ; i<2 ; i++)
+				{
+					h = (int)(((rand()&15) - 64) * sy);
+					SCR_HudPic ((int)(((rand()&7) - 4) * sx + 625), h, "/sprites/fire.tga", 0.5f);
+				}
+			}
+
+			x = (int)(sx * 600);
+			y = (int)(sy * 10);
+			value = stats[STAT_HUD_INV];
+			for (i=0 ; i<10 ; i++)
+			{
+				static char *items[10] = {"bat", "coil", "watch", "safedocs", "fuse",
+					"valve", "lizzyhead", "bottle", "oilcan", "ticket"};
+
+				if (!(value & (1<<i)))
+					continue;
+				y += iy;
+				Com_sprintf (name, sizeof(name), "h_%s", items[i]);
+				re.DrawGetPicSize (&w, &h, name);
+				SCR_HudStretch (x, y, (int)(w*0.6), (int)(h*0.6), name, 0.75f);
+			}
+			continue;
+		}
+
+		if (!strcmp(token, "hire"))
+		{	// up to two hired gang members
+			if (!hudguys->value)
+				continue;
+			if (stats[STAT_HUD_HIRE1])
+				SCR_DrawHireling ((int)(sx * 482), (int)(sy * 417),
+					stats[STAT_HUD_HIRE1], stats[STAT_HUD_HIRE1_CMD]);
+			x = 514;
+			y = 417;
+			if (stats[STAT_HUD_HIRE2])
+				SCR_DrawHireling ((int)(sx * 514), (int)(sy * 417),
+					stats[STAT_HUD_HIRE2], stats[STAT_HUD_HIRE2_CMD]);
+			continue;
+		}
+
+		if (!strcmp(token, "talk"))
+		{	// talk faces: the other character's animated one and our own
+			if (!hudtalk->value)
+				continue;
+
+			alpha = 0;
+			value = stats[STAT_HUD_ENEMY_TALK];
+			if (value)
+				alpha = stats[STAT_HUD_ENEMY_TALK_TIME] * (1.0/255) * 0.6;
+			if (value >= 1 && value <= 4)
+			{	// six frames, two server frames each
+				i = (cl.frame.serverframe >> 1) % 6;
+				Com_sprintf (name, sizeof(name), "head_%s%s", hud_enemy_talk[value-1], hud_talk_suffix[i]);
+				SCR_HudPic ((int)(sx * 168), (int)(sy * 438), name, alpha);
+			}
+
+			value = stats[STAT_HUD_SELF_TALK];
+			if (value)
+				alpha = stats[STAT_HUD_SELF_TALK_TIME] * (1.0/255);
+			x = 118;
+			y = 438;
+			switch (value)
+			{
+			case 1:
+			case 8:
+				SCR_HudPic ((int)(sx * 118), (int)(sy * 438), "pos", alpha);
+				break;
+			case 3:
+			case 7:
+				SCR_HudPic ((int)(sx * 118), (int)(sy * 436), "neg", alpha);
+				break;
+			case 5:
+				SCR_HudPic ((int)(sx * 118), (int)(sy * 438), "neutral", alpha);
+				break;
+			case 9:
+				break;
+			default:
+				continue;
+			}
+			SCR_HudPic ((int)(sx * 118), (int)(sy * 438), "head", alpha * 0.5);
+			continue;
+		}
+
+		if (!strcmp(token, "anum"))
+		{	// ammo count and the ammo icon from the given stat
+			value = stats[STAT_AMMO];
+			if (value < 0)
+				continue;
+			x = (int)(sx * 562);
+			y = (int)(sy * 453);
+			SCR_DrawField (x, y, value > 5 ? 0 : SCR_BlinkColor (), 3, value, hud_slantup3);
+
+			token = COM_Parse (&s);
+			index = stats[atoi(token)];
+			if (index >= MAX_IMAGES)
+				Com_Error (ERR_DROP, "Pic >= MAX_IMAGES");
+			token = cl.configstrings[CS_IMAGES+index];
+			re.DrawGetPicSize (&w, &h, token);
+			SCR_HudStretch ((int)(sx * 606), (int)(sy * 438),
+				(int)(w*0.75), (int)(h*0.75), token, 0.75f);
+			continue;
+		}
+
+		if (!strcmp(token, "wanum"))
+		{	// rounds left in the clip
+			value = stats[STAT_CLIP];
+			if (value < 0)
+				continue;
+			SCR_DrawField ((int)(sx * 598), (int)(sy * 414), value > 1 ? 0 : SCR_BlinkColor (),
+				2, value, hud_slantup2);
+			continue;
+		}
+
+		if (!strcmp(token, "stat_string"))
+		{	// kingpin: the picked up item's icon and count
+			token = COM_Parse (&s);
+			index = atoi(token);
+			if (index < 0 || index >= MAX_CONFIGSTRINGS)
+				Com_Error (ERR_DROP, "Bad stat_string index");
+			index = stats[index];
+			if (index < 0 || index >= MAX_CONFIGSTRINGS)
+				Com_Error (ERR_DROP, "Bad stat_string index");
+
+			token = COM_Parse (&s);
+			index = stats[atoi(token)];
+			if (index >= MAX_IMAGES)
+				Com_Error (ERR_DROP, "Pic >= MAX_IMAGES");
+			token = cl.configstrings[CS_IMAGES+index];
+			re.DrawGetPicSize (&w, &h, token);
+			SCR_HudStretch ((int)(sx * 302), (int)(sy * 438),
+				(int)(w*0.8), (int)(h*0.8), token, stats[STAT_PICKUP_COUNT] * (1.0/255));
+
+			if (stats[STAT_CASH_PICKUP])
+				SCR_DrawField ((int)(sx * 335), (int)(sy * 445), 1, 3, stats[STAT_CASH_PICKUP], hud_noslant);
+			continue;
+		}
+
+		if (!strcmp(token, "cstring"))
+		{
+			token = COM_Parse (&s);
+			DrawHUDString (token, x, y, 320, 0);
+			continue;
+		}
+
+		if (!strcmp(token, "string"))
+		{
+			token = COM_Parse (&s);
+			DrawString (x, y, token);
+			continue;
+		}
+
+		if (!strcmp(token, "cstring2"))
+		{
+			token = COM_Parse (&s);
+			DrawHUDString (token, x, y, 320,0x80);
+			continue;
+		}
+
+		if (!strcmp(token, "string2"))
+		{
+			token = COM_Parse (&s);
+			DrawAltString (x, y, token);
+			continue;
+		}
+
+		if (!strcmp(token, "if"))
+		{	// draw a number
+			token = COM_Parse (&s);
+			value = stats[atoi(token)];
+			if (!value)
+			{	// skip to endif
+				while (s && strcmp(token, "endif") )
+				{
+					token = COM_Parse (&s);
+				}
+			}
+
+			continue;
+		}
+	}
+}
+#else
 /*
 ================
 SCR_ExecuteLayoutString
@@ -1253,6 +2338,7 @@ void SCR_ExecuteLayoutString (char *s)
 
 	}
 }
+#endif
 
 
 /*
@@ -1265,7 +2351,15 @@ is based on the stats array
 */
 void SCR_DrawStats (void)
 {
+#ifdef KINGPIN_ENGINE
+	// kingpin.exe @00415f60: scr_hud 0 suppresses the status-bar layout,
+	// otherwise it is the detail level passed to the interpreter.
+	if (!scr_hud->value)
+		return;
+	SCR_ExecuteLayoutString (cl.configstrings[CS_STATUSBAR], (int)scr_hud->value);
+#else
 	SCR_ExecuteLayoutString (cl.configstrings[CS_STATUSBAR]);
+#endif
 }
 
 
@@ -1281,7 +2375,11 @@ void SCR_DrawLayout (void)
 {
 	if (!cl.frame.playerstate.stats[STAT_LAYOUTS])
 		return;
+#ifdef KINGPIN_ENGINE
+	SCR_ExecuteLayoutString (cl.layout, (int)scr_hud->value);	// @00415f90
+#else
 	SCR_ExecuteLayoutString (cl.layout);
+#endif
 }
 
 //=======================================================
@@ -1311,6 +2409,11 @@ void SCR_UpdateScreen (void)
 		}
 		return;
 	}
+
+#ifdef KINGPIN_ENGINE
+	if (com_stoprender)
+		scr_draw_loading = 2;
+#endif
 
 	if (!scr_initialized || !con.initialized)
 		return;				// not initialized yet
@@ -1347,8 +2450,14 @@ void SCR_UpdateScreen (void)
 
 			re.CinematicSetPalette(NULL);
 			scr_draw_loading = false;
+#ifdef KINGPIN_ENGINE
+			re.DrawStretchPic (0, 0, viddef.width, viddef.height, "conback");
+			re.DrawGetPicSize (&w, &h, "processing");
+			re.DrawPic ((viddef.width-w)/2, (viddef.height-h)/2, "processing");
+#else
 			re.DrawGetPicSize (&w, &h, "loading");
 			re.DrawPic ((viddef.width-w)/2, (viddef.height-h)/2, "loading");
+#endif
 //			re.EndFrame();
 //			return;
 		}

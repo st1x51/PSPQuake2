@@ -22,6 +22,11 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "client.h"
 
 cvar_t	*freelook;
+#ifdef KINGPIN_ENGINE
+cvar_t	*hudtalk;
+cvar_t	*hudguys;
+cvar_t	*props;
+#endif
 
 cvar_t	*adr0;
 cvar_t	*adr1;
@@ -38,6 +43,15 @@ cvar_t	*cl_stereo;
 
 cvar_t	*rcon_client_password;
 cvar_t	*rcon_address;
+
+#ifdef KINGPIN_ENGINE
+cvar_t	*cam_dist;		// chase camera
+cvar_t	*cam_speed;
+cvar_t	*cam_zofs;
+
+cvar_t	*cl_parental_lock;
+cvar_t	*cl_parental_override;
+#endif
 
 cvar_t	*cl_noskins;
 cvar_t	*cl_autoskins;
@@ -76,9 +90,14 @@ cvar_t	*cl_lightlevel;
 // userinfo
 //
 cvar_t	*info_password;
+#ifndef KINGPIN_ENGINE
 cvar_t	*info_spectator;
+#endif
 cvar_t	*name;
 cvar_t	*skin;
+#ifdef KINGPIN_ENGINE
+cvar_t	*extras;
+#endif
 cvar_t	*rate;
 cvar_t	*fov;
 cvar_t	*msg;
@@ -93,6 +112,14 @@ client_state_t	cl;
 
 centity_t		cl_entities[MAX_EDICTS];
 
+#ifdef KINGPIN_ENGINE
+cmlight_t		cl_modellights[MAX_MODELLIGHTS];
+int				cl_nummodellights;
+
+lightflare_t	cl_lightflares[MAX_LIGHTFLARES];
+int				cl_numlightflares;
+#endif
+
 entity_state_t	cl_parse_entities[MAX_PARSE_ENTITIES];
 
 extern	cvar_t *allow_download;
@@ -100,6 +127,11 @@ extern	cvar_t *allow_download_players;
 extern	cvar_t *allow_download_models;
 extern	cvar_t *allow_download_sounds;
 extern	cvar_t *allow_download_maps;
+
+#ifdef KINGPIN_ENGINE
+static cvar_t	*parental_password;
+static char	parental_lock_password[256];
+#endif
 
 //======================================================================
 
@@ -255,7 +287,11 @@ void CL_Record_f (void)
 		}
 
 		MSG_WriteByte (&buf, svc_spawnbaseline);
+#ifdef KINGPIN_ENGINE
+		MSG_WriteDeltaEntity (&nullstate, &cl_entities[i].baseline, &buf, true, true, false);
+#else
 		MSG_WriteDeltaEntity (&nullstate, &cl_entities[i].baseline, &buf, true, true);
+#endif
 	}
 
 	MSG_WriteByte (&buf, svc_stufftext);
@@ -594,6 +630,9 @@ void CL_ClearState (void)
 	S_StopAllSounds ();
 	CL_ClearEffects ();
 	CL_ClearTEnts ();
+#ifdef KINGPIN_ENGINE
+	V_ClearFlares ();
+#endif
 
 	if (re.ClearRegistered)
 		re.ClearRegistered ();
@@ -615,6 +654,11 @@ void CL_ClearState (void)
 // wipe the entire cl structure
 	memset (&cl, 0, sizeof(cl));
 	memset (&cl_entities, 0, sizeof(cl_entities));
+
+#ifdef KINGPIN_ENGINE
+	cl_nummodellights = 0;
+	cl_numlightflares = 0;
+#endif
 
 	SZ_Clear (&cls.netchan.message);
 }
@@ -1082,12 +1126,24 @@ void CL_FixUpGender(void)
 		strncpy(sk, skin->string, sizeof(sk) - 1);
 		if ((p = strchr(sk, '/')) != NULL)
 			*p = 0;
+#ifdef KINGPIN_ENGINE
+		// kingpin.exe @0040e030: model names starting with male/female count too
+		if (Q_stricmp(sk, "male") == 0 || Q_stricmp(sk, "cyborg") == 0
+			|| strstr(sk, "male") == sk)
+			Cvar_Set ("gender", "male");
+		else if (Q_stricmp(sk, "female") == 0 || Q_stricmp(sk, "crackhor") == 0
+			|| strstr(sk, "female") == sk)
+			Cvar_Set ("gender", "female");
+		else
+			Cvar_Set ("gender", "none");
+#else
 		if (Q_stricmp(sk, "male") == 0 || Q_stricmp(sk, "cyborg") == 0)
 			Cvar_Set ("gender", "male");
 		else if (Q_stricmp(sk, "female") == 0 || Q_stricmp(sk, "crackhor") == 0)
 			Cvar_Set ("gender", "female");
 		else
 			Cvar_Set ("gender", "none");
+#endif
 		gender->modified = false;
 	}
 }
@@ -1133,6 +1189,103 @@ byte *precache_model; // used for skin checking in alias models
 
 static const char *env_suf[6] = {"rt", "bk", "lf", "ft", "up", "dn"};
 
+#ifdef KINGPIN_ENGINE
+void CL_RequestNextDownload (void)
+{
+	unsigned	map_checksum;		// for detecting cheater maps
+	char fn[MAX_OSPATH];
+
+	/*
+	 * kingpin.exe @0040e180.  Unlike Quake II, Kingpin configstrings
+	 * already contain complete model, sound and image paths.  MDX skins
+	 * are sent separately in CS_MODELSKINS and player resources are not
+	 * expanded into the old tris.md2/weapon.pcx download sequence.
+	 */
+	if (precache_check == CS_MODELS)
+	{
+		precache_check = CS_MODELS + 2;
+		if (!CL_CheckOrDownloadFile (cl.configstrings[CS_MODELS + 1]))
+			return;
+	}
+
+	if (precache_check >= CS_MODELS && precache_check < CS_SOUNDS)
+	{
+		while (precache_check < CS_SOUNDS && cl.configstrings[precache_check][0])
+		{
+			char *name = cl.configstrings[precache_check++];
+
+			if (name[0] == '*' || name[0] == '#')
+				continue;
+			if (!CL_CheckOrDownloadFile (name))
+				return;
+		}
+		precache_check = CS_SOUNDS;
+	}
+
+	if (precache_check >= CS_SOUNDS && precache_check < CS_IMAGES)
+	{
+		while (precache_check < CS_IMAGES && cl.configstrings[precache_check][0])
+		{
+			char *name = cl.configstrings[precache_check++];
+
+			if (!CL_CheckOrDownloadFile (name))
+				return;
+		}
+		precache_check = CS_IMAGES;
+	}
+
+	if (precache_check >= CS_IMAGES && precache_check < CS_MODELSKINS)
+	{
+		while (precache_check < CS_MODELSKINS && cl.configstrings[precache_check][0])
+		{
+			char *name = cl.configstrings[precache_check++];
+
+			if (!CL_CheckOrDownloadFile (name))
+				return;
+		}
+
+		/* A terminating empty image configstring enters the map stage. */
+		if (precache_check < CS_MODELSKINS)
+			goto kingpin_map;
+	}
+
+	/* Preserve the retail resume range inherited from PLAYER_MULT. */
+	if (precache_check >= CS_PLAYERSKINS && precache_check <= ENV_CNT)
+	{
+kingpin_map:
+		precache_check = ENV_CNT + 1;
+		precache_tex = 0;
+		CM_LoadMap (cl.configstrings[CS_MODELS + 1], true, &map_checksum);
+		if (map_checksum != atoi (cl.configstrings[CS_MAPCHECKSUM]))
+		{
+			Com_Error (ERR_DROP, "Local map version differs from server: %i != '%s'\n",
+				map_checksum, cl.configstrings[CS_MAPCHECKSUM]);
+			return;
+		}
+	}
+
+	if (precache_check == ENV_CNT + 1)
+	{
+		int numtexinfo = CM_NumTexInfo ();
+		mapsurface_t *map_surfaces = CM_MapSurfaces ();
+
+		while (precache_tex < numtexinfo)
+		{
+			Com_sprintf (fn, sizeof(fn), "textures/%s.tga",
+				map_surfaces[precache_tex++].rname);
+			if (!CL_CheckOrDownloadFile (fn))
+				return;
+		}
+		precache_check = ENV_CNT + 999;
+	}
+
+	CL_RegisterSounds ();
+	CL_PrepRefresh ();
+
+	MSG_WriteByte (&cls.netchan.message, clc_stringcmd);
+	MSG_WriteString (&cls.netchan.message, va("begin %i\n", precache_spawncount));
+}
+#else
 void CL_RequestNextDownload (void)
 {
 	unsigned	map_checksum;		// for detecting cheater maps
@@ -1416,6 +1569,7 @@ void CL_RequestNextDownload (void)
 	MSG_WriteByte (&cls.netchan.message, clc_stringcmd);
 	MSG_WriteString (&cls.netchan.message, va("begin %i\n", precache_spawncount) );
 }
+#endif
 
 /*
 =================
@@ -1447,6 +1601,122 @@ void CL_Precache_f (void)
 }
 
 
+#ifdef KINGPIN_ENGINE
+/*
+============================
+CL_CheckSystemMemory
+
+kingpin.exe @0040e4e0.  This runs before video and sound initialization;
+both subsystems use the resulting read-only cvar for their retail defaults.
+============================
+*/
+static void CL_CheckSystemMemory (void)
+{
+#if 0 //def __psp__
+	int memory_mb = 24;
+#else
+	int memory_mb = 128;
+#endif
+	char value[32];
+
+	Com_Printf ("\n------- Checking System ------------\n");
+#ifdef _WIN32
+	{
+		MEMORYSTATUS status;
+
+		memset (&status, 0, sizeof(status));
+		status.dwLength = sizeof(status);
+		GlobalMemoryStatus (&status);
+		memory_mb = (int)(status.dwTotalPhys / (1024 * 1024));
+	}
+#endif
+
+	Com_sprintf (value, sizeof(value), "%i", memory_mb);
+	Cvar_Get ("cl_physical_memory", "0", CVAR_NOSET);
+	Cvar_ForceSet ("cl_physical_memory", value);
+
+	if (memory_mb >= 128)
+		Cvar_Get ("gl_maxtexsize", "256", CVAR_ARCHIVE);
+	else
+	{
+		Cvar_Get ("gl_maxtexsize", "128", CVAR_ARCHIVE);
+		Cvar_ForceSet ("gl_maxtexsize", "128");
+	}
+
+	Com_Printf ("%smb Physical Memory detected.\n", value);
+	Com_Printf ("------------------------------------\n\n");
+}
+
+/*
+============================
+CL_ReadParentalLockRegistry
+
+kingpin.exe @0040e410.  The retail installer stores the parental-lock
+password in HKLM.  A non-empty ParentalLock value enables the protected
+cvar; the actual value is immaterial in the original.
+============================
+*/
+static void CL_ReadParentalLockRegistry (void)
+{
+#ifdef _WIN32
+	HKEY	key;
+	DWORD	type;
+	DWORD	size;
+	char	value[256];
+
+	if (RegOpenKeyExA (HKEY_LOCAL_MACHINE,
+		"Software\\Xatrix\\Kingpin\\1.00.000", 0, KEY_QUERY_VALUE, &key)
+		!= ERROR_SUCCESS)
+		return;
+
+	size = sizeof(value);
+	if (RegQueryValueExA (key, "ParentalLock", NULL, &type,
+		(LPBYTE)value, &size) == ERROR_SUCCESS)
+	{
+		value[sizeof(value) - 1] = 0;
+		if (value[0])
+		{
+			size = sizeof(parental_lock_password);
+			if (RegQueryValueExA (key, "Password", NULL, &type,
+				(LPBYTE)parental_lock_password, &size) == ERROR_SUCCESS)
+			{
+				parental_lock_password[sizeof(parental_lock_password) - 1] = 0;
+				Cvar_ForceSet ("cl_parental_lock", "1");
+			}
+		}
+	}
+
+	RegCloseKey (key);
+#endif
+}
+
+/*
+============================
+CL_CheckParentalPassword
+
+kingpin.exe @0040f2e0.  A matching password disables the lock for this
+process only; it does not alter the installer registry values.
+============================
+*/
+static void CL_CheckParentalPassword (void)
+{
+	if (!parental_password || !parental_password->modified)
+		return;
+
+	parental_password->modified = false;
+	if (!strcmp (parental_lock_password, parental_password->string))
+	{
+		Com_Printf ("Password Matched, parental lock TEMPORARILY disabled.\n");
+		Cvar_ForceSet ("cl_parental_override", "1");
+	}
+	else
+	{
+		Com_Printf ("Password incorrect, parental lock un-changed.\n");
+	}
+}
+#endif
+
+
 /*
 =================
 CL_InitLocal
@@ -1472,6 +1742,26 @@ void CL_InitLocal (void)
 //
 // register our variables
 //
+#ifdef KINGPIN_ENGINE
+	cl_parental_lock = Cvar_Get ("cl_parental_lock", "0", CVAR_NOSET);
+	parental_password = Cvar_Get ("parental_password", "", 0);
+	parental_password->modified = parental_password->string[0] != 0;
+	cl_parental_override = Cvar_Get ("cl_parental_override", "0", CVAR_NOSET);
+
+	cl_fireworks = Cvar_Get ("cl_fireworks", "1", CVAR_ARCHIVE);
+	cl_bloodtime = Cvar_Get ("cl_bloodtime", "1", CVAR_ARCHIVE);
+
+	cam_zofs = Cvar_Get ("cam_zofs", "30", CVAR_ARCHIVE);
+	cam_speed = Cvar_Get ("cam_speed", "4", CVAR_ARCHIVE);
+	cam_dist = Cvar_Get ("cam_dist", "45", CVAR_ARCHIVE);
+
+	// read by ref_gl and the menus
+	Cvar_Get ("cl_allow_downloads", "1", CVAR_ARCHIVE);
+	Cvar_Get ("r_sfx_pause", "0", 0);
+	Cvar_Get ("r_lightflares", "1", CVAR_ARCHIVE);
+	Cvar_Get ("cl_captions", "0", CVAR_ARCHIVE);
+	Cvar_Get ("r_directional_lighting", "1", CVAR_ARCHIVE);
+#endif
 	cl_stereo_separation = Cvar_Get( "cl_stereo_separation", "0.4", CVAR_ARCHIVE );
 	cl_stereo = Cvar_Get( "cl_stereo", "0", 0 );
 
@@ -1496,6 +1786,11 @@ void CL_InitLocal (void)
 
 	cl_run = Cvar_Get ("cl_run", "0", CVAR_ARCHIVE);
 	freelook = Cvar_Get( "freelook", "0", CVAR_ARCHIVE );
+#ifdef KINGPIN_ENGINE
+	hudtalk = Cvar_Get ("hudtalk", "1", CVAR_ARCHIVE);	// talk faces on the HUD
+	hudguys = Cvar_Get ("hudguys", "1", CVAR_ARCHIVE);	// hired gang members on the HUD
+	props = Cvar_Get ("props", "1", CVAR_ARCHIVE);		// menu option; the game dll gets "cmd hideprops/showprops"
+#endif
 	lookspring = Cvar_Get ("lookspring", "0", CVAR_ARCHIVE);
 	lookstrafe = Cvar_Get ("lookstrafe", "0", CVAR_ARCHIVE);
 	sensitivity = Cvar_Get ("sensitivity", "3", CVAR_ARCHIVE);
@@ -1526,10 +1821,17 @@ void CL_InitLocal (void)
 	// userinfo
 	//
 	info_password = Cvar_Get ("password", "", CVAR_USERINFO);
+#ifndef KINGPIN_ENGINE
 	info_spectator = Cvar_Get ("spectator", "0", CVAR_USERINFO);
+#endif
 	name = Cvar_Get ("name", "unnamed", CVAR_USERINFO | CVAR_ARCHIVE);
 	skin = Cvar_Get ("skin", "male/grunt", CVAR_USERINFO | CVAR_ARCHIVE);
+#ifdef KINGPIN_ENGINE
+	extras = Cvar_Get ("extras", "0", CVAR_USERINFO | CVAR_ARCHIVE);
+	rate = Cvar_Get ("rate", "4000", CVAR_USERINFO | CVAR_ARCHIVE);
+#else
 	rate = Cvar_Get ("rate", "25000", CVAR_USERINFO | CVAR_ARCHIVE);	// FIXME
+#endif
 	msg = Cvar_Get ("msg", "1", CVAR_USERINFO | CVAR_ARCHIVE);
 	hand = Cvar_Get ("hand", "0", CVAR_USERINFO | CVAR_ARCHIVE);
 	fov = Cvar_Get ("fov", "90", CVAR_USERINFO | CVAR_ARCHIVE);
@@ -1539,6 +1841,9 @@ void CL_InitLocal (void)
 
 	cl_vwep = Cvar_Get ("cl_vwep", "1", CVAR_ARCHIVE);
 
+#ifdef KINGPIN_ENGINE
+	CL_ReadParentalLockRegistry ();
+#endif
 
 	//
 	// register our commands
@@ -1577,6 +1882,13 @@ void CL_InitLocal (void)
 	// the only thing this does is allow command completion
 	// to work -- all unknown commands are automatically
 	// forwarded to the server
+#ifdef KINGPIN_ENGINE
+	// forwarded to the server
+	Cmd_AddCommand ("+activate", NULL);
+	Cmd_AddCommand ("-activate", NULL);
+	Cmd_AddCommand ("immortal", NULL);
+	Cmd_AddCommand ("extracrispy", NULL);
+#endif
 	Cmd_AddCommand ("wave", NULL);
 	Cmd_AddCommand ("inven", NULL);
 	Cmd_AddCommand ("kill", NULL);
@@ -1587,7 +1899,11 @@ void CL_InitLocal (void)
 	Cmd_AddCommand ("info", NULL);
 	Cmd_AddCommand ("prog", NULL);
 	Cmd_AddCommand ("give", NULL);
+#ifdef KINGPIN_ENGINE
+	Cmd_AddCommand ("hud", NULL);
+#else
 	Cmd_AddCommand ("god", NULL);
+#endif
 	Cmd_AddCommand ("notarget", NULL);
 	Cmd_AddCommand ("noclip", NULL);
 	Cmd_AddCommand ("invuse", NULL);
@@ -1596,6 +1912,10 @@ void CL_InitLocal (void)
 	Cmd_AddCommand ("invdrop", NULL);
 	Cmd_AddCommand ("weapnext", NULL);
 	Cmd_AddCommand ("weapprev", NULL);
+
+#ifdef KINGPIN_ENGINE
+	M_ClearPlayerSkinMemory ();	// kingpin.exe @0042caf0
+#endif
 }
 
 
@@ -1623,7 +1943,11 @@ void CL_WriteConfiguration (void)
 		return;
 	}
 
+#ifdef KINGPIN_ENGINE
+	FS_FPrintf (f, "// generated by kingpin, do not modify\n");
+#else
 	FS_FPrintf (f, "// generated by quake, do not modify\n");
+#endif
 	Key_WriteBindings (f);
 	FS_FClose (f);
 
@@ -1776,6 +2100,10 @@ void CL_Frame (int msec)
 	// predict all unacknowledged movements
 	CL_PredictMovement ();
 
+#ifdef KINGPIN_ENGINE
+	S_UpdateReverb (cl.refdef.vieworg);
+#endif
+
 	// allow rendering DLL change
 	VID_CheckChanges ();
 	if (!cl.refresh_prepped && cls.state == ca_active)
@@ -1821,6 +2149,10 @@ void CL_Frame (int msec)
 			}
 		}
 	}
+
+#ifdef KINGPIN_ENGINE
+	CL_CheckParentalPassword ();
+#endif
 }
 
 
@@ -1839,6 +2171,9 @@ void CL_Init (void)
 	// all archived variables will now be loaded
 
 	Con_Init ();
+#ifdef KINGPIN_ENGINE
+	CL_CheckSystemMemory ();
+#endif
 #if defined __linux__ || defined __sgi
 	S_Init ();
 	VID_Init ();

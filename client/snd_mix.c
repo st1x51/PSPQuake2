@@ -221,6 +221,10 @@ CHANNEL MIXING
 void S_PaintChannelFrom8 (channel_t *ch, sfxcache_t *sc, int endtime, int offset);
 void S_PaintChannelFrom16 (channel_t *ch, sfxcache_t *sc, int endtime, int offset);
 
+#ifdef KINGPIN_ENGINE
+#define S_CHECKREVERB(ch) (s_reverb_test->value != 0 && s_khz->value == 22.0f && (ch)->entnum == 1)
+#endif
+
 void S_PaintChannels(int endtime)
 {
 	int 	i;
@@ -302,6 +306,17 @@ void S_PaintChannels(int endtime)
 				count = end - ltime;
 
 				// might be stopped by running out of data
+#ifdef KINGPIN_ENGINE
+				if (S_CHECKREVERB (ch))
+				{
+					int reverberated_end = ch->end +
+						(int)s_reverb_count->value * (int)s_reverb_delay->value;
+
+					if (reverberated_end - ltime < count)
+						count = reverberated_end - ltime;
+				}
+				else
+#endif
 				if (ch->end - ltime < count)
 					count = ch->end - ltime;
 		
@@ -330,10 +345,27 @@ void S_PaintChannels(int endtime)
 					else if (sc->loopstart >= 0)
 					{
 						ch->pos = sc->loopstart;
-						ch->end = ltime + sc->length - ch->pos;
+#if defined(KINGPIN_ENGINE) && defined(__psp__)
+						if (ch->pitch_samplestep > 0)
+						{
+							ch->pitch_samplepos = ch->pos * S_PITCH_UNIT;
+							ch->end = ltime + (int)(((unsigned long long)(sc->length - ch->pos) *
+								S_PITCH_UNIT + ch->pitch_samplestep - 1) / ch->pitch_samplestep);
+						}
+						else
+#endif
+							ch->end = ltime + sc->length - ch->pos;
 					}
 					else				
 					{	// channel just stopped
+#ifdef KINGPIN_ENGINE
+						if (S_CHECKREVERB (ch) && ltime < ch->end +
+							(int)s_reverb_count->value * (int)s_reverb_delay->value)
+							continue;
+#ifndef __psp__
+						S_FreePitchedSound (ch->sfx);
+#endif
+#endif
 						ch->sfx = NULL;
 					}
 				}
@@ -479,6 +511,84 @@ void S_PaintChannelFrom16 (channel_t *ch, sfxcache_t *sc, int count, int offset)
 	signed short *sfx;
 	int	i;
 	portable_samplepair_t	*samp;
+
+#if defined(KINGPIN_ENGINE) && defined(__psp__)
+	/*
+	 * Keep pitched Kingpin sounds in the shared sfx cache.  The original
+	 * resampling path allocates a private sfx_t for every pitched voice;
+	 * on PSP we advance through the original 16-bit PCM at a fractional rate.
+	 */
+	if (ch->pitch_samplestep != S_PITCH_UNIT)
+	{
+		int samplepos = ch->pitch_samplepos;
+
+		leftvol = ch->leftvol * snd_vol;
+		rightvol = ch->rightvol * snd_vol;
+		sfx = (signed short *)sc->data;
+		samp = &paintbuffer[offset];
+
+		for (i = 0; i < count; i++, samp++)
+		{
+			int sampleindex = samplepos >> S_PITCH_FRACBITS;
+			int nextindex = sampleindex + 1;
+			int fraction = samplepos & S_PITCH_FRACMASK;
+			int sample0, sample1;
+
+			if (sampleindex >= sc->length)
+				sampleindex = sc->length - 1;
+			if (nextindex >= sc->length)
+				nextindex = sc->length - 1;
+
+			sample0 = sfx[sampleindex];
+			sample1 = sfx[nextindex];
+			data = sample0 + (((sample1 - sample0) * fraction) >> S_PITCH_FRACBITS);
+			samp->left += (data * leftvol) >> 8;
+			samp->right += (data * rightvol) >> 8;
+			samplepos += ch->pitch_samplestep;
+		}
+
+		ch->pitch_samplepos = samplepos;
+		ch->pos = samplepos >> S_PITCH_FRACBITS;
+		return;
+	}
+#endif
+
+#ifdef KINGPIN_ENGINE
+	if (S_CHECKREVERB (ch))
+	{
+		int echo;
+		int echoes = (int)s_reverb_count->value;
+		int delay = (int)s_reverb_delay->value;
+		float volume_scale = 1.0f;
+
+		for (echo = 0; echo < echoes; echo++)
+		{
+			int echo_offset = delay * echo;
+
+			if (ch->pos >= echo_offset && ch->pos < sc->length + echo_offset)
+			{
+				leftvol = (int)(ch->leftvol * snd_vol * volume_scale);
+				rightvol = (int)(ch->rightvol * snd_vol * volume_scale);
+				sfx = (signed short *)sc->data + ch->pos - echo_offset;
+				samp = &paintbuffer[offset];
+
+				for (i = 0; i < count; i++, samp++, sfx++)
+				{
+					if (ch->pos + i >= sc->length + echo_offset)
+						break;
+					data = *sfx;
+					samp->left += (data * leftvol) >> 8;
+					samp->right += (data * rightvol) >> 8;
+				}
+			}
+
+			volume_scale *= s_reverb_volscale->value;
+		}
+
+		ch->pos += count;
+		return;
+	}
+#endif
 
 	leftvol = ch->leftvol*snd_vol;
 	rightvol = ch->rightvol*snd_vol;

@@ -276,6 +276,7 @@ void CL_ForceWall (vec3_t start, vec3_t end, int color)
 	}
 }
 
+#ifndef KINGPIN_ENGINE
 void CL_FlameEffects (centity_t *ent, vec3_t origin)
 {
 	int			n, count;
@@ -334,7 +335,7 @@ void CL_FlameEffects (centity_t *ent, vec3_t origin)
 	}
 
 }
-
+#endif
 
 /*
 ===============

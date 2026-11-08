@@ -42,6 +42,9 @@ extern	int			sb_lines;
 
 extern	cvar_t		*scr_viewsize;
 extern	cvar_t		*crosshair;
+#ifdef KINGPIN_ENGINE
+extern	cvar_t		*scr_hud;
+#endif
 
 extern	vrect_t		scr_vrect;		// position of render window
 

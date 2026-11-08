@@ -37,6 +37,9 @@ cvar_t		*cl_testlights;
 cvar_t		*cl_testblend;
 
 cvar_t		*cl_stats;
+#ifdef KINGPIN_ENGINE
+cvar_t		*cl_rearviewmirror;
+#endif
 
 
 int			r_numdlights;
@@ -49,6 +52,17 @@ int			r_numparticles;
 particle_t	r_particles[MAX_PARTICLES];
 
 lightstyle_t	r_lightstyles[MAX_LIGHTSTYLES];
+
+#ifdef KINGPIN_ENGINE
+int			r_numparticles2;
+particle_t	r_particles2[MAX_PARTICLES2];
+
+int			r_numflares;
+dlight_t	r_flares[MAX_VISIBLE_FLARES];
+
+int			r_numsurflights;
+surflight_t	r_surflights[MAX_SURFLIGHTS];
+#endif
 
 char cl_weaponmodels[MAX_CLIENTWEAPONMODELS][MAX_QPATH];
 int num_cl_weaponmodels;
@@ -65,6 +79,10 @@ void V_ClearScene (void)
 	r_numdlights = 0;
 	r_numentities = 0;
 	r_numparticles = 0;
+#ifdef KINGPIN_ENGINE
+	r_numparticles2 = 0;
+	r_numsurflights = 0;
+#endif
 }
 
 
@@ -98,7 +116,329 @@ void V_AddParticle (vec3_t org, int color, float alpha)
 	VectorCopy (org, p->origin);
 	p->color = color;
 	p->alpha = alpha;
+#ifdef KINGPIN_ENGINE
+	p->type = 0;
+	p->frame = 0;
+#endif
 }
+
+#ifdef KINGPIN_ENGINE
+/*
+=====================
+V_AddParticleEx
+=====================
+*/
+void V_AddParticleEx (vec3_t org, int color, float alpha, int type, int frame)
+{
+	particle_t	*p;
+
+	if (r_numparticles >= MAX_PARTICLES)
+		return;
+	p = &r_particles[r_numparticles++];
+	VectorCopy (org, p->origin);
+	p->color = color;
+	p->alpha = alpha;
+	p->type = type;
+	p->frame = frame;
+}
+
+/*
+=====================
+V_AddParticle2
+
+Particles drawn by the renderer's second particle pass
+=====================
+*/
+void V_AddParticle2 (vec3_t org, int color, float alpha, int type, int frame)
+{
+	particle_t	*p;
+
+	if (r_numparticles2 >= MAX_PARTICLES2)
+		return;
+	p = &r_particles2[r_numparticles2++];
+	VectorCopy (org, p->origin);
+	p->color = color;
+	p->alpha = alpha;
+	p->type = type;
+	p->frame = frame;
+}
+
+/*
+=====================
+V_AddSurfLight
+
+A light that only lights (or with a negative intensity, darkens)
+world surfaces within radius
+=====================
+*/
+void V_AddSurfLight (vec3_t org, float radius, float intensity, float r, float g, float b)
+{
+	surflight_t	*sl;
+
+	if (r_numsurflights >= MAX_SURFLIGHTS)
+		return;
+	sl = &r_surflights[r_numsurflights++];
+	VectorCopy (org, sl->origin);
+	sl->radius = radius;
+	sl->intensity = intensity;
+	sl->color[0] = r;
+	sl->color[1] = g;
+	sl->color[2] = b;
+}
+
+/*
+=====================
+V_InPVS
+
+Same test as the server's PF_inPVS, which kingpin.exe calls from the client
+=====================
+*/
+static qboolean V_InPVS (vec3_t p1, vec3_t p2)
+{
+	int		leafnum;
+	int		cluster;
+	int		area1, area2;
+	byte	*mask;
+
+	leafnum = CM_PointLeafnum (p1);
+	cluster = CM_LeafCluster (leafnum);
+	area1 = CM_LeafArea (leafnum);
+	mask = CM_ClusterPVS (cluster);
+
+	leafnum = CM_PointLeafnum (p2);
+	cluster = CM_LeafCluster (leafnum);
+	area2 = CM_LeafArea (leafnum);
+	if ( mask && (!(mask[cluster>>3] & (1<<(cluster&7)) ) ) )
+		return false;
+	if (!CM_AreasConnected (area1, area2))
+		return false;		// a door blocks sight
+	return true;
+}
+
+/*
+=====================
+V_AddFlares
+
+Flares from CS_LIGHTFLARES. Kingpin's refdef light list is PVS/distance
+filtered independently of the traced, fading AddSFX sprites (0041a8b0).
+=====================
+*/
+void V_ClearFlares (void)
+{
+	r_numflares = 0;
+}
+
+static qboolean V_FlareVisible (vec3_t target, vec3_t dir)
+{
+	vec3_t start;
+	trace_t tr;
+	int passes;
+
+	VectorCopy (cl.refdef.vieworg, start);
+	for (passes=0 ; ; passes++)
+	{
+		tr = CL_PMTrace (start, vec3_origin, vec3_origin, target);
+		if (!(tr.contents & (CONTENTS_ALPHA | CONTENTS_PLAYERCLIP | CONTENTS_LADDER)))
+			break;
+		if (passes == 63)
+			return false;
+		VectorMA (tr.endpos, 6, dir, start);
+	}
+
+	return tr.fraction >= 1 && !tr.startsolid;
+}
+
+static float V_SunVisibility (vec3_t target)
+{
+	vec3_t dir, start;
+	vec3_t forward, right, up;
+	vec3_t sample_start, sample_end;
+	trace_t tr;
+	float x, y;
+	int hits, samples, passes;
+
+	VectorSubtract (target, cl.refdef.vieworg, dir);
+	VectorNormalize (dir);
+	VectorCopy (cl.refdef.vieworg, start);
+
+	/* Alpha-tested fences are stepped through in 12-unit increments. */
+	for (passes=0 ; ; passes++)
+	{
+		tr = CL_PMTrace (start, vec3_origin, vec3_origin, target);
+		if (!(tr.contents & CONTENTS_ALPHA))
+			break;
+		if (passes == 63)
+			return 0;
+		VectorMA (tr.endpos, 12, dir, start);
+	}
+
+	if (tr.fraction >= 1 || (tr.surface && (tr.surface->flags & SURF_SKY)))
+		return 1;
+
+	/*
+	 * A blocked sun ray is sampled on the original 5 by 5 grid.  Only
+	 * samples which actually terminate on a sky surface contribute.
+	 */
+	AngleVectors (cl.refdef.viewangles, forward, right, up);
+	hits = 0;
+	samples = 0;
+	for (x=-8 ; x<=8 ; x+=4)
+	{
+		for (y=-8 ; y<=8 ; y+=4)
+		{
+			VectorMA (cl.refdef.vieworg, x, right, sample_start);
+			VectorMA (target, y, up, sample_end);
+			tr = CL_PMTrace (sample_start, vec3_origin, vec3_origin, sample_end);
+			if (tr.fraction != 1 && tr.surface && (tr.surface->flags & SURF_SKY))
+				hits++;
+			samples++;
+		}
+	}
+
+	return samples ? (float)hits / samples : 1;
+}
+
+static int V_FlareSprite (int type)
+{
+	switch (type)
+	{
+	case FLARE_AMBER: return 0x11;
+	case FLARE_RED: return 0x12;
+	case FLARE_BLUE: return 0x14;
+	case FLARE_GREEN: return 0x13;
+	default: return 0x0a;
+	}
+}
+
+void V_AddFlares (void)
+{
+	int			i;
+	dlight_t	*fl;
+	lightflare_t *flare;
+	vec3_t target, dir, viewforward;
+	float distance, dot, size, alpha, end_alpha, lifetime, coverage;
+	qboolean visible, in_pvs, fading;
+	static const float sun_offset[4] = {0.5f, 0.25f, -0.25f, -0.75f};
+	static const int sun_sprite[4] = {0x0f, 0x0e, 0x0d, 0x0b};
+	int j;
+
+	r_numflares = 0;
+	if (!Cvar_VariableValue ("r_lightflares"))
+		return;
+	AngleVectors (cl.refdef.viewangles, viewforward, NULL, NULL);
+
+	for (i=0 ; i<cl_numlightflares; i++)
+	{
+		flare = &cl_lightflares[i];
+		if (flare->type == FLARE_SUN)
+		{
+			/* The retail data already contains a direction; it is not normalized. */
+			VectorCopy (flare->pos, dir);
+			VectorMA (cl.refdef.vieworg, 9999, dir, target);
+			dot = DotProduct (dir, viewforward);
+			if (dot < -0.2f)
+				continue;
+			coverage = V_SunVisibility (target);
+			distance = 9999;
+		}
+		else
+		{
+			VectorCopy (flare->pos, target);
+			VectorSubtract (target, cl.refdef.vieworg, dir);
+			distance = VectorNormalize (dir);
+			if (distance < 0.1f)
+				distance = 0.1f;
+			if (distance > 2000)
+			{
+				flare->lightstyle = 1;
+				continue;
+			}
+
+			in_pvs = V_InPVS (cl.refdef.vieworg, target);
+			if (r_numflares < MAX_VISIBLE_FLARES && in_pvs)
+			{
+				fl = &r_flares[r_numflares++];
+				memset (fl, 0, sizeof(*fl));
+				VectorCopy (target, fl->origin);
+				VectorSet (fl->color, 1, 1, 1);
+				fl->intensity = 64;
+			}
+			visible = in_pvs && V_FlareVisible (target, dir);
+		}
+
+		if (flare->type == FLARE_SUN)
+		{
+			vec3_t near, lens;
+			static const float sun_alpha[4] = {0.3f, 0.2f, 0.1f, 2.0f};
+			static const float sun_size[4] = {0.2f, 0.2f, 0.4f, 1.0f};
+
+			alpha = 1.2f - dot;
+			if (alpha > 1) alpha = 1;
+			alpha *= coverage;
+			size = (2 - dot) * 0.5f * flare->size * 10;
+			VectorMA (cl.refdef.vieworg, 640, dir, target);
+			VectorMA (cl.refdef.vieworg, 320, viewforward, near);
+			VectorSubtract (target, near, lens);
+			for (j = 0; j < 4; j++)
+			{
+				vec3_t pos, color;
+				VectorMA (near, sun_offset[j], lens, pos);
+				VectorSet (color, 1, 0.8f, 0.6f);
+				re.AddSFX (sun_sprite[j], SFX_FLAG_LIGHTFLARE | SFX_FLAG_NO_FLIP,
+					pos, color, 0, 0.01f, alpha * sun_alpha[j],
+					alpha * sun_alpha[j], 0, size * sun_size[j],
+					size * sun_size[j], size * sun_size[j], size * sun_size[j]);
+			}
+
+			if (dot < 0.3f)
+			{
+				float edge = (0.3f - dot) * (10.0f/3.0f);
+				size *= edge * edge * alpha * 5 + 1;
+			}
+			lifetime = 0.01f;
+			end_alpha = alpha;
+		}
+		else
+		{
+			dot = DotProduct (dir, viewforward);
+			alpha = distance >= 256 ? 1 : distance * (1.0f/256.0f);
+			if (alpha > 0)
+				alpha *= alpha;
+			if (alpha > 0.8f)
+				alpha = 0.8f;
+
+			if (flare->lightstyle & 2)
+				size = flare->size;
+			else
+			{
+				size = (2 - dot) * 0.5f * flare->size;
+				if (distance >= 64)
+					size *= distance * (1.0f/384.0f);
+			}
+
+			fading = !visible;
+			if (fading)
+			{
+				if (flare->lightstyle & 1)
+					continue;
+				flare->lightstyle |= 1;
+				lifetime = 0.1f;
+				end_alpha = 0;
+			}
+			else
+			{
+				flare->lightstyle &= ~1;
+				lifetime = 0.01f;
+				end_alpha = alpha;
+			}
+		}
+		re.AddSFX (V_FlareSprite (flare->type),
+			SFX_FLAG_LIGHTFLARE | SFX_FLAG_NO_FLIP,
+			target, vec3_origin, 0, lifetime, alpha, end_alpha, 0,
+			size, size, size, size);
+	}
+}
+#endif
 
 /*
 =====================
@@ -118,6 +458,7 @@ void V_AddLight (vec3_t org, float intensity, float r, float g, float b)
 	dl->color[0] = r;
 	dl->color[1] = g;
 	dl->color[2] = b;
+	dl->type = 0;
 }
 
 
@@ -198,8 +539,14 @@ void V_TestEntities (void)
 			ent->origin[j] = cl.refdef.vieworg[j] + cl.v_forward[j]*f +
 			cl.v_right[j]*r;
 
+#ifdef KINGPIN_ENGINE
+		ent->model = cl.baseclientinfo.model[0];
+		ent->skin = cl.baseclientinfo.skin[0];
+#else
 		ent->model = cl.baseclientinfo.model;
 		ent->skin = cl.baseclientinfo.skin;
+#endif
+
 	}
 }
 
@@ -250,8 +597,15 @@ void CL_PrepRefresh (void)
 	char		mapname[32];
 	int			i;
 	char		name[MAX_QPATH];
+#ifdef KINGPIN_ENGINE
+	vec3_t		fogcolor, fogcolor2;
+	char		*skins;
+	char		skin[32];
+	int			j, count;
+#else
 	float		rotate;
 	vec3_t		axis;
+#endif
 
 	if (!cl.configstrings[CS_MODELS+1][0])
 		return;		// no map loaded
@@ -278,7 +632,11 @@ void CL_PrepRefresh (void)
 	CL_RegisterTEntModels ();
 
 	num_cl_weaponmodels = 1;
+#ifdef KINGPIN_ENGINE
+	strcpy(cl_weaponmodels[0], "w_tommygun.mdx");
+#else
 	strcpy(cl_weaponmodels[0], "weapon.md2");
+#endif
 
 	for (i=1 ; i<MAX_MODELS && cl.configstrings[CS_MODELS+i][0] ; i++)
 	{
@@ -330,15 +688,60 @@ void CL_PrepRefresh (void)
 		Com_Printf ("                                     \r");
 	}
 
+#ifdef KINGPIN_ENGINE
+	/*
+	 * kingpin.exe @0041a220 performs this as a distinct pass after all
+	 * models, images and clientinfo have been registered.  Keeping that
+	 * order matters to the retail refresh module's registration tables.
+	 */
+	for (i=1 ; i<MAX_MODELS && cl.configstrings[CS_MODELS+i][0] ; i++)
+	{
+		skins = cl.configstrings[CS_MODELSKINS+i];
+		if (!skins[0])
+			continue;
+
+		if (!cl.model_draw[i])
+			cl.model_draw[i] = re.RegisterModel (cl.configstrings[CS_MODELS+i]);
+		if (!cl.model_draw[i])
+			continue;
+
+		count = strlen (skins) / 3;
+		for (j=0 ; j<count ; j++, skins+=3)
+		{
+			strncpy (skin, skins, 3);
+			skin[3] = 0;
+			re.RegisterModelSkin (cl.model_draw[i], skin);
+			strcat (skin, "p1");
+			re.RegisterModelSkin (cl.model_draw[i], skin);
+			skin[3] = 0;
+			strcat (skin, "p2");
+			re.RegisterModelSkin (cl.model_draw[i], skin);
+		}
+	}
+
+	CL_LoadClientinfo (&cl.baseclientinfo, "unnamed\\male_thug/001 001 001");
+#else
 	CL_LoadClientinfo (&cl.baseclientinfo, "unnamed\\male/grunt");
+#endif
 
 	// set sky textures and speed
 	Com_Printf ("sky\r", i); 
 	SCR_UpdateScreen ();
+
+#ifdef KINGPIN_ENGINE
+	re.SetSky (cl.configstrings[CS_SKY]);
+
+	// fog
+	sscanf (cl.configstrings[CS_FOGVAL], "%f %f %f", &fogcolor[0], &fogcolor[1], &fogcolor[2]);
+	sscanf (cl.configstrings[CS_FOGVAL2], "%f %f %f", &fogcolor2[0], &fogcolor2[1], &fogcolor2[2]);
+	re.SetFog (atof (cl.configstrings[CS_DENSITY]), fogcolor,
+		atof (cl.configstrings[CS_DENSITY2]), fogcolor2);
+#else
 	rotate = atof (cl.configstrings[CS_SKYROTATE]);
 	sscanf (cl.configstrings[CS_SKYAXIS], "%f %f %f", 
 		&axis[0], &axis[1], &axis[2]);
 	re.SetSky (cl.configstrings[CS_SKY], rotate, axis);
+#endif
 	Com_Printf ("                                     \r");
 
 	// the renderer can now free unneeded stuff
@@ -451,6 +854,10 @@ V_RenderView
 */
 void V_RenderView( float stereo_separation )
 {
+#ifdef KINGPIN_ENGINE
+	qboolean rearview;
+	vec3_t rearview_angles;
+#endif
 	extern int entitycmpfnc( const entity_t *, const entity_t * );
 
 	if (cls.state != ca_active)
@@ -459,12 +866,38 @@ void V_RenderView( float stereo_separation )
 	if (!cl.refresh_prepped)
 		return;			// still loading
 
+#ifdef KINGPIN_ENGINE
+	// kingpin.exe @0041a8b0: the main menu covers the whole screen, the
+	// world is not rendered behind it
+	if (m_mainmenu_active)
+		return;
+#endif
+
 	if (cl_timedemo->value)
 	{
 		if (!cl.timedemo_start)
 			cl.timedemo_start = Sys_Milliseconds ();
 		cl.timedemo_frames++;
 	}
+
+#ifdef KINGPIN_ENGINE
+	/*
+	 * kingpin.exe @0041a8b0 clears and builds the visible flare list here,
+	 * before the valid-frame branch calls CL_AddEntities and applies the
+	 * stereo/node-line view offsets.  V_ClearScene deliberately does not
+	 * clear this list.
+	 */
+	V_AddFlares ();
+
+	/*
+	 * The retail executable saves the previous refdef angles before
+	 * CL_AddEntities rebuilds the main view.  Its rear-view pass below uses
+	 * those saved angles verbatim, including the resulting one-frame lag.
+	 */
+	rearview = cl_rearviewmirror->value != 0;
+	if (rearview)
+		VectorCopy (cl.refdef.viewangles, rearview_angles);
+#endif
 
 	// an invalid frame will just use the exact previous refdef
 	// we can't use the old frame if the video mode has changed, though...
@@ -536,6 +969,14 @@ void V_RenderView( float stereo_separation )
 		cl.refdef.num_dlights = r_numdlights;
 		cl.refdef.dlights = r_dlights;
 		cl.refdef.lightstyles = r_lightstyles;
+#ifdef KINGPIN_ENGINE
+		cl.refdef.num_particles2 = r_numparticles2;
+		cl.refdef.particles2 = r_particles2;
+		cl.refdef.num_flares = r_numflares;
+		cl.refdef.flares = r_flares;
+		cl.refdef.num_surflights = r_numsurflights;
+		cl.refdef.surflights = r_surflights;
+#endif
 
 		cl.refdef.rdflags = cl.frame.playerstate.rdflags;
 
@@ -544,6 +985,59 @@ void V_RenderView( float stereo_separation )
 	}
 
 	re.RenderFrame (&cl.refdef);
+
+#ifdef KINGPIN_ENGINE
+	if (rearview)
+	{
+		/*
+		 * kingpin.exe @0041b5be: draw the mirror over the completed main
+		 * view.  The scene lists are reused; only the depth buffer, viewport
+		 * and camera angles are changed for this second render.
+		 */
+		if (cl.frame.valid && (cl.force_refdef || !cl_paused->value))
+		{
+			re.ClearDepth ();
+			cl.force_refdef = false;
+
+			cl.refdef.x = viddef.width / 4;
+			cl.refdef.y = 0;
+			cl.refdef.width = viddef.width - viddef.width / 2;
+			cl.refdef.height = viddef.height / 6;
+			cl.refdef.viewangles[PITCH] = -rearview_angles[PITCH];
+			cl.refdef.viewangles[YAW] = rearview_angles[YAW] + 180;
+			cl.refdef.viewangles[ROLL] = -rearview_angles[ROLL];
+			cl.refdef.fov_y = CalcFov (cl.refdef.fov_x,
+				cl.refdef.width, cl.refdef.height);
+			cl.refdef.time = cl.time * 0.001;
+			cl.refdef.areabits = cl.frame.areabits;
+
+			if (!cl_add_entities->value)
+				r_numentities = 0;
+			if (!cl_add_particles->value)
+				r_numparticles = 0;
+			if (!cl_add_lights->value)
+				r_numdlights = 0;
+			if (!cl_add_blend->value)
+				VectorClear (cl.refdef.blend);
+
+			cl.refdef.num_entities = r_numentities;
+			cl.refdef.entities = r_entities;
+			cl.refdef.num_particles = r_numparticles;
+			cl.refdef.particles = r_particles;
+			cl.refdef.num_dlights = r_numdlights;
+			cl.refdef.dlights = r_dlights;
+			cl.refdef.lightstyles = r_lightstyles;
+			cl.refdef.num_particles2 = r_numparticles2;
+			cl.refdef.particles2 = r_particles2;
+			cl.refdef.num_flares = r_numflares;
+			cl.refdef.flares = r_flares;
+			cl.refdef.rdflags = cl.frame.playerstate.rdflags;
+		}
+
+		re.RenderFrame (&cl.refdef);
+	}
+#endif
+
 	if (cl_stats->value)
 		Com_Printf ("ent:%i  lt:%i  part:%i\n", r_numentities, r_numdlights, r_numparticles);
 	if ( log_stats->value && ( log_stats_file != 0 ) )
@@ -570,6 +1064,21 @@ void V_Viewpos_f (void)
 		(int)cl.refdef.viewangles[YAW]);
 }
 
+#ifdef KINGPIN_ENGINE
+/*
+=============
+V_Viewpos_f (@0041bce0)
+=============
+*/
+void V_CamPos_f (void)
+{
+	Com_Printf ("pos : (%i %i %i) : ang : (%i %i %i)\n",
+		(int)cl.refdef.vieworg[0], (int)cl.refdef.vieworg[1],
+		(int)cl.refdef.vieworg[2], (int)cl.refdef.viewangles[0],
+		(int)cl.refdef.viewangles[1], (int)cl.refdef.viewangles[2]);
+}
+#endif
+
 /*
 =============
 V_Init
@@ -582,6 +1091,9 @@ void V_Init (void)
 	Cmd_AddCommand ("gun_model", V_Gun_Model_f);
 
 	Cmd_AddCommand ("viewpos", V_Viewpos_f);
+#ifdef KINGPIN_ENGINE
+	Cmd_AddCommand ("cam_pos", V_CamPos_f);
+#endif
 
 	crosshair = Cvar_Get ("crosshair", "0", CVAR_ARCHIVE);
 
@@ -591,4 +1103,7 @@ void V_Init (void)
 	cl_testlights = Cvar_Get ("cl_testlights", "0", 0);
 
 	cl_stats = Cvar_Get ("cl_stats", "0", 0);
+#ifdef KINGPIN_ENGINE
+	cl_rearviewmirror = Cvar_Get ("cl_rearviewmirror", "0", 0);
+#endif
 }

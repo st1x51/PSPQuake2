@@ -24,7 +24,12 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 console_t	con;
 
 cvar_t		*con_notifytime;
-
+#ifdef KINGPIN_ENGINE
+ cvar_t	*con_scale;
+ cvar_t	*con_highres;
+ cvar_t	*con_autosize;
+float	con_scale_value = 1.0f;
+#endif
 
 #define		MAXCMDLINE	256
 extern	char	key_lines[32][MAXCMDLINE];
@@ -66,6 +71,11 @@ Con_ToggleConsole_f
 */
 void Con_ToggleConsole_f (void)
 {
+#ifdef KINGPIN_ENGINE
+	// kingpin.exe @00421bb0: the console is only available with developer set
+	//if (!developer->value)
+	//	return;
+#endif
 	SCR_EndLoadingPlaque ();	// get rid of loading plaque
 
 	if (cl.attractloop)
@@ -246,7 +256,28 @@ void Con_CheckResize (void)
 	int		i, j, width, oldwidth, oldtotallines, numlines, numchars;
 	char	tbuf[CON_TEXTSIZE];
 
+#ifdef KINGPIN_ENGINE
+	/* kingpin.exe @00421ea0 */
+	if (con_autosize && con_autosize->value &&
+		con_highres && con_highres->value)
+	{
+		con_scale_value = viddef.width * (1.0f / 512.0f);
+	}
+	else if (con_scale && con_highres && con_highres->value)
+	{
+		con_scale_value = con_scale->value;
+		if (con_scale_value < 1.0f)
+			con_scale_value = 1.0f;
+	}
+	else
+	{
+		con_scale_value = 1.0f;
+	}
+
+	width = (int)((viddef.width >> 3) / con_scale_value) - 2;
+#else
 	width = (viddef.width >> 3) - 2;
+#endif
 
 	if (width == con.linewidth)
 		return;
@@ -302,6 +333,10 @@ Con_Init
 */
 void Con_Init (void)
 {
+#ifdef KINGPIN_ENGINE
+	cvar_t *gl_driver;
+	char *autosize_default;
+#endif
 	con.linewidth = -1;
 
 	Con_CheckResize ();
@@ -312,6 +347,13 @@ void Con_Init (void)
 // register our commands
 //
 	con_notifytime = Cvar_Get ("con_notifytime", "3", 0);
+#ifdef KINGPIN_ENGINE
+	gl_driver = Cvar_Get ("gl_driver", "", 0);
+	con_scale = Cvar_Get ("con_scale", "1", CVAR_ARCHIVE);
+	con_highres = Cvar_Get ("con_highres", "0", CVAR_ARCHIVE);
+	autosize_default = gl_driver->string[0] == '3' ? "0" : "1";
+	con_autosize = Cvar_Get ("con_autosize", autosize_default, 0);
+#endif
 
 	Cmd_AddCommand ("toggleconsole", Con_ToggleConsole_f);
 	Cmd_AddCommand ("togglechat", Con_ToggleChat_f);
@@ -588,18 +630,41 @@ void Con_DrawConsole (float frac)
 	SCR_AddDirtyPoint (viddef.width-1,lines-1);
 
 #ifdef EXT_VERSION
+#ifdef KINGPIN_ENGINE
+	Com_sprintf (version, sizeof(version), "%s KP v%4.2f", EXT_VERSION, VERSION);
+	i = strlen(version);
+	for (x = 0; x < i; x++)
+		re.DrawChar ((int)(viddef.width / con_scale_value - ((i + 1 - x) << 3)), 
+			(int)(lines / con_scale_value - con_scale_value * 4 - 8),
+			128 + version[x]);
+#else
 	Com_sprintf (version, sizeof(version), "%s Q2 v%4.2f", EXT_VERSION, VERSION);
 	i = strlen(version);
 	for (x = 0; x < i; x++)
 		re.DrawChar (viddef.width - ((i + 1 - x) << 3), lines-12, 128 + version[x]);
+#endif
 #else
 	Com_sprintf (version, sizeof(version), "v%4.2f", VERSION);
+#ifdef KINGPIN_ENGINE
+	for (x=0 ; x<5 ; x++)
+	{
+		re.DrawChar ((int)(viddef.width / con_scale_value -
+			con_scale_value * 20 - 24 + x * 8),
+			(int)(lines / con_scale_value - con_scale_value * 4 - 8),
+			128 + version[x]);
+	}
+#else
 	for (x=0 ; x<5 ; x++)
 		re.DrawChar (viddef.width-44+x*8, lines-12, 128 + version[x] );
 #endif
+#endif
 
 // draw the text
+#ifdef KINGPIN_ENGINE
+	con.vislines = (int)(lines / con_scale_value);
+#else
 	con.vislines = lines;
+#endif
 	
 #if 0
 	rows = (lines-8)>>3;		// rows of text to draw

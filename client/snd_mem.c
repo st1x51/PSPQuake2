@@ -75,6 +75,44 @@ void S_Resample (const byte *src, int inrate, int inwidth, int insamples, byte *
 
 //=============================================================================
 
+#if defined(KINGPIN_ENGINE) && !defined(__psp__)
+/*
+================
+S_PitchSound
+
+A copy of a loaded sound, resampled so it plays pitch times faster and
+higher. Like kingpin.exe the copy is not tracked or freed: every pitched
+voice line costs a new allocation.
+================
+*/
+sfx_t *S_PitchSound (sfx_t *s, float pitch)
+{
+	sfx_t		*copy;
+	sfxcache_t	*sc, *orig;
+
+	orig = s->cache.data;
+	if (!orig)
+		return NULL;
+	copy = Z_Malloc (sizeof(*copy));
+	sc = Cache_Alloc ( &copy->cache, (int)(orig->length / pitch * orig->width) + sizeof(sfxcache_t) + 1, s->name);
+	if (!sc)
+		return NULL;
+
+	sc->length = orig->length;
+	sc->loopstart = orig->loopstart;
+	sc->speed = (int)(orig->speed * pitch);
+	sc->width = orig->width;
+	sc->stereo = orig->stereo;
+
+	S_Resample (orig->data, orig->speed, orig->width, orig->length, sc->data, sc->speed, sc->width);
+
+	strcpy (copy->name, s->name);
+	copy->registration_sequence = s->registration_sequence;
+	copy->pitch = pitch;
+	return copy;
+}
+#endif
+
 /*
 ==============
 S_LoadSound

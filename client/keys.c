@@ -907,6 +907,32 @@ void Key_Event (int key, qboolean down, unsigned time)
 		return;
 	}
 
+#if 0 //def KINGPIN_ENGINE
+	/*
+	 * kingpin.exe @00427750 forwards the first arrow press to the game DLL.
+	 * Dialog and interaction code consumes these commands independently of
+	 * the normal key binding/menu routing below.
+	 */
+	if (down && key_repeats[key] == 1)
+	{
+		switch (key)
+		{
+		case K_LEFTARROW:
+			Cbuf_AddText ("cmd leftarrow\n");
+			break;
+		case K_RIGHTARROW:
+			Cbuf_AddText ("cmd rightarrow\n");
+			break;
+		case K_UPARROW:
+			Cbuf_AddText ("cmd uparrow\n");
+			break;
+		case K_DOWNARROW:
+			Cbuf_AddText ("cmd downarrow\n");
+			break;
+		}
+	}
+#endif
+
 	// any key during the attract mode will bring up the menu
 	if (cl.attractloop && cls.key_dest != key_menu &&
 		!(key >= K_F1 && key <= K_F12))

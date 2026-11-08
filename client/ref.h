@@ -29,6 +29,15 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #else
 #define	MAX_PARTICLES	4096
 #endif
+#ifdef KINGPIN_ENGINE
+#ifdef __psp__
+#define	MAX_PARTICLES2	4096
+#else
+#define	MAX_PARTICLES2	6000
+#endif
+#define	MAX_VISIBLE_FLARES	64		// light flares that passed the PVS test
+#define	MAX_SURFLIGHTS		32		// lights that only affect world surfaces
+#endif
 #define	MAX_LIGHTSTYLES	256
 
 #define POWERSUIT_SCALE		4.0
@@ -78,11 +87,54 @@ typedef struct entity_s
 
 	struct image_s	*skin;			// NULL for inline skin
 	int		flags;
+#ifdef KINGPIN_ENGINE
+	int		flags2;					// RF2_*
+
+	// .mdx model parts are added as one entity per part
+	byte	invisible_objects;		// bit set = object hidden
+	byte	skinarray[MAX_MODELPART_OBJECTS];	// per object skins
+	byte	use_skinarray;			// set for .mdx parts
+
+	model_lighting_t	model_lighting;
+
+	float	scale;					// 0 = normal size, drawn at scale + 1
+	qboolean rendered;				// renderer-private: already processed by an entity pass this frame
+#endif
 
 } entity_t;
 
 #define ENTITY_FLAGS  68
 
+#ifdef KINGPIN_ENGINE
+// also used for the visible light flare list
+typedef struct
+{
+	vec3_t	origin;
+	vec3_t	color;
+	float	intensity;
+    int     type;       // 0 = point light; nonzero = segment light toward target
+    vec3_t  target;     // start/target point for a segment light
+} dlight_t;
+
+// lights or darkens world surfaces within radius (fire glow, scorching)
+typedef struct
+{
+	int		reserved;
+	vec3_t	origin;
+	float	radius;
+	float	intensity;				// negative darkens
+	vec3_t	color;
+} surflight_t;
+
+typedef struct
+{
+	vec3_t	origin;
+	int		color;
+	float	alpha;
+	int		type;					// TODO: confirm in ref_gl R_DrawParticles
+	int		frame;
+} particle_t;
+#else
 typedef struct
 {
 	vec3_t	origin;
@@ -96,6 +148,7 @@ typedef struct
 	int		color;
 	float	alpha;
 } particle_t;
+#endif
 
 typedef struct
 {
@@ -125,6 +178,16 @@ typedef struct
 
 	int			num_particles;
 	particle_t	*particles;
+#ifdef KINGPIN_ENGINE
+	int			num_particles2;		// drawn in a separate pass
+	particle_t	*particles2;
+
+	int			num_flares;			// visible light flares
+	dlight_t	*flares;
+
+	int			num_surflights;
+	surflight_t	*surflights;
+#endif
 } refdef_t;
 
 
@@ -158,6 +221,63 @@ typedef struct
 	// are flood filled to eliminate mip map edge errors, and pics have
 	// an implicit "pics/" prepended to the name. (a pic name that starts with a
 	// slash will not use the "pics/" prefix or the ".pcx" postfix)
+#ifdef KINGPIN_ENGINE
+	void	(*BeginRegistration) (char *map);
+	struct model_s *(*RegisterModel) (char *name);
+	struct image_s *(*RegisterSkin) (char *name);
+	struct image_s *(*RegisterPic) (char *name);
+	void	(*SetSky) (char *name);
+	// fog from CS_DENSITY/CS_FOGVAL (and the *2 pair); also loads the
+	// reflection and specular textures
+	void	(*SetFog) (float density, vec3_t color, float density2, vec3_t color2);
+	// CS_MODELSKINS: register a skin for an already registered model
+	void	(*RegisterModelSkin) (struct model_s *model, char *skin);
+	void	(*EndRegistration) (void);
+
+	void	(*ClearRegistered) (void); // ref_gu psp
+
+	void	(*RenderFrame) (refdef_t *fd);
+	void	(*ClearDepth) (void);		// before the rear view mirror view
+
+	void	(*DrawGetPicSize) (int *w, int *h, char *name);	// will return 0 0 if not found
+	void	(*DrawPic) (int x, int y, char *name);
+	void	(*DrawPicTransparent) (int x, int y, char *name, float alpha);
+	void	(*DrawStretchPic) (int x, int y, int w, int h, char *name);
+	void	(*DrawStretchPicTransparent) (int x, int y, int w, int h, char *name, float alpha);
+	void	(*DrawChar) (int x, int y, int c);
+	void	(*DrawCharUpper) (int x, int y, int c);		// maps a-z to A-Z
+	void	(*DrawChar2) (int x, int y, int c);			// second 8x8 font (HUD notes)
+	void	(*DrawBigChar) (int x, int y, int c, float *color);	// 22x22 cells, rgb tint
+	void	(*DrawTileClear) (int x, int y, int w, int h, char *name);
+	void	(*DrawFill) (int x, int y, int w, int h, int c);
+	void	(*DrawFillRGBA) (int x, int y, int w, int h, float r, float g, float b, float a);
+	void	(*DrawLine) (int x0, int y0, int x1, int y1, int c); // ref_gu psp
+	void	(*DrawFadeScreen) (void);
+
+	// Draw images for cinematic rendering (which can have a different palette). Note that calls
+	void	(*DrawStretchRaw) (int x, int y, int w, int h, int cols, int rows, byte *data);
+
+	/*
+	** video mode and refresh state management entry points
+	*/
+	void	(*CinematicSetPalette)( const unsigned char *palette);	// NULL = game palette
+	void	(*BeginFrame)( float camera_separation );
+	void	(*EndFrame) (void);
+
+	void	(*AppActivate)( qboolean activate );
+
+	// sprite effects (fire, smoke, blood splats, flares). flags are SFX_FLAG_*,
+	// unused is ignored by ref_gl. The meaning of lifetime..fadein_time is
+	// inferred from the values kingpin.exe passes (e.g. smoke 0.4, 0.5, 0, 0.2).
+	void	(*AddSFX) (int sprite, int flags, vec3_t origin, vec3_t vel, int unused,
+				float lifetime, float start_alpha, float end_alpha, float fadein_time,
+				float start_width, float end_width, float start_height, float end_height);
+
+	// called by CL_ParseTEnt for TE_FOG_BRUSH but never filled in by
+	// Kingpin's ref_gl (GetRefAPI leaves it as stack garbage)
+	void	*(*Unknown32) (vec3_t origin, int n);
+
+#else
 	void	(*BeginRegistration) (char *map);
 	struct model_s *(*RegisterModel) (char *name);
 	struct image_s *(*RegisterSkin) (char *name);
@@ -189,6 +309,7 @@ typedef struct
 
 	void	(*AppActivate)( qboolean activate );
 
+#endif
 } refexport_t;
 
 //
@@ -241,6 +362,9 @@ typedef struct
 	void	*(*Cache_Check) ( cache_user_t *c );
 	void	 (*Cache_Free) ( cache_user_t *c );
 	void	*(*Cache_Alloc) ( cache_user_t *c, int size, const char *name );
+#ifdef KINGPIN_ENGINE
+	int			(*Com_ServerState) (void);
+#endif
 } refimport_t;
 
 

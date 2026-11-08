@@ -34,6 +34,10 @@ static void	 SpinControl_DoEnter( menulist_s *s );
 static void	 SpinControl_Draw( menulist_s *s );
 static void	 SpinControl_DoSlide( menulist_s *s, int dir );
 
+#ifdef KINGPIN_ENGINE
+void M_Main_Draw (void);
+#endif
+
 #define RCOLUMN_OFFSET  16
 #define LCOLUMN_OFFSET -16
 
@@ -43,7 +47,11 @@ extern viddef_t viddef;
 #define VID_WIDTH viddef.width
 #define VID_HEIGHT viddef.height
 
+#ifdef KINGPIN_ENGINE
+#define Draw_Char(x,y,c) re.DrawCharUpper( VID_WIDTH/5 + (x), (y), (c) )
+#else
 #define Draw_Char re.DrawChar
+#endif
 #define Draw_Fill re.DrawFill
 
 void Action_DoEnter( menuaction_s *a )
@@ -354,13 +362,48 @@ void Menu_Center( menuframework_s *menu )
 	height = ( ( menucommon_s * ) menu->items[menu->nitems-1])->y;
 	height += 10;
 
+#ifdef KINGPIN_ENGINE
+	// kingpin.exe @00435a90: 5/16 of the free space above, then the
+	// menu's own offsets
+	menu->y = menu->yoffset + ( VID_HEIGHT - height ) * 5 / 16;
+	menu->x = menu->x + menu->xoffset;
+#else
 	menu->y = ( VID_HEIGHT - height ) / 2;
+#endif
 }
 
 void Menu_Draw( menuframework_s *menu )
 {
 	int i;
 	menucommon_s *item;
+	int saved_y = menu->y;
+
+#ifdef KINGPIN_ENGINE
+	M_Main_Draw (); // keep the main menu background visible behind submenus
+#endif
+
+	/*
+	** menus taller than the screen (key bindings on a small screen) scroll
+	** so that the item under the cursor stays visible
+	*/
+	if ( menu->nitems > 0 )
+	{
+		int height = ( ( menucommon_s * ) menu->items[menu->nitems-1] )->y + 10;
+		int avail = VID_HEIGHT - 16;	// keep the status bar free
+
+		if ( height > avail )
+		{
+			menucommon_s *cur = ( menucommon_s * ) Menu_ItemAtCursor( menu );
+			int scroll = cur ? cur->y - avail / 2 : 0;
+
+			if ( scroll > height - avail )
+				scroll = height - avail;
+			if ( scroll < 0 )
+				scroll = 0;
+
+			menu->y = 8 - scroll;
+		}
+	}
 
 	/*
 	** draw contents
@@ -426,6 +469,17 @@ void Menu_Draw( menuframework_s *menu )
 	{
 		Menu_DrawStatusBar( menu->statusbar );
 	}
+	menu->y = saved_y;
+#ifdef KINGPIN_ENGINE
+	// ?????
+/*
+	Com_sprintf(version, 64, "v%4.2f", 1.21);
+	for ( i = 0; i < strlen(version); ++i )
+	{
+		dword_482668(dword_4826B8 + 8 * i - 52, dword_4826BC - 12, version[i] + 128);
+	}
+*/
+#endif
 }
 
 void Menu_DrawStatusBar( const char *string )
@@ -437,6 +491,12 @@ void Menu_DrawStatusBar( const char *string )
 		int maxcol = VID_WIDTH / 8;
 		int col = maxcol / 2 - l / 2;
 
+#ifdef KINGPIN_ENGINE
+		// kingpin.exe @00435d00: no clearing when there is no text
+		Draw_Fill( 0, VID_HEIGHT-8, VID_WIDTH, 8, 2 );
+		Menu_DrawString( col*8, VID_HEIGHT - 8, string );
+	}
+#else
 		Draw_Fill( 0, VID_HEIGHT-8, VID_WIDTH, 8, 4 );
 		Menu_DrawString( col*8, VID_HEIGHT - 8, string );
 	}
@@ -444,6 +504,7 @@ void Menu_DrawStatusBar( const char *string )
 	{
 		Draw_Fill( 0, VID_HEIGHT-8, VID_WIDTH, 8, 0 );
 	}
+#endif
 }
 
 void Menu_DrawString( int x, int y, const char *string )
