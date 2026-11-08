@@ -28,7 +28,7 @@ PSP_EBOOT_SFO    = $(BUILDDIR)/PARAM.SFO
 PSP_EBOOT        = $(BUILDDIR)/EBOOT.PBP
 
 BUILD_PRX        = 1
-PSP_LARGE_MEMORY = 0
+PSP_LARGE_MEMORY = 1
 PSP_FW_VERSION   = 660
 
 PSP_BASE_ADDR    = 0x08804000
@@ -60,6 +60,8 @@ STLINK_CFLAGS = -DREF_HARD_LINKED
 OPT_CFLAGS = -DUSE_HASH_FOR_TEXTURES -DUSE_HASH_FOR_SFX -DUSE_HASH_FOR_FILES -DUSE_CACHED_SKY
 
 BASE_CFLAGS = -MD -mno-gpopt -fsingle-precision-constant -fno-math-errno -Dstricmp=strcasecmp $(STLINK_CFLAGS) $(OPT_CFLAGS) -DEXT_VERSION=\"$(PSP_APP_VERSION)\"
+
+BASE_CFLAGS += -DKINGPIN_ENGINE
 
 release_CFLAGS = $(BASE_CFLAGS) -Ofast -falign-loops=2 -falign-jumps=2 -falign-functions=2
 debug_CFLAGS= -g $(BASE_CFLAGS) -DUSE_STDIN -DDEBUG
@@ -189,14 +191,14 @@ package:
 QUAKE2_OBJS = \
 	$(CLIENT_DIR)/cl_cin.o \
 	$(CLIENT_DIR)/cl_ents.o \
-	$(CLIENT_DIR)/cl_fx.o \
+	$(CLIENT_DIR)/cl_kpfx.o \
 	$(CLIENT_DIR)/cl_input.o \
 	$(CLIENT_DIR)/cl_inv.o \
 	$(CLIENT_DIR)/cl_main.o \
 	$(CLIENT_DIR)/cl_newfx.o \
 	$(CLIENT_DIR)/cl_parse.o \
 	$(CLIENT_DIR)/cl_pred.o \
-	$(CLIENT_DIR)/cl_tent.o \
+	$(CLIENT_DIR)/cl_kptent.o \
 	$(CLIENT_DIR)/cl_scrn.o \
 	$(CLIENT_DIR)/cl_view.o \
 	$(CLIENT_DIR)/console.o \
@@ -238,8 +240,9 @@ QUAKE2_OBJS = \
 	\
 	$(SHARED_DIR)/q_shared.o \
 	$(SHARED_DIR)/BOPS.o \
-	$(SHARED_DIR)/m_flash.o \
 	$(COMMON_DIR)/pmove.o
+
+#$(SHARED_DIR)/m_flash.o \
 
 VAUDIO_OBJS = $(PSP_DIR)/snd_psp_vaudio.o
 CDMP3_OBJS = $(PSP_DIR)/cd_mp3.o
@@ -461,8 +464,10 @@ REF_GU_OBJS = \
 	$(REF_GU_DIR)/gu_image.o \
 	$(REF_GU_DIR)/gu_light.o \
 	$(REF_GU_DIR)/gu_mesh.o \
+	$(REF_GU_DIR)/gu_mesh_mdx.o \
 	$(REF_GU_DIR)/gu_model.o \
 	$(REF_GU_DIR)/gu_rmain.o \
+	$(REF_GU_DIR)/gu_sfx.o \
 	$(REF_GU_DIR)/gu_rmisc.o \
 	$(REF_GU_DIR)/gu_rsurf.o \
 	$(REF_GU_DIR)/gu_warp.o
