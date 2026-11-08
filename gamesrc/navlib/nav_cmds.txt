@@ -1,0 +1,32 @@
+nav_aipath -:
+Display an orange trail between the following AI cast and the player, using navigation data availables for that level (default: 0)
+
+nav_debug -:
+When set to '1', will display navigation nodes info when nav_dynamic or nav_aipath is on (default: 0)
+
+nav_dynamic -:
+When set to '1', player moves are used to place navigation nodes in the map (default: 0)
+
+nav_optimize -:
+(default: 1000)
+called by NAV_OptimizeRoutes(active_node_data_t *active_node_data) only used when nav_dynamic is on.
+
+nav_debug_dest -:
+Same as av_debug_showpath or nav_showpath but doesn't show path.
+
+nav_debug_showpath -:
+Alias for 'nav_showpath'
+
+nav_showpath -:
+Creates a dummy character model at current position. 
+When moving around, an orange trail is drawn from that dummy to the current position, using the navigation data availables for that level. 
+It's very useful to know what path characters will use to reach their goal.
+
+nav_save -:
+Save available navigation data for current map in NAVDATA/[LEVELNAME].NAV
+
+nav_clear -:
+Erase the navigation file for current map in NAVDATA/[LEVELNAME].NAV and shutdown server.
+
+nav_rebuild -:
+Rebuild nodes

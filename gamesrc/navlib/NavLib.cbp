@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes" ?>
+<CodeBlocks_project_file>
+	<FileVersion major="1" minor="6" />
+	<Project>
+		<Option title="Navlib" />
+		<Option pch_mode="2" />
+		<Option compiler="microsoft_visual_c_60" />
+		<Build>
+			<Target title="Debug">
+				<Option output="bin/Debug/Navlib" prefix_auto="1" extension_auto="1" />
+				<Option working_dir="" />
+				<Option object_output="obj/Debug/" />
+				<Option type="2" />
+				<Option compiler="microsoft_visual_c_60" />
+				<Option createDefFile="1" />
+				<Compiler>
+					<Add option="/W3" />
+					<Add option="/Zi" />
+					<Add option="/D_DEBUG" />
+				</Compiler>
+				<Linker>
+					<Add option="/DEBUG" />
+				</Linker>
+			</Target>
+			<Target title="Release">
+				<Option output="bin/Release/Navlib" prefix_auto="1" extension_auto="1" />
+				<Option working_dir="" />
+				<Option object_output="obj/Release/" />
+				<Option type="2" />
+				<Option compiler="microsoft_visual_c_60" />
+				<Option createDefFile="1" />
+				<Compiler>
+					<Add option="/MT" />
+					<Add option="/G5" />
+					<Add option="/GX" />
+					<Add option="/O2" />
+					<Add option="/W3" />
+					<Add option="/nologo" />
+					<Add option="/YX" />
+					<Add option="/DWIN32" />
+					<Add option="/DNDEBUG" />
+					<Add option="/D_WINDOWS" />
+				</Compiler>
+				<Linker>
+				</Linker>
+			</Target>
+		</Build>
+		<Unit filename="g_nav.c">
+			<Option compilerVar="CC" />
+		</Unit>
+		<Unit filename="g_nav.h" />
+		<Unit filename="g_nav_cells.c">
+			<Option compilerVar="CC" />
+		</Unit>
+		<Unit filename="g_nav_io.c">
+			<Option compilerVar="CC" />
+		</Unit>
+		<Unit filename="g_nav_misc.c">
+			<Option compilerVar="CC" />
+		</Unit>
+		<Extensions>
+			<lib_finder disable_auto="1" />
+		</Extensions>
+	</Project>
+</CodeBlocks_project_file>
