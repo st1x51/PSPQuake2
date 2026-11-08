@@ -76,29 +76,30 @@ extern	viddef_t	vid;
 #define IMG_TYPE_WALL			0x00000002
 #define IMG_TYPE_PIC			0x00000004
 #define IMG_TYPE_SKY			0x00000008
-#define IMG_TYPE_LM				0x00000010
-#define IMG_TYPE_MASK			0x0000001f
+#define IMG_TYPE_SFX			0x00000010
+#define IMG_TYPE_LM				0x00000020
+#define IMG_TYPE_MASK			0x0000003f
 
 #define IMG_FORMAT_IND_32       0x00000000	// default
-#define IMG_FORMAT_IND_24       0x00000020
-#define IMG_FORMAT_RGBA_8888	0x00000040
-#define IMG_FORMAT_RGBA_4444    0x00000080
-#define IMG_FORMAT_RGBA_5551    0x00000100
-#define IMG_FORMAT_RGB_5650     0x00000200
-#define IMG_FORMAT_MASK			0x000003e0
+#define IMG_FORMAT_IND_24       0x00000040
+#define IMG_FORMAT_RGBA_8888	0x00000080
+#define IMG_FORMAT_RGBA_4444    0x00000100
+#define IMG_FORMAT_RGBA_5551    0x00000200
+#define IMG_FORMAT_RGB_5650     0x00000400
+#define IMG_FORMAT_MASK			0x000007c0
 
 #define IMG_FILTER_LINEAR		0x00000000	// default
-#define IMG_FILTER_NEAREST		0x00000400
-#define IMG_FILTER_MASK			0x00000400
+#define IMG_FILTER_NEAREST		0x00000800
+#define IMG_FILTER_MASK			0x00000800
 
-#define IMG_FLAG_INVRAM			0x00000800
-#define IMG_FLAG_SWIZZLED		0x00001000
-#define IMG_FLAG_SCRAP			0x00002000
-#define IMG_FLAG_HAS_ALPHA		0x00004000
-#define IMG_FLAG_DYNAMIC		0x00008000
-#define IMG_FLAG_EXTERNAL		0x00010000
-#define IMG_FLAG_PALETTED		0x00020000
-#define IMG_FLAG_MASK			0x0003f800
+#define IMG_FLAG_INVRAM			0x00001000
+#define IMG_FLAG_SWIZZLED		0x00002000
+#define IMG_FLAG_SCRAP			0x00004000
+#define IMG_FLAG_HAS_ALPHA		0x00008000
+#define IMG_FLAG_DYNAMIC		0x00010000
+#define IMG_FLAG_EXTERNAL		0x00020000
+#define IMG_FLAG_PALETTED		0x00040000
+#define IMG_FLAG_MASK			0x0007f800
 
 #define IMG_IS_IND(image)		(!((image)->flags & IMG_FORMAT_MASK) || ((image)->flags & IMG_FORMAT_IND_24))
 
@@ -107,6 +108,7 @@ extern	viddef_t	vid;
 #define IMG_IS_WALL(image)		((image)->flags & IMG_TYPE_WALL)
 #define IMG_IS_PIC(image)		((image)->flags & IMG_TYPE_PIC)
 #define IMG_IS_SKY(image)		((image)->flags & IMG_TYPE_SKY)
+#define IMG_IS_SFX(image)		((image)->flags & IMG_TYPE_SFX)
 #define IMG_IS_LM(image)		((image)->flags & IMG_TYPE_LM)
 
 typedef struct image_s
@@ -116,6 +118,9 @@ typedef struct image_s
 	short		uplwidth, uplheight;	// after power of two and picmip
 
 	byte		*data;
+#ifdef KINGPIN_ENGINE
+	byte		*palette;
+#endif
 
 	int			format;
 	uint		flags;
@@ -127,7 +132,6 @@ typedef struct image_s
 	size_t		size;
 	byte		bpp;
 
-	unsigned int	pkt[6];
 #ifdef USE_HASH_FOR_TEXTURES
 	uint		hashkey;
 	struct image_s		*nexthash;
@@ -139,6 +143,9 @@ typedef struct image_s
 #define	MAX_GLTEXTURES_HASH	(MAX_GLTEXTURES >> 2)
 #define	MAX_LIGHTMAPS		128
 #define	MAX_VLIGHTS			3
+#ifdef KINGPIN_ENGINE
+#define MAX_SFX_SPRITES		256
+#endif
 //===================================================================
 
 typedef enum
@@ -169,6 +176,13 @@ extern	int			numgltextures;
 
 extern	image_t		*r_notexture;
 extern	image_t		*r_particletexture;
+#ifdef KINGPIN_ENGINE
+extern	image_t		*r_reflectiontexture;
+extern	image_t		*r_speculartexture;
+extern	image_t		*r_firescreentexture;
+
+extern	image_t		*r_worldreflectiontexture;
+#endif
 extern	entity_t	*currententity;
 extern	model_t		*currentmodel;
 extern	int			r_visframecount;
@@ -226,6 +240,29 @@ extern	cvar_t	*gl_flashblend;
 extern  cvar_t  *gl_saturatelighting;
 extern  cvar_t  *gl_lockpvs;
 
+#ifdef KINGPIN_ENGINE
+extern cvar_t	*r_detail_alpha;
+extern cvar_t	*r_detail_scale;
+extern cvar_t	*r_detail_dist;
+extern cvar_t	*r_directional_lighting;
+extern cvar_t	*r_showbbox;
+extern cvar_t	*gl_fog;
+extern cvar_t	*gl_reflections;
+extern cvar_t	*gl_specular;
+extern cvar_t	*gl_test_specular;
+extern cvar_t	*r_sfx_pause;
+extern cvar_t	*r_debug_lighting;
+extern cvar_t	*r_painskins;
+extern cvar_t	*gl_maxtexsize;
+extern cvar_t	*burn_enabled;
+extern cvar_t	*burn_r;
+extern cvar_t	*burn_g;
+extern cvar_t	*burn_b;
+
+extern image_t	*kp_world_reflection_image;
+extern qboolean	gl_specular_texture_upload;
+#endif
+
 extern	cvar_t	*vid_fullscreen;
 extern	cvar_t	*vid_gamma;
 
@@ -236,6 +273,10 @@ extern	int		c_visible_textures;
 
 extern	ScePspFMatrix4	r_world_matrix;
 
+#ifdef KINGPIN_ENGINE
+extern vec3_t pointcolor;
+#endif
+
 void R_TranslatePlayerSkin (int playernum);
 void GL_Bind (image_t *image);
 void GL_TexEnv (int mode);
@@ -244,6 +285,12 @@ void R_LightPoint (vec3_t p, vec3_t color);
 void R_GetWorldLight (vec3_t p, vec3_t color);
 void R_GetBestDynamicLights (float *origin, dlight_t **lights, int *count);
 void R_PushDlights (void);
+#ifdef KINGPIN_ENGINE
+void R_PushSurfaceLights (void);
+
+int RecursiveLightPoint (mnode_t *node, vec3_t start, vec3_t end);
+void R_ApplyPointFileSurfaceLight (model_t *model, surflight_t *light);
+#endif
 
 //====================================================================
 
@@ -262,12 +309,19 @@ void		R_Shutdown (void);
 void R_RenderView (refdef_t *fd);
 void GL_ScreenShot_f (void);
 void R_DrawAliasModel (entity_t *e);
+#ifdef KINGPIN_ENGINE
+void R_UpdateMdxSFXIntervalMask (void);
+void R_DrawMDXModel (entity_t *e, int mapmode);
+#endif
 void R_DrawBrushModel (entity_t *e);
 void R_DrawSpriteModel (entity_t *e);
 void R_DrawBeam( entity_t *e );
 void R_DrawWorld (void);
 void R_RenderDlights (void);
 void R_DrawAlphaSurfaces (void);
+#ifdef KINGPIN_ENGINE
+void R_DrawReflectionsSurfaces (void);
+#endif
 void R_RenderBrushPoly (msurface_t *fa);
 void R_InitParticleTexture (void);
 void Draw_InitLocal (void);
@@ -307,6 +361,15 @@ void	Draw_Line (int x0, int y0, int x1, int y1, int c);
 void	Draw_FadeScreen (void);
 void	Draw_StretchRaw (int x, int y, int w, int h, int cols, int rows, byte *data);
 
+#ifdef KINGPIN_ENGINE
+void	Draw_PicTransparent (int x, int y, char *name, float alpha);
+void	Draw_StretchPicTransparent (int x, int y, int w, int h, char *name, float alpha);
+void	Draw_CharUpper (int x, int y, int c);
+void	Draw_Char2 (int x, int y, int c);
+void	Draw_BigChar (int x, int y, int c, float *color);
+void	Draw_FillRGBA (int x, int y, int w, int h, float r, float g, float b, float a);
+#endif
+
 void	R_BeginFrame( float camera_separation );
 void	R_SwapBuffers( int );
 void	R_SetPalette ( const unsigned char *palette);
@@ -314,10 +377,14 @@ void	R_SetPalette ( const unsigned char *palette);
 int		Draw_GetPalette (void);
 
 struct image_s *R_RegisterSkin (char *name);
+#ifdef KINGPIN_ENGINE
+void R_RegisterModelSkin (struct model_s *model, char *skin);
+#endif
 
 void LoadPCX (char *filename, byte **pic, byte **palette, int *width, int *height);
 image_t *GL_LoadPic (char *name, byte *pic, int width, int height, int flags);
 image_t	*GL_FindImage (char *name, int flags);
+void	GL_LogMissingSkin (const char *model, const char *skin);
 void	GL_TextureMode( char *string );
 void	GL_ImageList_f (void);
 
@@ -337,6 +404,29 @@ void GL_ResampleTexture8 (const byte *src, int inwidth, int inheight, byte *dst,
 void GL_PixelConverter (byte *dst, const byte *src, int width, int height, int informat, int outformat);
 qboolean GL_UpdateTexture (image_t *image, int xoff, int yoff, int width, int height, const void *buffer);
 void GL_BuildGammaTable (float gamma, float intensity);
+
+//
+// gu_sfx.c
+//
+#ifdef KINGPIN_ENGINE
+extern image_t *r_sfx_images[];
+
+float R_SFXTime (void);
+float R_SFXFramerate (void);
+
+void R_UpdateSFXTime (void);
+void R_ClearSFX (void);
+void R_ResetSFXLists (void);
+void R_InitSFX (void);
+void R_DrawSFX (void);
+void R_AddSFX (int sprite, int flags, vec3_t origin, vec3_t vel, int unused,
+			float lifetime, float start_alpha, float end_alpha, float fadein_time,
+			float start_width, float end_width, float start_height, float end_height);
+
+void R_SetDeferredSFX (int sprite, float alpha, vec3_t center,
+		vec3_t axis0, vec3_t axis1, float half_width, float half_height);
+void R_DrawDeferredSFX (void);
+#endif
 
 //
 // gu_clipping.c
@@ -372,9 +462,17 @@ void GU_Clip (gu_vert_ftv_t *uv, int uvc, gu_vert_ftv_t **cv, int* cvc);
 /*
 ** GL extension emulation functions
 */
-void GL_DrawParticles( int n, const particle_t particles[] );
 
-
+#ifdef KINGPIN_ENGINE
+typedef struct
+{
+	float		near;
+	float		far;
+	uint		color;
+	qboolean	enabled;
+	qboolean	modified;
+} fog_t;
+#endif
 
 typedef struct
 {
@@ -395,6 +493,11 @@ typedef struct
 
 	byte	gammatable[256];
 	byte	intensitytable[256];
+#ifdef KINGPIN_ENGINE
+	fog_t	fog;
+	byte	*screenpalette;
+	byte	*currentpalette;
+#endif
 } glstate_t;
 
 extern glstate_t	gl_state;

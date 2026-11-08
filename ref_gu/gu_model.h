@@ -65,7 +65,12 @@ typedef struct
 #define SURF_DRAWTURB		0x10
 #define SURF_DRAWBACKGROUND	0x40
 #define SURF_UNDERWATER		0x80
+#ifdef KINGPIN_ENGINE
+#define SURF_LIGHTDIRTY		0x100	/* samples changed by a surflight */
+#define SURF_NEEDS_CLIP		0x200
+#else
 #define SURF_NEEDS_CLIP		0x100
+#endif
 
 // !!! if this is changed, it must be changed in asm_draw.h too !!!
 typedef struct
@@ -116,6 +121,9 @@ typedef struct msurface_s
 	glpoly_t	*polys;				// multiple if warped
 	struct	msurface_s	*texturechain;
 	struct  msurface_s	*lightmapchain;
+#ifdef KINGPIN_ENGINE
+	struct  msurface_s	*reflectchain;
+#endif
 
 	mtexinfo_t	*texinfo;
 
@@ -175,7 +183,7 @@ typedef struct mleaf_s
 //
 typedef enum {nl_unreferenced, nl_needs_loaded, nl_present} needload_t;
 
-typedef enum {mod_bad, mod_brush, mod_sprite, mod_alias } modtype_t;
+typedef enum {mod_bad, mod_brush, mod_sprite, mod_alias, mod_mdx } modtype_t;
 
 typedef struct model_s
 {
@@ -242,7 +250,11 @@ typedef struct model_s
 	byte		*lightdata;
 
 	// for alias models and skins
+#ifdef KINGPIN_ENGINE
+	image_t		*skins[MAX_MDXSKINS];
+#else
 	image_t		*skins[MAX_MD2SKINS];
+#endif
 
 //
 // additional model data

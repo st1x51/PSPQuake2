@@ -28,6 +28,9 @@ char	loadname[32];	// for hunk tags
 void Mod_LoadSpriteModel (model_t *mod, void *buffer);
 void Mod_LoadBrushModel (model_t *mod, void *buffer);
 void Mod_LoadAliasModel (model_t *mod, void *buffer);
+#ifdef KINGPIN_ENGINE
+void Mod_LoadMdxModel (model_t *mod, void *buffer);
+#endif
 model_t *Mod_LoadModel (model_t *mod, qboolean crash);
 
 byte	mod_novis[MAX_MAP_LEAFS/8];
@@ -239,7 +242,7 @@ model_t *Mod_FindName (char *name)
 			break; // this is a valid spot
 
 		if (mod->needload == nl_unreferenced)
-			if (!avail || mod->type != mod_alias)
+			if (!avail || (mod->type != mod_alias && mod->type != mod_mdx))
 				avail = mod;
 	}
 
@@ -250,7 +253,7 @@ model_t *Mod_FindName (char *name)
 			if (avail)
 			{
 				mod = avail;
-				if (mod->type == mod_alias)
+				if (mod->type == mod_alias || mod->type == mod_mdx)
 					if (ri.Cache_Check (&mod->cache))
 						ri.Cache_Free (&mod->cache);
 			}
@@ -277,7 +280,7 @@ model_t *Mod_LoadModel (model_t *mod, qboolean crash)
 {
 	void	*buf;
 
-	if (mod->type == mod_alias)
+	if (mod->type == mod_alias || mod->type == mod_mdx)
 	{
 		if (ri.Cache_Check (&mod->cache))
 		{
@@ -321,6 +324,12 @@ model_t *Mod_LoadModel (model_t *mod, qboolean crash)
 	case IDALIASHEADER:
 		Mod_LoadAliasModel (mod, buf);
 		break;
+
+#ifdef KINGPIN_ENGINE
+	case IDMDXHEADER:
+		Mod_LoadMdxModel (mod, buf);
+		break;
+#endif
 
 	case IDSPRITEHEADER:
 		Mod_LoadSpriteModel (mod, buf);
@@ -555,7 +564,11 @@ void Mod_LoadTexinfo (lump_t *l)
 			out->next = loadmodel->texinfo + next;
 		else
 		    out->next = NULL;
+#ifdef KINGPIN_ENGINE
+		Com_sprintf (name, sizeof(name), "textures/%s.tga", in->texture);
+#else
 		Com_sprintf (name, sizeof(name), "textures/%s.wal", in->texture);
+#endif
 
 		out->image = GL_FindImage (name, IMG_TYPE_WALL);
 		if (!out->image)
@@ -929,6 +942,58 @@ void Mod_LoadPlanes (lump_t *l)
 	}
 }
 
+#ifdef KINGPIN_ENGINE
+/*
+=================
+Mod_LoadSurflights
+
+Retail FUN_1000b980: bake optional 18-byte .pnt light records into
+this map's light samples after all BSP surfaces and nodes exist.
+=================
+*/
+void Mod_LoadSurflights (model_t *mod)
+{
+	char		pntname[MAX_QPATH];
+	char		*extension;
+	byte		*pntdata;
+	int			pntlen, offset, axis;
+	surflight_t	light;
+	float		value;
+
+	Com_sprintf (pntname, sizeof(pntname), "%s", mod->name);
+	extension = strstr (pntname, ".bsp");
+
+	if (extension)
+	{
+		strcpy (extension + 1, "pnt");
+		pntdata = ri.FS_LoadFile (pntname, &pntlen, FS_PATH_ALL | FS_FLAG_MTEMP);
+		if (pntdata && pntlen > 0)
+		{
+			for (offset = 0; offset + 18 <= pntlen; offset += 18)
+			{
+				memset (&light, 0, sizeof(light));
+
+				for (axis = 0; axis < 3; axis++)
+				{
+					memcpy (&value, pntdata + offset + axis * 4,
+						sizeof(value));
+					light.origin[axis] = LittleFloat (value);
+				}
+
+				light.radius = (float)pntdata[offset + 12];
+				light.color[0] = pntdata[offset + 14] * (1.0f / 255.0f);
+				light.color[1] = pntdata[offset + 15] * (1.0f / 255.0f);
+				light.color[2] = pntdata[offset + 16] * (1.0f / 255.0f);
+				light.intensity = (pntdata[offset + 17] - 127.0f) * (1.0f / 127.0f);
+
+				R_ApplyPointFileSurfaceLight (mod, &light);
+			}
+			//ri.FS_FreeFile (pntdata); // FS_FLAG_MTEMP
+		}
+	}
+}
+#endif
+
 /*
 =================
 Mod_LoadBrushModel
@@ -999,6 +1064,9 @@ void Mod_LoadBrushModel (model_t *mod, void *buffer)
 
 		starmod->numleafs = bm->visleafs;
 	}
+#ifdef KINGPIN_ENGINE
+	Mod_LoadSurflights (mod);
+#endif
 }
 
 /*
@@ -1145,6 +1213,183 @@ void Mod_LoadAliasModel (model_t *mod, void *buffer)
 	ri.Hunk_FreeToLowMark (start);
 }
 
+#ifdef KINGPIN_ENGINE
+/*
+=================
+Mod_LoadMdxModel
+
+Loads Kingpin's IDPX version 4 alias format.  MDX keeps MD2 frame and GL
+vertex records, but every GL primitive has an extra sub-object dword.
+=================
+*/
+static qboolean Mod_MdxUsesExternalSkins (const char *name)
+{
+	if (!strstr (name, "actors") && !strstr (name, "players"))
+		return false;
+
+	return strstr (name, "head.mdx") != NULL ||
+		strstr (name, "legs.mdx") != NULL ||
+		strstr (name, "body.mdx") != NULL ||
+		strstr (name, "bald_head.mdx") != NULL ||
+		strstr (name, "ski_head.mdx") != NULL ||
+		strstr (name, "weld_head.mdx") != NULL;
+}
+
+void Mod_LoadMdxModel (model_t *mod, void *buffer)
+{
+	dmdx_t				*in, *out;
+	dmdx_sfxdef_t		*insfxdef, *outsfxdef;
+	dmdx_sfxentry_t		*insfxentry, *outsfxentry;
+	daliasframe_t		*inframe, *outframe;
+	dtriangle_t			*intri, *outtri;
+	int					*incmd, *outcmd;
+	float				*inbounds, *outbounds;
+	int					i, j, version, size;
+	int					start, end, total;
+
+	start = ri.Hunk_LowMark ();
+
+	in = (dmdx_t *)buffer;
+	version = LittleLong (in->version);
+	if (version != MDX_VERSION)
+		ri.Sys_Error (ERR_DROP, "%s has wrong version number (%i should be %i)",
+			mod->name, version, MDX_VERSION);
+
+	size = LittleLong (in->ofs_end);
+	if (size < (int)sizeof(dmdx_t) || size > modfilelen)
+		ri.Sys_Error (ERR_DROP, "model %s has a bad MDX file size", mod->name);
+
+	out = ri.Hunk_AllocName (size, loadname);
+
+	memcpy (out, in, size);
+	for (i = 0; i < sizeof(dmdx_t) / 4; i++)
+		((int *)out)[i] = LittleLong (((int *)in)[i]);
+
+	if (out->skinheight > MAX_LBM_HEIGHT)
+		ri.Sys_Error (ERR_DROP, "model %s has a skin taller than %d", mod->name,
+			MAX_LBM_HEIGHT);
+
+	if (out->num_xyz <= 0 || out->num_xyz > MAX_VERTS)
+		ri.Sys_Error (ERR_DROP, "model %s has invalid vertex count %i", mod->name,
+			out->num_xyz);
+
+	/* Retail MDX only requires a positive frame count.  Actor models shipped
+	 * with Kingpin contain up to 1024 frames, well beyond Quake II's MD2 cap. */
+	if (out->num_frames <= 0)
+		ri.Sys_Error (ERR_DROP, "model %s has invalid frame count %i", mod->name, out->num_frames);
+
+	if (out->num_skins < 0 || out->num_skins > MAX_MDXSKINS)
+		ri.Sys_Error (ERR_DROP, "model %s has invalid skin count %i", mod->name, out->num_skins);
+
+	if (out->num_sfxdefs < 0 || out->num_sfxentries < 0 || out->num_subobjects < 0)
+		ri.Sys_Error (ERR_DROP, "model %s has invalid MDX SFX counts", mod->name);
+
+	if (out->framesize < 40 + out->num_xyz * (int)sizeof(dtrivertx_t))
+		ri.Sys_Error (ERR_DROP, "model %s has an invalid MDX frame size", mod->name);
+
+	if (out->ofs_skins < (int)sizeof(dmdx_t) ||
+		out->ofs_frames < 0 || out->ofs_glcmds < 0 ||
+		out->ofs_frames + out->num_frames * out->framesize > size ||
+		out->ofs_glcmds + out->num_glcmds * 4 > size ||
+		out->ofs_skins + out->num_skins * MAX_SKINNAME > size ||
+		out->ofs_vertexinfo < 0 || out->ofs_vertexinfo > size ||
+		out->num_xyz > (size - out->ofs_vertexinfo) / (int)sizeof(int) ||
+		out->ofs_sfxdefs < 0 || out->ofs_sfxdefs > size ||
+		out->num_sfxdefs > (size - out->ofs_sfxdefs) / (int)sizeof(dmdx_sfxdef_t) ||
+		out->ofs_sfxentries < 0 || out->ofs_sfxentries > size ||
+		out->num_sfxentries > (size - out->ofs_sfxentries) / (int)sizeof(dmdx_sfxentry_t) ||
+		out->ofs_bbox_frames < 0 || out->ofs_bbox_frames > size ||
+		out->num_subobjects > (size - out->ofs_bbox_frames) / (int)(6 * sizeof(float)) ||
+		(out->num_subobjects > 0 &&
+		 out->num_frames > (size - out->ofs_bbox_frames) /
+		 ((int)(6 * sizeof(float)) * out->num_subobjects)))
+		ri.Sys_Error (ERR_DROP, "model %s has invalid MDX offsets", mod->name);
+
+	intri = (dtriangle_t *)((byte *)in + out->ofs_tris);
+	outtri = (dtriangle_t *)((byte *)out + out->ofs_tris);
+	if (out->ofs_tris < 0 || out->ofs_tris + out->num_tris * (int)sizeof(*outtri) > size)
+		ri.Sys_Error (ERR_DROP, "model %s has invalid MDX triangles", mod->name);
+
+	for (i = 0; i < out->num_tris; i++)
+	{
+		for (j = 0; j < 3; j++)
+		{
+			outtri[i].index_xyz[j] = LittleShort (intri[i].index_xyz[j]);
+			outtri[i].index_st[j] = LittleShort (intri[i].index_st[j]);
+		}
+	}
+
+	for (i = 0; i < out->num_frames; i++)
+	{
+		inframe = (daliasframe_t *)((byte *)in + out->ofs_frames + i * out->framesize);
+		outframe = (daliasframe_t *)((byte *)out + out->ofs_frames + i * out->framesize);
+		for (j = 0; j < 3; j++)
+		{
+			outframe->scale[j] = LittleFloat (inframe->scale[j]);
+			outframe->translate[j] = LittleFloat (inframe->translate[j]);
+		}
+	}
+
+	incmd = (int *)((byte *)in + out->ofs_glcmds);
+	outcmd = (int *)((byte *)out + out->ofs_glcmds);
+	for (i = 0; i < out->num_glcmds; i++)
+		outcmd[i] = LittleLong (incmd[i]);
+
+	incmd = (int *)((byte *)in + out->ofs_vertexinfo);
+	outcmd = (int *)((byte *)out + out->ofs_vertexinfo);
+	for (i = 0; i < out->num_xyz; i++)
+		outcmd[i] = LittleLong (incmd[i]);
+
+	insfxdef = (dmdx_sfxdef_t *)((byte *)in + out->ofs_sfxdefs);
+	outsfxdef = (dmdx_sfxdef_t *)((byte *)out + out->ofs_sfxdefs);
+	for (i = 0; i < out->num_sfxdefs; i++)
+		for (j = 0; j < sizeof(*outsfxdef) / 4; j++)
+			((int *)&outsfxdef[i])[j] = LittleLong (((int *)&insfxdef[i])[j]);
+
+	insfxentry = (dmdx_sfxentry_t *)((byte *)in + out->ofs_sfxentries);
+	outsfxentry = (dmdx_sfxentry_t *)((byte *)out + out->ofs_sfxentries);
+	for (i = 0; i < out->num_sfxentries; i++)
+	{
+		outsfxentry[i].anchor = LittleLong (insfxentry[i].anchor);
+		outsfxentry[i].definition = LittleLong (insfxentry[i].definition);
+		outsfxentry[i].anchor_mode = LittleLong (insfxentry[i].anchor_mode);
+	}
+
+	inbounds = (float *)((byte *)in + out->ofs_bbox_frames);
+	outbounds = (float *)((byte *)out + out->ofs_bbox_frames);
+	for (i = 0; i < out->num_subobjects * out->num_frames * 6; i++)
+		outbounds[i] = LittleFloat (inbounds[i]);
+
+	mod->type = mod_mdx;
+	if (!Mod_MdxUsesExternalSkins (mod->name))
+	{
+		for (i = 0; i < out->num_skins; i++)
+		{
+			char *skinname = (char *)out + out->ofs_skins + i * MAX_SKINNAME;
+			mod->skins[i] = GL_FindImage (skinname, /*it_skin_external*/IMG_TYPE_SKIN);
+			if (!mod->skins[i])
+				GL_LogMissingSkin (mod->name, skinname);
+		}
+	}
+
+	VectorSet (mod->mins, -32, -32, -32);
+	VectorSet (mod->maxs, 32, 32, 32);
+
+	//
+	// move the complete, relocatable alias model to the cache
+	//
+	end = ri.Hunk_LowMark ();
+	total = end - start;
+
+	ri.Cache_Alloc (&mod->cache, total, loadname);
+	if (!mod->cache.data)
+		return;
+	memcpy (mod->cache.data, out, total);
+
+	ri.Hunk_FreeToLowMark (start);
+}
+#endif
+
 /*
 ==============================================================================
 
@@ -1235,6 +1480,8 @@ struct model_s *R_RegisterModel (char *name)
 	mod = Mod_ForName (name, false);
 	if (mod)
 	{
+		// mdx has a different header (dmdx_t) and its skins are already
+		// loaded in Mod_LoadMdxModel, don't parse it as md2 here
 		if (mod->type == mod_alias)
 		{
 			pheader = (dmdl_t *)Mod_Extradata (mod);
@@ -1292,7 +1539,7 @@ void Mod_Free (model_t *mod)
 		return;
 
 	mod->needload = nl_unreferenced;
-	if (mod->type == mod_alias)
+	if (mod->type == mod_alias || mod->type == mod_mdx)
 	{
 		if (mod != &mod_known[0]) // worldmodel slot?
 			return;

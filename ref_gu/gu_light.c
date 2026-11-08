@@ -216,6 +216,77 @@ void R_MarkLights (dlight_t *light, int bit, mnode_t *node)
 	}
 }
 
+#ifdef KINGPIN_ENGINE
+/*
+=============
+R_MarkDirectionalLight
+
+Retail FUN_10004f70: mark surfaces crossed by a directional-light segment.
+=============
+*/
+static int R_MarkDirectionalLight (mnode_t *node, vec3_t start, vec3_t end, int bit)
+{
+	float		front, back, frac;
+	vec3_t		mid;
+	int			side, i, result;
+	msurface_t	*surf;
+
+	if (node->contents != -1)
+		return -1;
+
+	front = DotProduct (start, node->plane->normal) - node->plane->dist;
+	back = DotProduct (end, node->plane->normal) - node->plane->dist;
+	side = front < 0;
+
+	if ((back < 0) == side)
+		return R_MarkDirectionalLight (node->children[side], start, end, bit);
+
+	frac = front / (front - back);
+	for (i = 0; i < 3; i++)
+		mid[i] = start[i] + (end[i] - start[i]) * frac;
+
+	result = R_MarkDirectionalLight (node->children[side], start, mid, bit);
+	if (result >= 0)
+		return result;
+	if ((back < 0) == side)
+		return -1;
+
+	surf = r_worldmodel->surfaces + node->firstsurface;
+	for (i = 0; i < node->numsurfaces; i++, surf++)
+	{
+		if (surf->flags & (SURF_DRAWSKY | SURF_DRAWTURB))
+			continue;
+
+		if (!surf->samples)
+			continue;
+
+		if (surf->dlightframe != r_dlightframecount)
+		{
+			surf->dlightbits = 0;
+			surf->dlightframe = r_dlightframecount;
+		}
+		surf->dlightbits |= bit;
+	}
+
+	return R_MarkDirectionalLight (node->children[!side], mid, end, bit);
+}
+
+/*
+=============
+R_PushDirectionalLight
+=============
+*/
+static void R_PushDirectionalLight (dlight_t *light, int bit)
+{
+	vec3_t end;
+
+	VectorScale (light->origin, 2.0f, end);
+	VectorSubtract (end, light->target, end);
+
+	R_MarkDirectionalLight (r_worldmodel->nodes, light->target, end, bit);
+}
+#endif
+
 
 /*
 =============
@@ -234,8 +305,146 @@ void R_PushDlights (void)
 											//  advanced yet for this frame
 	l = r_newrefdef.dlights;
 	for (i=0 ; i<r_newrefdef.num_dlights ; i++, l++)
+	{
+#ifdef KINGPIN_ENGINE
+		if (l->type)
+			R_PushDirectionalLight (l, 1 << i);
+		else
+#endif
 		R_MarkLights ( l, 1<<i, r_worldmodel->nodes );
+	}
 }
+
+#ifdef KINGPIN_ENGINE
+/*
+=============
+R_PushDlights
+
+Retail FUN_100061c0: permanently alter the BSP light samples under a mark.
+=============
+*/
+static void R_ApplySurfaceLight (surflight_t *light, msurface_t *surf, float plane_dist)
+{
+	vec3_t	impact;
+	float	local_s, local_t;
+	int		smax, tmax, map, s, t;
+	byte	*samples;
+
+	if (!surf->samples || light->radius <= 0)
+		return;
+
+	smax = (surf->extents[0] >> 4) + 1;
+	tmax = (surf->extents[1] >> 4) + 1;
+
+	VectorMA (light->origin, -plane_dist, surf->plane->normal, impact);
+
+	local_s = DotProduct (impact, surf->texinfo->vecs[0]) +
+		surf->texinfo->vecs[0][3] - surf->texturemins[0];
+	local_t = DotProduct (impact, surf->texinfo->vecs[1]) +
+		surf->texinfo->vecs[1][3] - surf->texturemins[1];
+
+	samples = surf->samples;
+
+	for (map = 0; map < MAXLIGHTMAPS && surf->styles[map] != 255; map++)
+	{
+		for (t = 0; t < tmax; t++)
+		{
+			int td = abs (Q_ftol (local_t - t * 16.0f));
+			for (s = 0; s < smax; s++, samples += 3)
+			{
+				int sd = abs (Q_ftol (local_s - s * 16.0f));
+				int dist = sd > td ? sd + (td >> 1) : td + (sd >> 1);
+				float amount;
+				int c;
+
+				if (dist >= light->radius)
+					continue;
+				amount = (light->radius - dist) / light->radius * light->intensity;
+				for (c = 0; c < 3; c++)
+				{
+					if (amount > 0)
+					{
+						int value = samples[c] + Q_ftol (amount * light->color[c] * 255.0f);
+						samples[c] = (byte)Q_min (255, value);
+					}
+					else
+						samples[c] = (byte)(samples[c] + Q_ftol (amount * light->color[c] * samples[c]));
+				}
+			}
+		}
+	}
+}
+
+/*
+=============
+R_MarkSurfaceLight
+=============
+*/
+static void R_MarkSurfaceLight (surflight_t *light, mnode_t *node, model_t *model)
+{
+	float		dist;
+	msurface_t	*surf;
+	int			i;
+
+	if (!node || node->contents != -1)
+		return;
+
+	dist = DotProduct (light->origin, node->plane->normal) - node->plane->dist;
+	if (dist > light->radius)
+	{
+		R_MarkSurfaceLight (light, node->children[0], model);
+		return;
+	}
+	if (dist < -light->radius)
+	{
+		R_MarkSurfaceLight (light, node->children[1], model);
+		return;
+	}
+
+	surf = model->surfaces + node->firstsurface;
+	for (i = 0; i < node->numsurfaces; i++, surf++)
+	{
+		if ((dist >= 0 && (surf->flags & SURF_PLANEBACK)) ||
+			(dist < 0 && !(surf->flags & SURF_PLANEBACK)))
+			continue;
+		if ((surf->texinfo->flags | surf->flags) & SURF_LIGHT)
+			continue;
+		if (surf->texinfo->flags & (SURF_SKY | SURF_WARP | SURF_TRANS33 | SURF_TRANS66))
+			return;
+		R_ApplySurfaceLight (light, surf, dist);
+		surf->flags |= SURF_LIGHTDIRTY;
+	}
+
+	R_MarkSurfaceLight (light, node->children[0], model);
+	R_MarkSurfaceLight (light, node->children[1], model);
+}
+
+/*
+=============
+R_ApplyPointFileSurfaceLight
+=============
+*/
+void R_ApplyPointFileSurfaceLight (model_t *model, surflight_t *light)
+{
+	R_MarkSurfaceLight (light, model->nodes, model);
+}
+
+/*
+=============
+R_PushSurfaceLights
+=============
+*/
+void R_PushSurfaceLights (void)
+{
+	int i;
+
+	if (!r_worldmodel)
+		return;
+	
+	for (i = 0; i < r_newrefdef.num_surflights; i++)
+		R_MarkSurfaceLight (&r_newrefdef.surflights[i], r_worldmodel->nodes, r_worldmodel);
+}
+#endif
 
 
 /*
@@ -529,6 +738,13 @@ void R_AddDynamicLights (msurface_t *surf)
 	dlight_t	*dl;
 	float		*fBL, *pfBL;
 	int			dlightbits;
+
+#ifdef KINGPIN_ENGINE
+	/* With gl_specular enabled retail keeps ordinary dynamic-light energy out
+	 * of explicitly specular lightmaps. */
+	if (gl_specular->value && (surf->texinfo->flags & SURF_SPECULAR))
+		return;
+#endif
 
 	smax = (surf->extents[0]>>4)+1;
 	tmax = (surf->extents[1]>>4)+1;

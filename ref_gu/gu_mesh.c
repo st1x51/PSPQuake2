@@ -73,8 +73,12 @@ static inline void GL_LerpVerts( int nverts, dtrivertx_t *v, dtrivertx_t *ov, dt
 			"r"(v->v)
 	);
 
+#ifdef KINGPIN_ENGINE
+	if ( currententity->flags & ( RF_SHELL_RED | RF_SHELL_GREEN | RF_SHELL_BLUE ) )
+#else
 	//PMM -- added RF_SHELL_DOUBLE, RF_SHELL_HALF_DAM
 	if ( currententity->flags & ( RF_SHELL_RED | RF_SHELL_GREEN | RF_SHELL_BLUE | RF_SHELL_DOUBLE | RF_SHELL_HALF_DAM) )
+#endif
 	{
 		__asm__ volatile (
 			".set		push\n"					// save assembler option
@@ -233,8 +237,12 @@ void GL_DrawAliasFrameLerp (dmdl_t *paliashdr, float backlerp)
 
 	GL_LerpVerts( paliashdr->num_xyz, v, ov, verts, lerp, move, frontv, backv );
 
+#ifdef KINGPIN_ENGINE
+	if (currententity->flags & ( RF_SHELL_RED | RF_SHELL_GREEN | RF_SHELL_BLUE ))
+#else
 	// PMM - added double shell
 	if (currententity->flags & ( RF_SHELL_RED | RF_SHELL_GREEN | RF_SHELL_BLUE | RF_SHELL_DOUBLE | RF_SHELL_HALF_DAM))
+#endif
 	{
 		sceGuDisable (GU_TEXTURE_2D);
 		sceGuColor (GU_HCOLOR_C4F (shadelight[0], shadelight[1], shadelight[2], alpha));
@@ -463,8 +471,11 @@ static qboolean R_SetupAliasLighting (void)
 	float		r, g, b;
 
 	ScePspFVector3	sun_dir = { -0.5f, 0.8f, 0.5f };
+#ifdef KINGPIN_ENGINE
+	qboolean		flat_light = currententity->flags & (  RF_SHELL_GREEN | RF_SHELL_RED | RF_SHELL_BLUE | RF_FULLBRIGHT );
+#else
 	qboolean		flat_light = currententity->flags & ( RF_SHELL_HALF_DAM | RF_SHELL_GREEN | RF_SHELL_RED | RF_SHELL_BLUE | RF_SHELL_DOUBLE | RF_FULLBRIGHT );
-
+#endif
 
 	if ( flat_light )
 	{
@@ -475,6 +486,7 @@ static qboolean R_SetupAliasLighting (void)
 		else
 		{
 			VectorClear (shadelight);
+#ifndef KINGPIN_ENGINE
 			if (currententity->flags & RF_SHELL_HALF_DAM)
 			{
 					shadelight[0] = 0.56;
@@ -486,6 +498,7 @@ static qboolean R_SetupAliasLighting (void)
 				shadelight[0] = 0.9;
 				shadelight[1] = 0.7;
 			}
+#endif
 			if ( currententity->flags & RF_SHELL_RED )
 				shadelight[0] = 1.0;
 			if ( currententity->flags & RF_SHELL_GREEN )
@@ -534,7 +547,7 @@ static qboolean R_SetupAliasLighting (void)
 		}
 	}
 
-
+#ifndef KINGPIN_ENGINE
 	// PGM	ir goggles color override
 	if ( r_newrefdef.rdflags & RDF_IRGOGGLES && currententity->flags & RF_IR_VISIBLE)
 	{
@@ -543,6 +556,7 @@ static qboolean R_SetupAliasLighting (void)
 		shadelight[2] = 0.0;
 	}
 	else
+#endif
 	{
 		if ( currententity->flags & RF_MINLIGHT )
 		{

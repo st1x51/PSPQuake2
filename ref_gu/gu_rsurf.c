@@ -28,6 +28,9 @@ extern	char	loadname[32];
 static vec3_t	modelorg;		// relative to viewpoint
 
 msurface_t	*r_alpha_surfaces;
+#ifdef KINGPIN_ENGINE
+msurface_t	*r_reflection_surfaces;
+#endif
 
 #define LIGHTMAP_BYTES 4
 
@@ -497,7 +500,12 @@ void R_RenderBrushPoly (msurface_t *fa)
 {
 	int			maps;
 	image_t		*image;
-	qboolean is_dynamic = false;
+	qboolean	is_dynamic = false;
+#ifdef KINGPIN_ENGINE
+	qboolean	force_dynamic = false;
+	qboolean	is_reflect = false;
+	qboolean	restore_dlightframe = false;
+#endif
 
 	c_brush_polys++;
 
@@ -523,15 +531,48 @@ void R_RenderBrushPoly (msurface_t *fa)
 
 //======
 //PGM
+#ifdef KINGPIN_ENGINE
+	if (gl_reflections->value)
+		is_reflect = (fa->texinfo->flags & SURF_REFLECT_FAKE);
+
+	if (is_reflect)
+	{
+		sceGuBlendFunc (GU_ADD, GU_FIX, GU_SRC_COLOR, GU_HBLEND_ONE, 0);
+		sceGuEnable (GU_BLEND);
+	}
+#endif
 	if(fa->texinfo->flags & SURF_FLOWING)
 		DrawGLFlowingPoly (fa);
 	else
 		DrawGLPoly (fa);
+#ifdef KINGPIN_ENGINE
+	if (is_reflect)
+	{
+		sceGuEnable (GU_BLEND);
+		sceGuBlendFunc (GU_ADD, GU_SRC_ALPHA, GU_ONE_MINUS_SRC_ALPHA, 0, 0);
+	}
+#endif
 //PGM
 //======
 	/*
 	** check for lightmap modification
 	*/
+
+#ifdef KINGPIN_ENGINE
+	if (fa->flags & SURF_LIGHTDIRTY)
+	{
+		fa->flags &= ~SURF_LIGHTDIRTY;
+		force_dynamic = true;
+		maps = 0;
+		if (fa->dlightframe == r_framecount)
+		{
+			fa->dlightframe = 0;
+			restore_dlightframe = true;
+		}
+		goto dynamic;
+	}
+#endif
+
 	for ( maps = 0; maps < MAXLIGHTMAPS && fa->styles[maps] != 255; maps++ )
 	{
 		if ( r_newrefdef.lightstyles[fa->styles[maps]].white != fa->cached_light[maps] )
@@ -542,7 +583,11 @@ void R_RenderBrushPoly (msurface_t *fa)
 	if ( ( fa->dlightframe == r_framecount ) )
 	{
 dynamic:
+#ifdef KINGPIN_ENGINE
+		if ( gl_dynamic->value || force_dynamic )
+#else
 		if ( gl_dynamic->value )
+#endif
 		{
 			if (!( fa->texinfo->flags & (SURF_SKY|SURF_TRANS33|SURF_TRANS66|SURF_WARP ) ) )
 			{
@@ -554,6 +599,10 @@ dynamic:
 	if ( is_dynamic )
 	{
 		// PSP: always using dynamic lightmap surfaces
+#ifdef KINGPIN_ENGINE
+		if (restore_dlightframe)
+			fa->dlightframe = r_framecount;
+#endif
 		fa->lightmapchain = gl_lms.lightmap_surfaces[0];
 		gl_lms.lightmap_surfaces[0] = fa;
 	}
@@ -595,6 +644,17 @@ void R_DrawAlphaSurfaces (void)
 	{
 		GL_Bind(s->texinfo->image);
 		c_brush_polys++;
+#ifdef KINGPIN_ENGINE
+		if (s->texinfo->flags & SURF_ALPHA)
+		{
+			/* Kingpin fences use their TGA alpha channel as a cutout, not
+			 * Quake II's fixed 0.33 surface opacity.  Retail leaves standard
+			 * alpha blending enabled while applying the alpha test. */
+			sceGuEnable (GU_ALPHA_TEST);
+			sceGuColor (GU_HCOLOR_4F(intens, intens, intens, 1.0f));
+		}
+		else
+#endif
 		if (s->texinfo->flags & SURF_TRANS33)
 			sceGuColor (GU_HCOLOR_4F(intens, intens, intens, 0.33));
 		else if (s->texinfo->flags & SURF_TRANS66)
@@ -607,6 +667,10 @@ void R_DrawAlphaSurfaces (void)
 			DrawGLFlowingPoly (s);							// PGM
 		else
 			DrawGLPoly (s);
+#ifdef KINGPIN_ENGINE
+		if (s->texinfo->flags & SURF_ALPHA)
+			sceGuDisable (GU_ALPHA_TEST);
+#endif
 	}
 
 	GL_TexEnv (GU_TFX_REPLACE);
@@ -651,6 +715,71 @@ void DrawTextureChains (void)
 	GL_TexEnv (GU_TFX_REPLACE);
 }
 
+#ifdef KINGPIN_ENGINE
+/*
+=============
+R_DrawReflectionsSurfaces
+=============
+*/
+void R_DrawReflectionsSurfaces (void)
+{
+	msurface_t	*surf;
+	float		alpha;
+
+	if (!r_worldreflectiontexture || !r_reflection_surfaces)
+		return;
+
+	//
+	// go back to the world matrix
+	//
+	sceGumLoadIdentity ();
+
+	sceGuEnable (GU_BLEND);
+	sceGuBlendFunc (GU_ADD, GU_SRC_ALPHA, GU_FIX, 0, GU_HBLEND_ONE);
+
+	GL_TexEnv (GU_TFX_MODULATE);
+
+	sceGuDisable (GU_LIGHT2);
+	sceGuDisable (GU_LIGHT3);
+	sceGuLight (2, GU_DIRECTIONAL, GU_DIFFUSE, (const ScePspFVector3*)&vright);
+	sceGuLight (3, GU_DIRECTIONAL, GU_DIFFUSE, (const ScePspFVector3*)&vup);
+
+	sceGuTexMapMode (GU_ENVIRONMENT_MAP, 2, 3);
+	sceGuTexProjMapMode (GU_POSITION);
+
+	GL_Bind (r_worldreflectiontexture);
+
+	for (surf = r_reflection_surfaces; surf; surf = surf->reflectchain)
+	{
+		if (surf->texinfo->flags & SURF_REFLECT_WEAK)
+			alpha = 0.1f;
+		else if (surf->texinfo->flags & SURF_REFLECT_STRONG)
+			alpha = 0.3f;
+		else
+			continue;
+
+		alpha *= 2.0f;
+		if (alpha > 1.0f)
+			alpha = 1.0f;
+
+		sceGuColor (GU_HCOLOR_4F (1.0f, 1.0f, 1.0f, alpha));
+
+		DrawGLPoly (surf);
+	}
+
+	sceGuTexMapMode( GU_TEXTURE_COORDS, 0, 0 );
+
+	sceGuColor (GU_HCOLOR_DEFAULT);
+
+	GL_TexEnv (GU_TFX_REPLACE);
+
+	sceGuBlendFunc (GU_ADD, GU_SRC_ALPHA, GU_ONE_MINUS_SRC_ALPHA, 0, 0);
+	sceGuDisable (GU_BLEND);
+
+	r_reflection_surfaces = NULL;
+}
+#endif
+
 /*
 =================
 R_DrawInlineBModel
@@ -682,6 +811,16 @@ void R_DrawInlineBModel (qboolean needsclip)
 		sceGuColor (GU_HCOLOR_4F(1.0, 1.0, 1.0, 0.25));
 		GL_TexEnv (GU_TFX_MODULATE);
 	}
+#ifdef KINGPIN_ENGINE
+	if (currententity->flags2 & RF2_SURF_ALPHA)
+	{
+		/* Retail brush path uses the texture alpha at full strength and applies
+		 * inverse_intensity to compensate for the upload-time light scale. */
+		sceGuEnable (GU_BLEND);
+		sceGuColor (GU_HCOLOR_4F(gl_state.inverse_intensity, gl_state.inverse_intensity,
+			gl_state.inverse_intensity, 1.0f));
+	}
+#endif
 
 	//
 	// draw texture
@@ -715,7 +854,12 @@ void R_DrawInlineBModel (qboolean needsclip)
 		}
 	}
 
+#ifdef KINGPIN_ENGINE
+	if ( !(currententity->flags & RF_TRANSLUCENT)
+		&& !(currententity->flags2 & RF2_SURF_ALPHA) )
+#else
 	if ( !(currententity->flags & RF_TRANSLUCENT) )
+#endif
 	{
 		R_BlendLightmaps ();
 	}
@@ -822,6 +966,9 @@ void R_RecursiveWorldNode (mnode_t *node)
 	int			framecount, visframecount, numsurfaces;
 	cplane_t	*plane;
 	msurface_t	*surfs, *surf, *firstsurf, *alphasurf, **mark;
+#ifdef KINGPIN_ENGINE
+	msurface_t	*reflectsurf;
+#endif
 	mleaf_t		*pleaf;
 	const byte	*areabits;
 	float		dot, *model_org;
@@ -887,7 +1034,9 @@ void R_RecursiveWorldNode (mnode_t *node)
 #else
 		R_RecursiveWorldNode (node->children[side]);
 #endif
-
+#ifdef KINGPIN_ENGINE
+		reflectsurf = r_reflection_surfaces;
+#endif
 		alphasurf = r_alpha_surfaces;
 		firstsurf = &surfs[node->firstsurface];
 		numsurfaces = node->numsurfaces;
@@ -904,6 +1053,13 @@ void R_RecursiveWorldNode (mnode_t *node)
 				"lw			$zero, %1(%0)\n"
 				::	"r" (surf), "i" (sizeof(msurface_t) * 3)
 			);
+#ifdef KINGPIN_ENGINE
+			if (surf->texinfo->flags & (SURF_REFLECT_WEAK | SURF_REFLECT_STRONG))
+			{
+				surf->reflectchain = reflectsurf;
+				reflectsurf = surf;
+			}
+#endif
 
 			if (surf->visframe != framecount)
 				continue;
@@ -938,6 +1094,9 @@ void R_RecursiveWorldNode (mnode_t *node)
 		}
 
 		r_alpha_surfaces = alphasurf;
+#ifdef KINGPIN_ENGINE
+		r_reflection_surfaces = reflectsurf;
+#endif
 #if 1
 		childnode = node->children[!side];
 		node = (childnode && childnode->visframe == visframecount) ? childnode : NULL; 
@@ -962,7 +1121,11 @@ void R_DrawWorld (void)
 	if (!r_drawworld->value)
 		return;
 
+#ifdef KINGPIN_ENGINE
+	if ( r_newrefdef.rdflags & ( RDF_NOWORLDMODEL | RDF_NOWORLDMODELALPHA ) )
+#else
 	if ( r_newrefdef.rdflags & RDF_NOWORLDMODEL )
+#endif
 		return;
 
 	currentmodel = r_worldmodel;
@@ -991,7 +1154,13 @@ void R_DrawWorld (void)
 	DrawTextureChains ();
 	R_BlendLightmaps ();
 
+	if (gl_state.fog.enabled)
+		sceGuDisable (GU_FOG);
+
 	R_DrawSkyBox ();
+
+	if (gl_state.fog.enabled)
+		sceGuEnable (GU_FOG);
 
 	if (gl_showtris->value)
 		R_DrawTriangleOutlines ();

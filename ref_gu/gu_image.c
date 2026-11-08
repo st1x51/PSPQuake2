@@ -22,7 +22,11 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "gu_local.h"
 #include <malloc.h>
 
+#ifdef KINGPIN_ENGINE
+#define TEXTURE_SIZE_MAX	gl_maxtexsize->value
+#else
 #define TEXTURE_SIZE_MAX	512
+#endif
 #define TEXTURE_SIZE_MIN	1
 
 image_t		gltextures[MAX_GLTEXTURES];
@@ -42,6 +46,12 @@ GL_SetTexturePalette
 */
 void GL_SetTexturePalette( unsigned palette[256] )
 {
+#ifdef KINGPIN_ENGINE
+	if (palette == (unsigned *)gl_state.currentpalette)
+		return;
+	gl_state.currentpalette = (byte *)palette;
+#endif
+
 	sceKernelDcacheWritebackRange(palette, 256 * sizeof(unsigned));
 	sceGuClutMode(GU_PSM_8888, 0, 0xff, 0);
 	sceGuClutLoad(32, palette);
@@ -73,6 +83,15 @@ void GL_Bind (image_t *image)
 
 	if (gl_state.currenttexture == image)
 		return;
+
+#ifdef KINGPIN_ENGINE
+	if (image->palette && image->palette != gl_state.currentpalette)
+	{
+		sceGuClutMode (GU_PSM_8888, 0, 0xff, 0);
+		sceGuClutLoad (32, image->palette);
+		gl_state.currentpalette = image->palette;
+	}
+#endif
 
 	// Set texture parameters
 	sceGuTexMode (image->format, 0, 0, (image->flags & IMG_FLAG_SWIZZLED) ? GU_TRUE : GU_FALSE);
@@ -323,6 +342,7 @@ void LoadPCX (char *filename, byte **pic, byte **palette, int *width, int *heigh
 		|| pcx->ymax >= 480)
 	{
 		ri.Con_Printf (PRINT_ALL, "Bad pcx file %s\n", filename);
+		ri.Hunk_FreeToLowMark(lowmark);
 		return;
 	}
 
@@ -336,10 +356,30 @@ void LoadPCX (char *filename, byte **pic, byte **palette, int *width, int *heigh
 
 	if (palette)
 	{
+#ifdef KINGPIN_ENGINE
+		*palette = (byte *)memalign (16, 1024);
+		if(!*palette)
+			ri.Sys_Error (ERR_DROP, "LoadPCX: not enough space for %s", filename);
+
+		byte *srcpal = (byte *)pcx + len - 768;
+		byte *dstpal = *palette;
+
+		for(x = 0; x < 256; x++)
+		{
+			dstpal[0] = srcpal[0];
+			dstpal[1] = srcpal[1];
+			dstpal[2] = srcpal[2];
+			dstpal[3] = 255;
+
+			srcpal += 3;
+			dstpal += 4;
+		}
+#else
 		*palette = malloc(768);
 		if(!*palette)
 			ri.Sys_Error (ERR_DROP, "LoadPCX: not enough space for %s", filename);
 		memcpy (*palette, (byte *)pcx + len - 768, 768);
+#endif
 	}
 
 	if (width)
@@ -1112,7 +1152,7 @@ GL_UploadTexture
 Returns has_alpha
 ===============
 */
-void GL_UploadTexture (image_t *image, byte *pic, int width, int height)
+void GL_UploadTexture (image_t *image, byte *pic, byte *pal, int width, int height)
 {
 	int			scaled_width, scaled_height;
 	int			width_bytes;
@@ -1142,7 +1182,28 @@ void GL_UploadTexture (image_t *image, byte *pic, int width, int height)
 	}
 
 	if (image->bpp == 1)
+	{
 		image->flags |= IMG_FLAG_PALETTED;
+		if (pal)
+		{
+			image->palette = (byte*)valloc (1024);
+			if (!image->palette)
+			{
+				image->palette = (byte*)memalign (16, 1024);
+				if (!image->palette)
+					ri.Sys_Error (ERR_DROP, "GL_UploadTexture: %s out of memory for palette\n", image->name);
+
+				memcpy(image->palette, pal, 1024);
+
+				sceKernelDcacheWritebackRange (image->palette, 1024);
+			}
+		}
+		else
+		{
+			image->palette = gl_state.screenpalette;
+		}
+	}
+	else image->palette = NULL;
 
 	// allocate
 	image->data = (byte*)valloc (image->size);
@@ -1223,8 +1284,9 @@ void GL_UploadExternal (image_t *image, byte *pic, int width, int height)
 
 	if (image->bpp == 1)
 		image->flags |= IMG_FLAG_PALETTED;
-
+	
 	image->data = pic;
+	image->palette = gl_state.screenpalette;
 	image->sl = 0;
 	image->tl = 0;
 	image->sh = image->width;
@@ -1257,6 +1319,7 @@ qboolean GL_UploadScrap (image_t *image, byte *pic, int width, int height)
 	image->format = GU_PSM_T8;
 	image->bpp = 1;
 	image->data = (byte *)scrap_texels[texnum];
+	image->palette = gl_state.screenpalette;
 	image->width = width;
 	image->height = height;
 	image->uplwidth = BLOCK_WIDTH;
@@ -1310,12 +1373,12 @@ qboolean GL_UpdateTexture (image_t *image, int xoff, int yoff, int width, int he
 
 /*
 ================
-GL_LoadPic
+GL_LoadPicPaletted
 
 This is also used as an entry point for the generated r_notexture
 ================
 */
-image_t *GL_LoadPic (char *name, byte *pic, int width, int height, int flags)
+static image_t *GL_LoadPicPaletted (char *name, byte *pic, byte *pal, int width, int height, int flags)
 {
 	image_t		*image;
 	int			index, i;
@@ -1347,6 +1410,42 @@ image_t *GL_LoadPic (char *name, byte *pic, int width, int height, int flags)
 	gltextures_hash[image->hashkey] = image;
 #endif
 
+	// SFX sprites need their alpha channel, don't quantize them to 8 bit
+	if(!IMG_IS_IND(image) && !IMG_IS_PIC(image) && !IMG_IS_LM(image) && !IMG_IS_SFX(image))
+	{
+		if (!gl_state.d_16to8table)
+			ri.Sys_Error (ERR_DROP, "d_16to8table is null\n");
+
+		int newsize = width * height;
+		byte *temp = pic;//Hunk_TempAlloc(newsize);
+	
+		for(i = 0; i < newsize; i++)
+		{
+/*
+			int pindex;
+
+			// to 565
+			pindex  = (pic[i*4+0] >> 3) & 0x01f;
+			pindex |= (pic[i*4+1] << 3) & 0x7e0;
+			pindex |= (pic[i*4+2] << 8) & 0xf80;
+
+			temp[i] = gl_state.d_16to8table[pindex];
+*/
+			int r = ( pic[i*4+0] >> 3 ) & 31;
+			int g = ( pic[i*4+1] >> 2 ) & 63;
+			int b = ( pic[i*4+2] >> 3 ) & 31;
+
+			int c = r | ( g << 5 ) | ( b << 11 );
+
+			temp[i] = gl_state.d_16to8table[c];
+
+			
+		}
+		//pic = temp;
+		image->flags &= ~IMG_FORMAT_MASK;
+		image->flags |= IMG_FORMAT_IND_32;
+	}
+
 	if (IMG_IS_SKIN(image) && IMG_IS_IND(image))
 		R_FloodFillSkin(pic, width, height);
 
@@ -1364,9 +1463,21 @@ image_t *GL_LoadPic (char *name, byte *pic, int width, int height, int flags)
 			return image;
 	}
 
-	GL_UploadTexture (image, pic, width, height);
+	GL_UploadTexture (image, pic, pal, width, height);
 
 	return image;
+}
+
+/*
+================
+GL_LoadPic
+
+This is also used as an entry point for the generated r_notexture
+================
+*/
+image_t *GL_LoadPic (char *name, byte *pic, int width, int height, int flags)
+{
+	return GL_LoadPicPaletted(name, pic, NULL, width, height, flags);
 }
 
 
@@ -1387,6 +1498,7 @@ image_t *GL_LoadWal (char *name)
 	if (!mt)
 	{
 		ri.Con_Printf (PRINT_ALL, "GL_FindImage: can't load %s\n", name);
+		ri.Hunk_FreeToLowMark(lowmark);
 		return r_notexture;
 	}
 
@@ -1399,6 +1511,26 @@ image_t *GL_LoadWal (char *name)
 	ri.Hunk_FreeToLowMark(lowmark);
 
 	return image;
+}
+
+/*
+===============
+GL_LogMissingSkin
+
+Appends a line to <gamedir>/skin_missing.log when a model skin can't be loaded.
+===============
+*/
+void GL_LogMissingSkin (const char *model, const char *skin)
+{
+	char	path[MAX_OSPATH];
+	FILE	*f;
+
+	Com_sprintf (path, sizeof(path), "%s/skin_missing.log", ri.FS_GetWriteDir (FS_PATH_GAMEDIR));
+	f = fopen (path, "a");
+	if (!f)
+		return;
+	fprintf (f, "%s: %s\n", model, skin);
+	fclose (f);
 }
 
 /*
@@ -1418,6 +1550,18 @@ image_t	*GL_FindImage (char *name, int flags)
 
 	if (!name)
 		return NULL;	//	ri.Sys_Error (ERR_DROP, "GL_FindImage: NULL name");
+
+#ifdef KINGPIN_ENGINE
+	// retail model skins may use a leading slash and mixed case (PC port does strlwr)
+	while (*name == '/' || *name == '\\')
+		name++;
+	for (char *c = name; *c; c++)
+	{
+		if (*c >= 'A' && *c <= 'Z')
+			*c += 'a' - 'A';
+	}
+#endif
+
 	len = strlen(name);
 	if (len<5)
 		return NULL;	//	ri.Sys_Error (ERR_DROP, "GL_FindImage: bad name: %s", name);
@@ -1444,7 +1588,7 @@ image_t	*GL_FindImage (char *name, int flags)
 		LoadPCX (name, &pic, &palette, &width, &height);
 		if (!pic)
 			return NULL; // ri.Sys_Error (ERR_DROP, "GL_FindImage: can't load %s", name);
-		image = GL_LoadPic (name, pic, width, height, flags | IMG_FORMAT_IND_32);
+		image = GL_LoadPicPaletted (name, pic, palette, width, height, flags | IMG_FORMAT_IND_32);
 	}
 	else if (!strcmp(name+len-4, ".wal"))
 	{
@@ -1481,6 +1625,123 @@ struct image_s *R_RegisterSkin (char *name)
 	return GL_FindImage (name, IMG_TYPE_SKIN);
 }
 
+#ifdef KINGPIN_ENGINE
+void R_RegisterModelSkin (struct model_s *model, char *skin)
+{
+	model_t *mod = (model_t *)model;
+	char modelname[MAX_QPATH];
+	char modelpart[MAX_QPATH];
+	char fullname[MAX_QPATH];
+	char *replace;
+	char *slash;
+	image_t *image;
+	int i, len;
+
+	if (!mod)
+		return;
+
+	/*
+	 * ref_gl.dll @ 1000c7a0 does not register the three-character skin
+	 * configstring directly.  It derives an external TGA name from the MDX
+	 * model path, preserving the array slot even when pain-skin filtering maps
+	 * two names to the same image.
+	 */
+	strncpy (modelname, mod->name, sizeof(modelname) - 1);
+	modelname[sizeof(modelname) - 1] = 0;
+	len = strlen (modelname);
+	if (len >= 4)
+		modelname[len - 4] = 0;	/* strip .mdx */
+
+	slash = strrchr (modelname, '/');
+	strncpy (modelpart, slash ? slash + 1 : modelname, sizeof(modelpart) - 1);
+	modelpart[sizeof(modelpart) - 1] = 0;
+
+	len = strlen (skin);
+	if (r_painskins->value == 0.0f)
+	{
+		if (len >= 2 &&
+			(!strcmp (skin + len - 2, "p1") ||
+			 !strcmp (skin + len - 2, "p2")))
+			skin[len - 2] = 0;
+	}
+	else if (r_painskins->value < 2.0f && len >= 2 &&
+		!strcmp (skin + len - 2, "p1"))
+	{
+		skin[len - 1] = '2';
+	}
+
+	/* Several actors reuse another actor's authored skin set. */
+	replace = strstr (modelname, "/punk/");
+	if (!replace)
+		replace = strstr (modelname, "/thug_sit/");
+	if (replace)
+	{
+		*replace = 0;
+		Com_sprintf (fullname, sizeof(fullname), "%s/thug/%s", modelname, modelpart);
+		strcpy (modelname, fullname);
+	}
+	else
+	{
+		replace = strstr (modelname, "/bitch_sit/");
+		if (!replace)
+			replace = strstr (modelname, "/whore/");
+		if (replace)
+		{
+			*replace = 0;
+			Com_sprintf (fullname, sizeof(fullname), "%s/bitch/%s", modelname, modelpart);
+			strcpy (modelname, fullname);
+		}
+		else if ((replace = strstr (modelname, "/shorty/")) != NULL)
+		{
+			*replace = 0;
+			Com_sprintf (fullname, sizeof(fullname), "%s/%s/%s", modelname,
+				strstr (modelpart, "legs") ? "thug" : "runt", modelpart);
+			strcpy (modelname, fullname);
+		}
+		else if ((replace = strstr (modelname, "/runt/")) != NULL &&
+			strstr (modelpart, "legs"))
+		{
+			*replace = 0;
+			Com_sprintf (fullname, sizeof(fullname), "%s/thug/%s", modelname, modelpart);
+			strcpy (modelname, fullname);
+		}
+		else if ((replace = strstr (modelname, "/bum_sit/")) != NULL)
+		{
+			*replace = 0;
+			Com_sprintf (fullname, sizeof(fullname), "%s/thug/%s", modelname, modelpart);
+			strcpy (modelname, fullname);
+		}
+	}
+
+	/* Alternate head meshes share the ordinary head textures. */
+	replace = strstr (modelname, "/bald_");
+	if (!replace)
+		replace = strstr (modelname, "/ski_");
+	if (!replace)
+		replace = strstr (modelname, "/weld_");
+	if (!replace)
+		replace = strstr (modelname, "/pony_");
+	if (replace)
+	{
+		*replace = 0;
+		strcat (modelname, "/head");
+	}
+
+	Com_sprintf (fullname, sizeof(fullname), "%s_%s.tga", modelname, skin);
+	for (i = 0; i < MAX_MDXSKINS; i++)
+	{
+		if (!mod->skins[i])
+		{
+			image = GL_FindImage (fullname, /*it_skin_external*/IMG_TYPE_SKIN);
+			if (!image)
+				GL_LogMissingSkin (mod->name, fullname);
+			mod->skins[i] = image;
+			return;
+		}
+	}
+}
+#endif
+
 /*
 ================
 GL_FreeImage
@@ -1509,6 +1770,14 @@ void GL_FreeImage (image_t *image)
 			vfree(image->data);
 		else
 			free(image->data);
+		
+		if(image->palette && image->palette != gl_state.screenpalette)
+		{
+			if(vchkptr(image->palette))
+				vfree(image->palette);
+			else
+				free(image->palette);
+		}
 	}
 	memset (image, 0, sizeof(*image));
 
@@ -1539,7 +1808,7 @@ void GL_FreeImages (void)
 			continue;
 		if (image->flags & IMG_FLAG_SCRAP)
 			continue;
-		if (image->flags & IMG_TYPE_PIC)
+		if (IMG_IS_PIC(image) || IMG_IS_SFX(image))
 			continue;		// don't free pics
 
 		// free it
@@ -1567,6 +1836,9 @@ int Draw_GetPalette (void)
 	if (!pal)
 		ri.Sys_Error (ERR_FATAL, "Couldn't load pics/colormap.pcx");
 
+#if defined(KINGPIN_ENGINE)
+	memcpy (&d_8to24table[0], pal, sizeof(d_8to24table));
+#else
 	for (i=0 ; i<256 ; i++)
 	{
 		r = pal[i*3+0];
@@ -1576,7 +1848,7 @@ int Draw_GetPalette (void)
 		v = (255<<24) + (r<<0) + (g<<8) + (b<<16);
 		d_8to24table[i] = LittleLong(v);
 	}
-
+#endif
 	d_8to24table[255] &= LittleLong(0xffffff);	// 255 is transparent
 
 	free (pic);
@@ -1644,11 +1916,11 @@ void	GL_InitImages (void)
 		ri.Cvar_Set( "intensity", "1" );
 
 	Draw_GetPalette ();
-/*
+
 	gl_state.d_16to8table = ri.FS_LoadFile("pics/16to8.dat", NULL, FS_PATH_ALL);
 	if ( !gl_state.d_16to8table )
 		ri.Sys_Error( ERR_FATAL, "Couldn't load pics/16to8.pcx");
-*/
+
 	GL_BuildGammaTable (vid_gamma->value, intensity->value);
 }
 
@@ -1673,7 +1945,7 @@ void	GL_ShutdownImages (void)
 		GL_FreeImage(image);
 	}
 
-	//if (gl_state.d_16to8table)
-	//	FS_FreeFile (gl_state.d_16to8table);
+	if (gl_state.d_16to8table)
+		FS_FreeFile (gl_state.d_16to8table);
 }
 

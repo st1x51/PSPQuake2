@@ -35,6 +35,13 @@ glstate_t  gl_state;
 
 image_t		*r_notexture;		// use for bad textures
 image_t		*r_particletexture;	// little dot for particles
+#ifdef KINGPIN_ENGINE
+image_t		*r_reflectiontexture;
+image_t		*r_speculartexture;
+image_t		*r_firescreentexture;
+
+image_t		*r_worldreflectiontexture = NULL;
+#endif
 
 entity_t	*currententity;
 model_t		*currentmodel;
@@ -101,9 +108,61 @@ cvar_t	*gl_flashblend;
 cvar_t  *gl_saturatelighting;
 cvar_t	*gl_lockpvs;
 
+#ifdef KINGPIN_ENGINE
+cvar_t	*r_detail_alpha;
+cvar_t	*r_detail_scale;
+cvar_t	*r_detail_dist;
+cvar_t	*r_directional_lighting;
+cvar_t	*r_showbbox;
+cvar_t	*gl_fog;
+cvar_t	*gl_reflections;
+cvar_t	*gl_specular;
+cvar_t	*gl_test_specular;
+cvar_t	*r_sfx_pause;
+cvar_t	*r_debug_lighting;
+cvar_t	*r_painskins;
+cvar_t	*gl_maxtexsize;
+#endif
+
 cvar_t	*vid_fullscreen;
 cvar_t	*vid_gamma;
 cvar_t	*vid_ref;
+
+#ifdef KINGPIN_ENGINE
+cvar_t	*burn_enabled;
+cvar_t	*burn_r;
+cvar_t	*burn_g;
+cvar_t	*burn_b;
+
+static void R_BurnPickColor_f (void)
+{
+	vec3_t end;
+	int result;
+
+	if (!r_worldmodel)
+	{
+		ri.Con_Printf (PRINT_ALL, "Couldn't find a color\n");
+		return;
+	}
+	VectorMA (r_origin, 8000.0f, vpn, end);
+	result = RecursiveLightPoint (r_worldmodel->nodes, r_origin, end);
+	if (result == -1)
+	{
+		ri.Con_Printf (PRINT_ALL, "Couldn't find a color\n");
+		return;
+	}
+	if (pointcolor[0] < 0) pointcolor[0] = 0;
+	if (pointcolor[0] > 1) pointcolor[0] = 1;
+	if (pointcolor[1] < 0) pointcolor[1] = 0;
+	if (pointcolor[1] > 1) pointcolor[1] = 1;
+	if (pointcolor[2] < 0) pointcolor[2] = 0;
+	if (pointcolor[2] > 1) pointcolor[2] = 1;
+	ri.Cvar_SetValue ("burn_r", pointcolor[0]);
+	ri.Cvar_SetValue ("burn_g", pointcolor[1]);
+	ri.Cvar_SetValue ("burn_b", pointcolor[2]);
+}
+
+#endif
 
 /*
 =================
@@ -125,6 +184,15 @@ void R_RotateForEntity (entity_t *e)
 	fvec.x = -e->angles[2] * (GU_PI / 180.0f);
 
 	sceGumRotateZYX (&fvec);
+
+	if (e->scale != 0.0f)
+	{
+		fvec.x = e->scale + 1.0f;
+		fvec.y = e->scale + 1.0f;
+		fvec.z = e->scale + 1.0f;
+
+		sceGumScale (&fvec);
+	}
 
 	sceGumUpdateMatrix ();
 }
@@ -190,6 +258,22 @@ void R_DrawSpriteModel (entity_t *e)
 	}
 	else
 #endif
+#ifdef KINGPIN_ENGINE
+	vec3_t		v_forward, v_right, v_up;
+	if (e->flags & RF_FACING)
+	{
+		AngleVectors (e->angles, v_forward, v_right, v_up);
+		up = v_up;
+		right = v_right;
+	}
+	else if (e->flags & RF_FACINGUP)
+	{
+		AngleVectors (e->angles, v_forward, v_right, v_up);
+		up = v_up;
+		right = vright;
+	}
+	else
+#endif
 	{	// normal sprite
 		up = vup;
 		right = vright;
@@ -202,6 +286,20 @@ void R_DrawSpriteModel (entity_t *e)
 		sceGuEnable (GU_BLEND);
 	else
 		sceGuEnable (GU_ALPHA_TEST);
+
+#ifdef KINGPIN_ENGINE
+	if (e->flags & RF_FACING)
+		sceGuDisable (GU_CULL_FACE);
+
+#if 0
+	/* Retain the original DLL's ordering, including the calls inside Begin/End. */
+	qglPushMatrix ();
+	qglTranslatef (e->origin[0], e->origin[1], e->origin[2]);
+	qglScalef (0.5F, 0.5F, 0.5F);
+	qglTranslatef (-e->origin[0], -e->origin[1], -e->origin[2]);
+	qglTranslatef (0, 0, -frame->origin_y * 0.5F);
+#endif
+#endif
 
 	sceGuColor (GU_HCOLOR_4F(1, 1, 1, alpha));
 
@@ -230,6 +328,11 @@ void R_DrawSpriteModel (entity_t *e)
 
 	GL_TexEnv (GU_TFX_REPLACE);
 
+#ifdef KINGPIN_ENGINE
+	if (e->flags & RF_FACING)
+		sceGuEnable (GU_CULL_FACE);
+#endif
+
 	if ( alpha != 1.0F )
 		sceGuDisable (GU_BLEND);
 	else
@@ -257,6 +360,10 @@ void R_DrawNullModel (void)
 
 	if ( currententity->flags & RF_FULLBRIGHT )
 		shadelight[0] = shadelight[1] = shadelight[2] = 1.0F;
+#ifdef KINGPIN_ENGINE
+	else if ( currententity->flags & RF_DIMLIGHT )
+		shadelight[0] = shadelight[1] = shadelight[2] = 0.6F;
+#endif
 	else
 		R_LightPoint (currententity->origin, shadelight);
 
@@ -266,7 +373,7 @@ void R_DrawNullModel (void)
 	sceGuDisable (GU_TEXTURE_2D);
 	sceGuColor (GU_HCOLOR_3FV(shadelight));
 
-	gu_vert_ftv_t* out = (gu_vert_ftv_t*)sceGuGetMemory (sizeof(gu_vert_ftv_t) * 12);
+	gu_vert_fv_t* out = (gu_vert_fv_t*)sceGuGetMemory (sizeof(gu_vert_fv_t) * 12);
 
 	vertcount = 0;
 
@@ -321,13 +428,32 @@ void R_DrawEntitiesOnList (void)
 
 	if (!r_drawentities->value)
 		return;
+	
+#ifdef KINGPIN_ENGINE
+	R_UpdateMdxSFXIntervalMask ();
+#endif
 
 	// draw non-transparent first
 	for (i=0 ; i<r_newrefdef.num_entities ; i++)
 	{
 		currententity = &r_newrefdef.entities[i];
+#ifdef KINGPIN_ENGINE
+		currententity->rendered = false;
+		/* Retail promotes models whose primary skin has an alpha channel to
+		 * the reflection-map path before classifying the entity pass. */
+		if (currententity->model && currententity->model->skins[0] &&
+			currententity->model->skins[0]->flags & IMG_FLAG_HAS_ALPHA)
+			currententity->flags |= RF_REFL_MAP;
+
+		if ((currententity->flags2 & (RF2_SURF_ALPHA | RF2_PASSALPHA)) ||
+			((currententity->flags & RF_TRANSLUCENT) &&
+			 !(currententity->flags & RF_REFL_MAP)))
+			continue;
+		currententity->rendered = true;
+#else
 		if (currententity->flags & RF_TRANSLUCENT)
 			continue;	// solid
+#endif
 
 		if ( currententity->flags & RF_BEAM )
 		{
@@ -346,11 +472,23 @@ void R_DrawEntitiesOnList (void)
 			case mod_alias:
 				R_DrawAliasModel (currententity);
 				break;
+#ifdef KINGPIN_ENGINE
+			case mod_mdx:
+				if (currententity->flags & RF_REFL_MAP)
+					R_DrawMDXModel (currententity, 1);
+
+				R_DrawMDXModel (currententity, 0);
+				break;
+#endif
 			case mod_brush:
 				R_DrawBrushModel (currententity);
 				break;
 			case mod_sprite:
+				/* Kingpin sprites are handled only by the late entity pass.  Shipped
+				 * sprite entities carry one of the late-pass flags above. */
+#ifndef KINGPIN_ENGINE
 				R_DrawSpriteModel (currententity);
+#endif
 				break;
 			default:
 				ri.Sys_Error (ERR_DROP, "Bad modeltype");
@@ -365,8 +503,14 @@ void R_DrawEntitiesOnList (void)
 	for (i=0 ; i<r_newrefdef.num_entities ; i++)
 	{
 		currententity = &r_newrefdef.entities[i];
+#ifdef KINGPIN_ENGINE
+		if (currententity->rendered)
+			continue;
+		currententity->rendered = true;
+#else
 		if (!(currententity->flags & RF_TRANSLUCENT))
 			continue;	// solid
+#endif
 
 		if ( currententity->flags & RF_BEAM )
 		{
@@ -386,6 +530,11 @@ void R_DrawEntitiesOnList (void)
 			case mod_alias:
 				R_DrawAliasModel (currententity);
 				break;
+#ifdef KINGPIN_ENGINE
+			case mod_mdx:
+				R_DrawMDXModel (currententity, 0);
+				break;
+#endif
 			case mod_brush:
 				R_DrawBrushModel (currententity);
 				break;
@@ -401,6 +550,279 @@ void R_DrawEntitiesOnList (void)
 	sceGuDepthMask (GU_FALSE);		// back to writing
 
 }
+
+
+#ifdef KINGPIN_ENGINE
+
+/*
+===============
+GL_DrawParticles
+===============
+*/
+void GL_DrawParticles( int num_particles, const particle_t *particles, qboolean secondary )
+{
+	const particle_t	*p;
+	int					i;
+	vec3_t				up, right;
+	float				scale;
+	float				alpha;
+	float				blend;
+	vec3_t				from, middle, to;
+	gu_color_32_t		color;
+
+    GL_Bind (r_particletexture);
+
+	sceGuDepthMask (GU_TRUE);		// no z buffering
+	sceGuEnable (GU_BLEND);
+	GL_TexEnv (GU_TFX_MODULATE);
+
+	gu_vert_ftcv_t* const out = (gu_vert_ftcv_t *)extGuBeginMemory (NULL); //(gu_vert_ftcv_t*)sceGuGetMemory (sizeof(gu_vert_ftcv_t) * num_particles * 2);
+	gu_vert_ftcv_t* out_ptr = out;
+	for ( p = particles, i = 0; i < num_particles; i++, p++)
+	{
+		if (secondary ? (p->type != 0) : (p->type > 0 && p->type < 50))
+			continue;
+
+		// hack a scale up to keep particles from disapearing
+		scale = ( p->origin[0] - r_origin[0] ) * vpn[0] +
+			    ( p->origin[1] - r_origin[1] ) * vpn[1] +
+			    ( p->origin[2] - r_origin[2] ) * vpn[2];
+
+		if (scale < 20)
+			scale = gl_particle_scale->value;
+		else
+			scale = gl_particle_scale->value + scale * 0.004f;
+
+		alpha = Q_bound (0.0f, p->alpha, 1.0f);
+
+		color.c = secondary ? 0xff7f7f7f : d_8to24table[p->color];
+		color.a = (byte)(alpha * 255.0f);
+
+		if (p->type >= 50 && p->type <= 52)
+		{
+			if (p->type == 50)
+			{
+				VectorSet (from, 255, 135, 0);
+				VectorSet (middle, 255, 255, 144);
+				VectorSet (to, 255, 255, 255);
+				if (alpha < 0.25f)
+				{
+					blend = alpha * 4.0f;
+					color.r = (byte)(from[0] + (middle[0] - from[0]) * blend);
+					color.g = (byte)(from[1] + (middle[1] - from[1]) * blend);
+					color.b = (byte)(from[2] + (middle[2] - from[2]) * blend);
+				}
+				else
+				{
+					blend = (alpha - 0.25f) * (1.0f / 0.75f);
+					color.r = (byte)(middle[0] + (to[0] - middle[0]) * blend);
+					color.g = (byte)(middle[1] + (to[1] - middle[1]) * blend);
+					color.b = (byte)(middle[2] + (to[2] - middle[2]) * blend);
+				}
+			}
+			else if (p->type == 51)
+			{
+				VectorSet (from, 0, 0, 128);
+				VectorSet (middle, 180, 180, 255);
+				VectorSet (to, 255, 255, 255);
+				if (alpha < 0.5f)
+				{
+					blend = alpha * 2.0f;
+					color.r = (byte)(from[0] + (middle[0] - from[0]) * blend);
+					color.g = (byte)(from[1] + (middle[1] - from[1]) * blend);
+					color.b = (byte)(from[2] + (middle[2] - from[2]) * blend);
+					scale *= 2.25f - alpha * 3.0f;
+				}
+				else
+				{
+					blend = (alpha - 0.5f) * 2.0f;
+					color.r = (byte)(middle[0] + (to[0] - middle[0]) * blend);
+					color.g = (byte)(middle[1] + (to[1] - middle[1]) * blend);
+					color.b = (byte)(middle[2] + (to[2] - middle[2]) * blend);
+					scale *= 0.75f;
+				}
+			}
+			else
+			{
+				VectorSet (from, 80, 11, 0);
+				VectorSet (middle, 215, 173, 63);
+				VectorSet (to, 244, 244, 244);
+				if (alpha < 0.5f)
+				{
+					blend = alpha * 2.0f;
+					color.r = (byte)(from[0] + (middle[0] - from[0]) * blend);
+					color.g = (byte)(from[1] + (middle[1] - from[1]) * blend);
+					color.b = (byte)(from[2] + (middle[2] - from[2]) * blend);
+				}
+				else
+				{
+					blend = (alpha - 0.5f) * 2.0f;
+					color.r = (byte)(middle[0] + (to[0] - middle[0]) * blend);
+					color.g = (byte)(middle[1] + (to[1] - middle[1]) * blend);
+					color.b = (byte)(middle[2] + (to[2] - middle[2]) * blend);
+				}
+				scale *= 2.0f;
+			}
+		}
+
+		VectorScale (vup, scale, up);
+		VectorScale (vright, scale, right);
+
+		out_ptr->u = 0.0f;
+		out_ptr->v = 0.0f;
+		out_ptr->c = color.c;
+		out_ptr->a = p->alpha * 255; // replace alpha
+		out_ptr->x = p->origin[0] + right[0] + up[0];
+		out_ptr->y = p->origin[1] + right[1] + up[1];
+		out_ptr->z = p->origin[2] + right[2] + up[2];
+		out_ptr++;
+
+		out_ptr->u = 1.0f;
+		out_ptr->v = 1.0f;
+		out_ptr->c = color.c;
+		out_ptr->x = p->origin[0] - right[0] - up[0];
+		out_ptr->y = p->origin[1] - right[1] - up[1];
+		out_ptr->z = p->origin[2] - right[2] - up[2];
+		out_ptr++;
+	}
+	extGuEndMemory (out_ptr);
+	sceGuDrawArray (GU_SPRITES, GU_TEXTURE_32BITF | GU_COLOR_8888 | GU_VERTEX_32BITF, (int)(out_ptr - out), 0, out);
+
+	sceGuDisable (GU_BLEND);
+	sceGuColor (GU_HCOLOR_DEFAULT);
+	sceGuDepthMask (GU_FALSE);		// back to normal Z buffering
+	GL_TexEnv (GU_TFX_REPLACE);
+}
+
+/*
+===============
+GL_DrawSpriteParticles
+===============
+*/
+static void GL_DrawSpriteParticles ( int num_particles, const particle_t *particles, qboolean secondary )
+{
+	const particle_t	*p;
+	image_t				*image;
+	int					i;
+	vec3_t				right, up, vertex;
+	gu_color_32_t		color;
+	float				size, alpha;
+
+	for ( p = particles, i = 0; i < num_particles; i++, p++)
+	{
+		//if (p->type < 0 || p->type >= MAX_SFX_SPRITES)
+		//	return;
+	
+		if (p->type == 0 || (!secondary && p->type >= 50))
+			continue;	
+
+		image = r_sfx_images[p->type];
+		if (!image)
+			image = r_notexture;
+
+		if (p->type == SFX_SPRITE_SURF_BLOOD_POOL)
+		{
+			float elapsed = R_SFXTime () - p->frame * 0.001f;
+			size = elapsed < 4.0f ? elapsed * 6.0f : 24.0f;
+			if (size < 0.0f)
+				size = 0.0f;
+			VectorSet (right, size, 0, 0);
+			VectorSet (up, 0, size, 0);
+
+			color.c = d_8to24table[p->color];
+		}
+		else if (secondary && p->type == SFX_SPRITE_RAIN)
+		{
+			if (currententity)
+				AngleVectors (currententity->angles, NULL, right, up);
+			else
+			{
+				VectorCopy (vright, right);
+				VectorCopy (vup, up);
+			}
+
+			color.c = GU_HCOLOR_DEFAULT;
+		}
+		else if (secondary && p->type >= SFX_SPRITE_SPLASH1 && p->type <= SFX_SPRITE_SPLASH4)
+		{
+			if (currententity)
+				AngleVectors (currententity->angles, NULL, right, up);
+			else
+			{
+				VectorCopy (vright, right);
+				VectorCopy (vup, up);
+			}
+			VectorScale (right, 6.0f, right);
+			VectorScale (up, 6.0f, up);
+
+			color.c = GU_HCOLOR_DEFAULT;
+		}
+		else
+		{
+			size = (p->type == SFX_SPRITE_BLOOD_DRIP) ? 0.5f : 8.0f;
+			VectorScale (vright, size, right);
+			VectorScale (vup, size, up);
+
+			color.c = d_8to24table[p->color];
+		}
+
+		alpha = Q_bound(0.0f, p->alpha, 1.0f);
+		color.a = (byte)(alpha * 255.0f);
+
+		GL_Bind (image);
+
+		sceGuColor (color.c);
+
+		gu_vert_ftv_t* const out = (gu_vert_ftv_t*)sceGuGetMemory (sizeof(gu_vert_ftv_t) * 4);
+		out[0].uv[0] = 0.0f;
+		out[0].uv[1] = 1.0f;
+		VectorSubtract (p->origin, right, out[0].xyz);
+		VectorAdd (out[0].xyz, up, out[0].xyz);
+		out[1].uv[0] = 0.0f;
+		out[1].uv[1] = 0.0f;
+		VectorAdd (p->origin, right, out[1].xyz);
+		VectorAdd (out[1].xyz, up, out[1].xyz);
+		out[2].uv[0] = 1.0f;
+		out[2].uv[1] = 0.0f;
+		VectorAdd (p->origin, right, out[2].xyz);
+		VectorSubtract (out[2].xyz, up, out[2].xyz);
+		out[3].uv[0] = 1.0f;
+		out[3].uv[1] = 1.0f;
+		VectorSubtract (p->origin, right, out[3].xyz);
+		VectorSubtract (out[3].xyz, up, out[3].xyz);
+
+		sceGuDrawArray (GU_TRIANGLE_FAN, GU_TEXTURE_32BITF | GU_VERTEX_32BITF, 4, 0, out);
+	}
+
+	sceGuColor (GU_HCOLOR_DEFAULT);
+}
+
+/*
+===============
+R_DrawParticles
+===============
+*/
+void R_DrawParticles (void)
+{
+	sceGuDisable (GU_ALPHA_TEST);
+
+	GL_DrawParticles (r_newrefdef.num_particles, r_newrefdef.particles, false);
+	GL_DrawParticles (r_newrefdef.num_particles2, r_newrefdef.particles2, true);
+
+	sceGuDepthMask (GU_TRUE);
+	sceGuEnable (GU_BLEND);
+	GL_TexEnv (GU_TFX_MODULATE);
+
+	GL_DrawSpriteParticles(r_newrefdef.num_particles, r_newrefdef.particles, false);
+	GL_DrawSpriteParticles(r_newrefdef.num_particles2, r_newrefdef.particles2, true);
+	
+	GL_TexEnv (GU_TFX_REPLACE);
+	sceGuDisable (GU_BLEND);
+	sceGuDepthMask (GU_FALSE);
+
+	sceGuEnable (GU_ALPHA_TEST);
+}
+#else
 
 /*
 ** GL_DrawParticles
@@ -540,6 +962,58 @@ void R_DrawParticles (void)
 		GL_DrawParticles (r_newrefdef.num_particles, r_newrefdef.particles);
 	}
 }
+#endif
+
+#ifdef KINGPIN_ENGINE
+/*
+============
+R_DrawFirescreen
+============
+*/
+static void R_DrawFirescreen (void)
+{
+	int	alpha;
+	short	s, t;
+
+	alpha = (int)(v_blend[3] * 1275.0f);
+	if(alpha > 255)
+		alpha = 255;
+
+	sceGuEnable (GU_BLEND);
+	sceGuBlendFunc (GU_ADD, GU_SRC_ALPHA, GU_FIX, 0, GU_HBLEND_ONE);
+
+	sceGuDisable (GU_ALPHA_TEST);
+	sceGuDisable (GU_DEPTH_TEST);
+
+	GL_TexEnv (GU_TFX_MODULATE);
+	sceGuColor (GU_HCOLOR_4UB(255, 255, 255, alpha));
+
+	GL_Bind (r_firescreentexture);
+
+	s = (rand () & 0x7fff) * (r_firescreentexture->sh * 0.2f / 32767.0f);
+	t = (rand () & 0x7fff) * (r_firescreentexture->th * 0.2f / 32767.0f);
+
+	gu_vert_htv_t* const out = (gu_vert_htv_t*)sceGuGetMemory(sizeof(gu_vert_htv_t) * 2);
+	out[0].u = s;
+	out[0].v = t;
+	out[0].x = 0;
+	out[0].y = 0;
+	out[0].z = 0;
+	out[1].u = s + r_firescreentexture->sh * 0.8f;
+	out[1].v = t + r_firescreentexture->th * 0.8f;
+	out[1].x = vid.width;
+	out[1].y = vid.height;
+	out[1].z = 0;
+	sceGuDrawArray (GU_SPRITES, GU_TEXTURE_16BIT | GU_VERTEX_16BIT | GU_TRANSFORM_2D, 2, 0, out);
+
+	GL_TexEnv (GU_TFX_REPLACE);
+	sceGuDisable (GU_BLEND);
+	sceGuBlendFunc (GU_ADD, GU_SRC_ALPHA, GU_ONE_MINUS_SRC_ALPHA, 0, 0);
+	sceGuColor (GU_HCOLOR_DEFAULT);
+
+	sceGuEnable (GU_ALPHA_TEST);
+}
+#endif
 
 /*
 ============
@@ -552,6 +1026,15 @@ void R_PolyBlend (void)
 		return;
 	if (!v_blend[3])
 		return;
+
+#ifdef KINGPIN_ENGINE
+	if(r_firescreentexture && v_blend[0] > 0.8f &&
+		v_blend[1] > 0.5f && v_blend[1] < v_blend[0] && v_blend[2] < 0.2f)
+	{
+		R_DrawFirescreen();
+		return;
+	}
+#endif
 
 	sceGuEnable (GU_BLEND);
 	sceGuDisable (GU_DEPTH_TEST);
@@ -594,7 +1077,11 @@ void R_SetupFrame (void)
 	AngleVectors (r_newrefdef.viewangles, vpn, vright, vup);
 
 // current viewcluster
+#ifdef KINGPIN_ENGINE
+	if ( !( r_newrefdef.rdflags & ( RDF_NOWORLDMODEL | RDF_NOWORLDMODELALPHA ) ) )
+#else
 	if ( !( r_newrefdef.rdflags & RDF_NOWORLDMODEL ) )
+#endif
 	{
 		r_oldviewcluster = r_viewcluster;
 		r_oldviewcluster2 = r_viewcluster2;
@@ -631,7 +1118,18 @@ void R_SetupFrame (void)
 
 	c_brush_polys = 0;
 	c_alias_polys = 0;
-
+#ifdef KINGPIN_ENGINE
+	if ( r_newrefdef.rdflags & RDF_NOWORLDMODELALPHA )
+	{
+		/* Inventory/menu model views retain the existing colour buffer and
+		 * clear only depth inside their viewport (FUN_1000ff80). */
+		sceGuEnable( GU_SCISSOR_TEST );
+		sceGuScissor( r_newrefdef.x, vid.height - r_newrefdef.height - r_newrefdef.y,
+			r_newrefdef.width, r_newrefdef.height );
+		sceGuClear( GU_DEPTH_BUFFER_BIT | GU_FAST_CLEAR_BIT );
+		sceGuDisable( GU_SCISSOR_TEST );
+	}
+#endif
 #if 0 // not used, sceGuClear has a bug
 	// clear out the portion of the screen that the NOWORLDMODEL defines
 	if ( r_newrefdef.rdflags & RDF_NOWORLDMODEL )
@@ -725,6 +1223,67 @@ void R_SetupGL (void)
 	sceGuEnable (GU_DEPTH_TEST);
 }
 
+#ifdef KINGPIN_ENGINE
+/*
+====================
+R_SetFog
+
+PSP GE has linear fog only. Choose the endpoint such that the
+linear fog amount at the renderer's 4096-unit far clip matches GL_EXP.
+====================
+*/
+void R_SetFog (float density, vec3_t color, float density2, vec3_t color2)
+{
+	if (density <= 0.0f)
+	{
+		gl_state.fog.enabled = false;
+		gl_state.fog.modified = true;
+		return;
+	}
+
+	gl_state.fog.near = 0.0f;
+	gl_state.fog.far =
+		4096.0f / (1.0f - expf(-density * 4096.0f));
+	gl_state.fog.color = GU_HCOLOR_4FV(color);
+	gl_state.fog.enabled = true;
+	gl_state.fog.modified = true;
+
+	Com_DPrintf ("R_SetFog: %f %f %#010X\n", 
+		gl_state.fog.near, 
+		gl_state.fog.far, 
+		gl_state.fog.color);
+}
+
+/*
+====================
+R_SetupFog
+====================
+*/
+/* Retail FUN_1000cce0, called once per 3D frame before R_DrawWorld. */
+void R_SetupFog (void)
+{
+	if (!gl_fog->value || !gl_state.fog.enabled)
+	{
+		if (gl_fog->modified || gl_state.fog.modified)
+			sceGuDisable (GU_FOG);
+
+		gl_fog->modified = false;
+		gl_state.fog.modified = false;
+        return;
+    }
+
+	if (!gl_fog->modified && !gl_state.fog.modified)
+		return;
+
+	sceGuEnable (GU_FOG);
+	sceGuFog (gl_state.fog.near, gl_state.fog.far, gl_state.fog.color);
+	sceGuClearColor (gl_state.fog.color);
+
+	gl_fog->modified = false;
+	gl_state.fog.modified = false;
+}
+#endif
+
 /*
 =============
 R_Clear
@@ -747,6 +1306,18 @@ void R_Clear (void)
 	sceGuDepthFunc (GU_LEQUAL);
 	sceGuDepthRange (gldepthmin, gldepthmax);
 }
+
+#ifdef KINGPIN_ENGINE
+/*
+=============
+R_ClearDepth
+=============
+*/
+void R_ClearDepth (void)
+{
+	sceGuClear (GU_DEPTH_BUFFER_BIT);
+}
+#endif
 
 /*
 ================
@@ -771,7 +1342,15 @@ void R_RenderView (refdef_t *fd)
 		c_alias_polys = 0;
 	}
 
+#ifdef KINGPIN_ENGINE
+	R_UpdateSFXTime ();
+#endif
+
 	R_PushDlights ();
+
+#ifdef KINGPIN_ENGINE
+	R_PushSurfaceLights ();
+#endif
 
 #if 0
 	if (gl_finish->value)
@@ -786,25 +1365,69 @@ void R_RenderView (refdef_t *fd)
 
 	R_MarkLeaves ();	// done here so we know if we're in water
 
+#ifdef KINGPIN_ENGINE
+	R_SetupFog ();
+#endif
+
 	R_DrawWorld ();
+
+#ifdef KINGPIN_ENGINE
+	R_DrawReflectionsSurfaces ();
+#endif
 
 	R_DrawEntitiesOnList ();
 
 	R_RenderDlights ();
 
-	R_DrawParticles ();
-
+#ifdef KINGPIN_ENGINE
+	/* Retail draws queued alpha geometry first, then SFX and both particle
+	 * lists, followed by the deferred weapon-model effect. */
 	R_DrawAlphaSurfaces ();
+	if (!(r_newrefdef.rdflags & RDF_NOWORLDMODELALPHA))
+	{
+		R_DrawSFX ();
+		R_DrawParticles ();
+		R_DrawDeferredSFX ();
+	}
+#else
+	R_DrawParticles ();
+	R_DrawAlphaSurfaces ();
+#endif
 
 	R_PolyBlend(); // flash
 
 	if (r_speeds->value)
 	{
+#ifdef KINGPIN_ENGINE
+		static int fps_samples;
+		static float fps_total;
+		static float fps_average;
+
+		if (r_detail_alpha->value > 0.0f)
+		{
+			if (fps_samples < 15)
+			{
+				fps_total += R_SFXFramerate ();
+				fps_samples++;
+			}
+			else
+			{
+				fps_average = fps_total / fps_samples;
+				fps_samples = 0;
+				fps_total = 0.0f;
+			}
+			ri.Con_Printf (PRINT_ALL,
+				"%4i wpoly %4i epoly %i tex %i lmaps %i fps\n",
+				c_brush_polys, c_alias_polys, c_visible_textures,
+				c_visible_lightmaps, Q_ftol (fps_average));
+		}
+#else
 		ri.Con_Printf (PRINT_ALL, "%4i wpoly %4i epoly %i tex %i lmaps\n",
 			c_brush_polys,
 			c_alias_polys,
 			c_visible_textures,
 			c_visible_lightmaps);
+#endif
 	}
 }
 
@@ -930,6 +1553,13 @@ void R_RenderFrame (refdef_t *fd)
 
 void R_Register( void )
 {
+#ifdef KINGPIN_ENGINE
+	r_showbbox = ri.Cvar_Get ("r_showbbox", "0", 0);
+	r_detail_alpha = ri.Cvar_Get ("r_detail_alpha", "0.2", CVAR_ARCHIVE);
+	r_detail_scale = ri.Cvar_Get ("r_detail_scale", "8.0", CVAR_ARCHIVE);
+	r_detail_dist = ri.Cvar_Get ("r_detail_dist", "256", CVAR_ARCHIVE);
+	r_directional_lighting = ri.Cvar_Get ("r_directional_lighting", "1", CVAR_ARCHIVE);
+#endif
 	r_lefthand = ri.Cvar_Get( "hand", "0", CVAR_USERINFO | CVAR_ARCHIVE );
 	r_norefresh = ri.Cvar_Get ("r_norefresh", "0", 0);
 	r_fullbright = ri.Cvar_Get ("r_fullbright", "0", 0);
@@ -965,6 +1595,21 @@ void R_Register( void )
 	gl_lockpvs = ri.Cvar_Get( "gl_lockpvs", "0", 0 );
 	gl_saturatelighting = ri.Cvar_Get( "gl_saturatelighting", "0", 0 );
 
+#ifdef KINGPIN_ENGINE
+	gl_fog = ri.Cvar_Get ("gl_fog", "1", CVAR_ARCHIVE);
+	gl_reflections = ri.Cvar_Get ("gl_reflections", "1", 0);
+	gl_specular = ri.Cvar_Get ("gl_specular", "1", CVAR_ARCHIVE);
+	gl_test_specular = ri.Cvar_Get ("gl_test_specular", "0", 0);
+	r_sfx_pause = ri.Cvar_Get ("r_sfx_pause", "0", 0);
+	r_debug_lighting = ri.Cvar_Get ("r_debug_lighting", "0", 0);
+	r_painskins = ri.Cvar_Get ("r_painskins", "1", CVAR_ARCHIVE);
+	gl_maxtexsize = ri.Cvar_Get ("gl_maxtexsize", "999", CVAR_ARCHIVE);
+	burn_enabled = ri.Cvar_Get ("burn_enabled", "0", 0);
+	burn_r = ri.Cvar_Get ("burn_r", "1.0", 0);
+	burn_g = ri.Cvar_Get ("burn_g", "1.0", 0);
+	burn_b = ri.Cvar_Get ("burn_b", "1.0", 0);
+#endif
+
 	vid_fullscreen = ri.Cvar_Get( "vid_fullscreen", "0", CVAR_ARCHIVE );
 	vid_gamma = ri.Cvar_Get( "vid_gamma", "1.0", CVAR_ARCHIVE );
 	vid_ref = ri.Cvar_Get( "vid_ref", "gu", CVAR_ARCHIVE );
@@ -972,6 +1617,9 @@ void R_Register( void )
 	ri.Cmd_AddCommand( "imagelist", GL_ImageList_f );
 	ri.Cmd_AddCommand( "screenshot", GL_ScreenShot_f );
 	ri.Cmd_AddCommand( "modellist", Mod_Modellist_f );
+#ifdef KINGPIN_ENGINE
+	ri.Cmd_AddCommand ("burn_pickcolor", R_BurnPickColor_f);
+#endif
 }
 
 /*
@@ -1080,6 +1728,9 @@ qboolean R_Init( void *hinstance, void *hWnd )
 	GL_InitImages ();
 	Mod_Init ();
 	R_InitParticleTexture ();
+#ifdef KINGPIN_ENGINE
+	R_InitSFX ();
+#endif
 	Draw_InitLocal ();
 
 	return true;
@@ -1095,6 +1746,13 @@ void R_Shutdown (void)
 	ri.Cmd_RemoveCommand ("modellist");
 	ri.Cmd_RemoveCommand ("screenshot");
 	ri.Cmd_RemoveCommand ("imagelist");
+#ifdef KINGPIN_ENGINE
+	ri.Cmd_RemoveCommand ("burn_pickcolor");
+#endif
+
+#ifdef KINGPIN_ENGINE
+	R_ClearSFX ();
+#endif
 
 	Mod_FreeAll ();
 
@@ -1200,6 +1858,9 @@ void R_SetPalette (const unsigned char *palette)
 	}
 
 	GL_SetTexturePalette (r_rawpalette);
+#ifdef KINGPIN_ENGINE
+	gl_state.screenpalette = (byte*)&r_rawpalette[0];
+#endif
 
 	sceGuClearColor (0x00000000);
 	sceGuClear (GU_COLOR_BUFFER_BIT | GU_FAST_CLEAR_BIT);
@@ -1302,12 +1963,35 @@ void	R_ClearRegistered (void);
 void	R_RenderFrame (refdef_t *fd);
 
 struct image_s	*Draw_FindPic (char *name);
-
+/*
 void	Draw_Pic (int x, int y, char *name);
 void	Draw_Char (int x, int y, int c);
 void	Draw_TileClear (int x, int y, int w, int h, char *name);
 void	Draw_Fill (int x, int y, int w, int h, int c);
 void	Draw_FadeScreen (void);
+*/
+
+#if 1
+
+void R_SetSkyKp(char *name)
+{
+	char	reflection_name[MAX_QPATH];
+	vec3_t	zero_vec;
+
+	VectorClear(zero_vec);
+
+	R_SetSky(name, 0.0f, zero_vec);
+
+
+	if (r_worldreflectiontexture)
+		GL_FreeImage (r_worldreflectiontexture);
+
+	Com_sprintf (reflection_name, sizeof(reflection_name), "env/%swinrefl.tga", name);
+	r_worldreflectiontexture = GL_FindImage (reflection_name, IMG_TYPE_SKY);
+	//if (!r_worldreflectiontexture)
+	//	r_worldreflectiontexture = r_notexture;
+}
+#endif
 
 /*
 @@@@@@@@@@@@@@@@@@@@@
@@ -1322,7 +2006,52 @@ refexport_t GetRefAPI (refimport_t rimp )
 	ri = rimp;
 
 	re.api_version = API_VERSION;
+#ifdef KINGPIN_ENGINE
+	re.BeginRegistration = R_BeginRegistration;
+	re.RegisterModel = R_RegisterModel;
+	re.RegisterSkin = R_RegisterSkin;
+	re.RegisterPic = Draw_FindPic;
+	re.RegisterModelSkin = R_RegisterModelSkin;
 
+	re.SetSky = R_SetSkyKp;
+	re.SetFog = R_SetFog;
+
+	re.EndRegistration = R_EndRegistration;
+
+	re.RenderFrame = R_RenderFrame;
+
+	re.ClearDepth = R_ClearDepth;
+
+	re.DrawGetPicSize = Draw_GetPicSize;
+	re.DrawPic = Draw_Pic;
+	re.DrawPicTransparent = Draw_PicTransparent;
+	re.DrawStretchPic = Draw_StretchPic;
+	re.DrawStretchPicTransparent = Draw_StretchPicTransparent;
+	re.DrawChar = Draw_Char;
+	re.DrawCharUpper = Draw_CharUpper;
+	re.DrawChar2 = Draw_Char2;
+	re.DrawBigChar = Draw_BigChar;
+	re.DrawTileClear = Draw_TileClear;
+	re.DrawFill = Draw_Fill;
+	re.DrawFillRGBA = Draw_FillRGBA;
+	re.DrawLine = Draw_Line;
+	re.DrawFadeScreen= Draw_FadeScreen;
+	re.DrawStretchRaw = Draw_StretchRaw;
+
+	re.Init = R_Init;
+	re.Shutdown = R_Shutdown;
+
+	re.CinematicSetPalette = R_SetPalette;
+	re.BeginFrame = R_BeginFrame;
+	re.EndFrame = GU_EndFrame;
+
+	re.AppActivate = GU_AppActivate;
+
+	re.AddSFX = R_AddSFX;
+
+	R_ResetSFXLists ();
+
+#else
 	re.BeginRegistration = R_BeginRegistration;
 	re.RegisterModel = R_RegisterModel;
 	re.RegisterSkin = R_RegisterSkin;
@@ -1352,7 +2081,7 @@ refexport_t GetRefAPI (refimport_t rimp )
 	re.EndFrame = GU_EndFrame;
 
 	re.AppActivate = GU_AppActivate;
-
+#endif
 	return re;
 }
 

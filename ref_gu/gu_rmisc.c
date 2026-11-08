@@ -82,6 +82,11 @@ void R_InitParticleTexture (void)
 	//
 	r_notexture = GL_LoadPic ("***r_notexture***", (byte *)notexture, 16, 16,
 		IMG_TYPE_WALL | IMG_FORMAT_IND_32 | IMG_FLAG_EXTERNAL | IMG_FLAG_SWIZZLED);
+#ifdef KINGPIN_ENGINE
+	r_reflectiontexture = GL_FindImage ("textures/reflmap.tga", IMG_TYPE_SFX);
+	r_speculartexture = GL_FindImage ("textures/specular.tga", IMG_TYPE_SFX);
+	r_firescreentexture = GL_FindImage ("sprites/firescreen.tga", IMG_TYPE_SFX);
+#endif
 }
 
 
