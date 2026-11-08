@@ -390,6 +390,23 @@ void SV_WriteServerFile (qboolean autosave)
 	ge->WriteGame (name, autosave);
 }
 
+#ifdef KINGPIN_ENGINE
+/*
+==============
+SV_SaveCurrentGame
+
+Game import: saves before a level change so hired gang members are
+restored when the map is restarted
+==============
+*/
+void SV_SaveCurrentGame (void)
+{
+	SV_WriteLevelFile ();
+	SV_WriteServerFile (true);
+	SV_CopySaveGame ("current", "save0");
+}
+#endif
+
 /*
 ==============
 SV_ReadServerFile

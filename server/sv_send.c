@@ -289,8 +289,21 @@ void SV_StartSound (vec3_t origin, edict_t *entity, int channel,
 //	if (channel < 0 || channel > 15)
 //		Com_Error (ERR_FATAL, "SV_StartSound: channel = %i", channel);
 
+#ifdef KINGPIN_ENGINE
+	if (timeofs < -3.5 || timeofs > 0.255)
+		Com_Error (ERR_FATAL, "SV_StartSound: timeofs = %f", timeofs);
+
+	if ((channel & 7) == CHAN_VOICE)
+	{
+		if (entity->voice_pitch && entity->voice_pitch != 1.0)
+			timeofs = -entity->voice_pitch;
+		if (voice_test->value != 1.0)
+			timeofs = -voice_test->value;
+	}
+#else
 	if (timeofs < 0 || timeofs > 0.255)
 		Com_Error (ERR_FATAL, "SV_StartSound: timeofs = %f", timeofs);
+#endif
 
 	ent = NUM_FOR_EDICT(entity);
 
@@ -320,8 +333,15 @@ void SV_StartSound (vec3_t origin, edict_t *entity, int channel,
 	// always send the entity number for channel overrides
 	flags |= SND_ENT;
 
+#ifdef KINGPIN_ENGINE
+	if (timeofs > 0)
+		flags |= SND_OFFSET;
+	else if (timeofs < 0)
+		flags |= SND_PITCH;
+#else
 	if (timeofs)
 		flags |= SND_OFFSET;
+#endif
 
 	// use the entity origin unless it is a bmodel or explicitly specified
 	if (!origin)
@@ -348,6 +368,10 @@ void SV_StartSound (vec3_t origin, edict_t *entity, int channel,
 		MSG_WriteByte (&sv.multicast, attenuation*64);
 	if (flags & SND_OFFSET)
 		MSG_WriteByte (&sv.multicast, timeofs*1000);
+#ifdef KINGPIN_ENGINE
+	if (flags & SND_PITCH)
+		MSG_WriteByte (&sv.multicast, timeofs*-64);
+#endif
 
 	if (flags & SND_ENT)
 		MSG_WriteShort (&sv.multicast, sendchan);

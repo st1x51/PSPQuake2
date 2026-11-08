@@ -23,7 +23,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 //define	PARANOID			// speed sapping error checking
 
 #include "../qcommon/qcommon.h"
-#include "../game/game.h"
+#include "../gamesrc/game.h"
 
 //=============================================================================
 
@@ -192,6 +192,10 @@ extern	server_t		sv;					// local server
 
 extern	cvar_t		*sv_paused;
 extern	cvar_t		*maxclients;
+#ifdef KINGPIN_ENGINE
+extern	cvar_t		*net_origin_offset;	// allow U_ORIGIN_OFFSET
+extern	cvar_t		*voice_test;
+#endif
 extern	cvar_t		*sv_noreload;			// don't reload level state when reentering
 extern	cvar_t		*sv_airaccelerate;		// don't reload level state when reentering
 											// development tool
@@ -211,6 +215,10 @@ void SV_DropClient (client_t *drop);
 int SV_ModelIndex (char *name);
 int SV_SoundIndex (char *name);
 int SV_ImageIndex (char *name);
+#ifdef KINGPIN_ENGINE
+int SV_SkinIndex (int modelindex, char *name);
+void SV_SaveCurrentGame (void);
+#endif
 
 void SV_WriteClientdataToMessage (client_t *client, sizebuf_t *msg);
 
@@ -223,6 +231,11 @@ void SV_UserinfoChanged (client_t *cl);
 
 void Master_Heartbeat (void);
 void Master_Packet (void);
+#if defined(KINGPIN) && defined(_WIN32)
+int SV_GameSpyInit (void);
+void SV_GameSpyFrame (void);
+void SV_GameSpyShutdown (void);
+#endif
 
 //
 // sv_init.c

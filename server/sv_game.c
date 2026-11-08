@@ -295,6 +295,138 @@ void PF_StartSound (edict_t *entity, int channel, int sound_num, float volume,
 
 //==============================================
 
+#ifdef KINGPIN_ENGINE
+/*
+===============================================================================
+
+.MDX OBJECT BOUNDS
+
+Each object of an .mdx model part has a bounding box per frame. The game
+dll owns the array of bounds pointers; the server loads the boxes out of
+the .mdx file and stores 1-based indexes into that array in
+model_part->object_bounds[] (kingpin.exe @0043c270).
+
+===============================================================================
+*/
+
+#define	MAX_OBJECTBOUNDS_FILES	256
+#define	MAX_OBJECTBOUNDS		2048	// size of the game dll's array
+
+static char	objectbounds_files[MAX_OBJECTBOUNDS_FILES][MAX_QPATH];
+static int	objectbounds_indexes[MAX_OBJECTBOUNDS_FILES][MAX_MODELPART_OBJECTS];
+static int	num_objectbounds_files;
+
+/*
+===============
+PF_ClearObjectBoundsCached
+
+Called by the game when it frees its object bounds (new level)
+===============
+*/
+void PF_ClearObjectBoundsCached (void)
+{
+	num_objectbounds_files = 0;
+}
+
+static void MDX_SetBoundsFilename (model_part_t *part, char *name)
+{
+	// the game's TAG_LEVEL, freed on level change
+	part->objectbounds_filename = Z_TagMalloc (strlen(name)+1, TAG_LEVEL);
+	strcpy (part->objectbounds_filename, name);
+}
+
+/*
+===============
+MDX_GetObjectBounds
+===============
+*/
+void MDX_GetObjectBounds (char *name, model_part_t *part)
+{
+	int				i, j;
+	byte			*buf;
+	dmdx_t			header;
+	int				*numbounds;
+	object_bounds_t	**bounds;
+	object_bounds_t	*b;
+
+	// already loaded for another entity
+	for (i=0 ; i<num_objectbounds_files ; i++)
+	{
+		if (strcmp (name, objectbounds_files[i]))
+			continue;
+		memcpy (part->object_bounds, objectbounds_indexes[i], sizeof(part->object_bounds));
+		MDX_SetBoundsFilename (part, name);
+		return;
+	}
+
+	if (num_objectbounds_files >= MAX_OBJECTBOUNDS_FILES)
+	{
+		Com_Printf ("MDX_GetObjectBounds: Reached MAX_MODELS limit, unable to load object-bounds\n");
+		return;
+	}
+
+	// temp
+	buf = FS_LoadFile (name, NULL, FS_PATH_ALL | FS_FLAG_MTEMP);
+	if (!buf)
+	{
+		Com_Printf ("MDX_GetObjectBounds: Unable to find MDX file \"%s\"\nUsing simple collision detection.\n", name);
+		return;
+	}
+
+	numbounds = ge->GetNumObjectBounds ();
+	bounds = (object_bounds_t **)ge->GetObjectBoundsPointer ();
+
+	for (i=0 ; i<sizeof(header)/4 ; i++)
+		((int *)&header)[i] = LittleLong (((int *)buf)[i]);
+
+	memset (part->object_bounds, 0, sizeof(part->object_bounds));
+
+	if (*numbounds > MAX_OBJECTBOUNDS)
+	{
+		Com_Printf ("MDX_GetObjectBounds: Out of ObjectBounds items\n");
+		//FS_FreeFile (buf); // FS_FLAG_MTEMP !
+		return;
+	}
+
+	strcpy (objectbounds_files[num_objectbounds_files], name);
+	memset (objectbounds_indexes[num_objectbounds_files], 0, sizeof(objectbounds_indexes[0]));
+
+	for (i=0 ; i<header.num_subobjects && i<MAX_MODELPART_OBJECTS ; i++)
+	{
+		// the game's TAG_LEVEL, freed on level change
+		b = Z_TagMalloc (header.num_frames * sizeof(object_bounds_t), TAG_LEVEL);
+		memcpy (b, buf + header.ofs_bbox_frames + header.num_frames * i * sizeof(object_bounds_t),
+			header.num_frames * sizeof(object_bounds_t));
+		for (j=0 ; j<header.num_frames*6 ; j++)
+			((float *)b)[j] = LittleFloat (((float *)b)[j]);
+
+		bounds[*numbounds] = b;
+		(*numbounds)++;
+		part->object_bounds[i] = *numbounds;
+		objectbounds_indexes[num_objectbounds_files][i] = *numbounds;
+	}
+
+	MDX_SetBoundsFilename (part, name);
+	num_objectbounds_files++;
+
+	//FS_FreeFile (buf); // FS_FLAG_MTEMP !
+}
+
+/*
+===============
+PF_StopRender
+
+Keeps the loading plaque up until the next SCR_EndLoadingPlaque
+===============
+*/
+void PF_StopRender (void)
+{
+	com_stoprender = true;
+}
+#endif
+
+//==============================================
+
 /*
 ===============
 SV_ShutdownGameProgs
@@ -351,6 +483,9 @@ void SV_InitGameProgs (void)
 	import.modelindex = SV_ModelIndex;
 	import.soundindex = SV_SoundIndex;
 	import.imageindex = SV_ImageIndex;
+#ifdef KINGPIN_ENGINE
+	import.skinindex = SV_SkinIndex;
+#endif
 
 	import.configstring = PF_Configstring;
 	import.sound = PF_StartSound;
@@ -369,6 +504,10 @@ void SV_InitGameProgs (void)
 	import.TagMalloc = Z_TagMallocGame;
 	import.TagFree = Z_FreeGame;
 	import.FreeTags = Z_FreeTagsGame;
+#ifdef KINGPIN_ENGINE
+	import.ClearObjectBoundsCached = PF_ClearObjectBoundsCached;
+	import.StopRender = PF_StopRender;
+#endif
 
 	import.cvar = Cvar_Get;
 	import.cvar_set = Cvar_Set;
@@ -380,6 +519,10 @@ void SV_InitGameProgs (void)
 	import.AddCommandString = Cbuf_AddText;
 
 	import.DebugGraph = SCR_DebugGraph;
+#ifdef KINGPIN_ENGINE
+	import.GetObjectBounds = MDX_GetObjectBounds;
+	import.SaveCurrentGame = SV_SaveCurrentGame;
+#endif
 	import.SetAreaPortalState = CM_SetAreaPortalState;
 	import.AreasConnected = CM_AreasConnected;
 
@@ -391,9 +534,9 @@ void SV_InitGameProgs (void)
 	import.FileSeek = FS_FSeek;
 	import.FileClose = FS_FClose;
 	import.GetWriteDir  = FS_GetWriteDir;
-
+#ifndef KINGPIN_ENGINE
 	import.monster_flash_offset = monster_flash_offset;
-
+#endif
 	// v0.1 API END
 
 	import.FileGetc = FS_Getc;

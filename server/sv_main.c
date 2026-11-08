@@ -40,7 +40,12 @@ cvar_t *allow_download_models;
 cvar_t *allow_download_sounds;
 cvar_t *allow_download_maps;
 
+#ifdef KINGPIN_ENGINE
+cvar_t	*net_origin_offset;		// send small entity moves as byte offsets
+cvar_t	*voice_test;				// forces a voice pitch when not 1.0
+#else
 cvar_t *sv_airaccelerate;
+#endif
 
 cvar_t	*sv_noreload;			// don't reload level state when reentering
 
@@ -109,7 +114,11 @@ Builds the string that is sent as heartbeats and status replies
 char	*SV_StatusString (void)
 {
 	char	player[1024];
+#ifdef KINGPIN_ENGINE
+	static char	status[MAX_MSGLEN];		// kingpin.exe @0043dbfe: limit 1400
+#else
 	static char	status[MAX_MSGLEN - 16];
+#endif
 	int		i;
 	client_t	*cl;
 	int		statusLength;
@@ -805,6 +814,11 @@ void SV_Frame (int msec)
 	// save the entire world state if recording a serverdemo
 	SV_RecordDemoMessage ();
 
+#if defined(KINGPIN_ENGINE) && defined(_WIN32)
+	// Process the separate retail GameSpy query socket before master heartbeat.
+	SV_GameSpyFrame ();
+#endif
+
 	// send a heartbeat to the master if needed
 	Master_Heartbeat ();
 
@@ -953,9 +967,17 @@ void SV_Init (void)
 	Cvar_Get ("skill", "1", 0);
 	Cvar_Get ("deathmatch", "0", CVAR_LATCH);
 	Cvar_Get ("coop", "0", CVAR_LATCH);
+#ifdef KINGPIN_ENGINE
+	Cvar_Get ("dmflags", va("%i", /*DF_INSTANT_ITEMS |*/ DF_NO_FRIENDLY_FIRE |
+		DF_SPAWN_FARTHEST), CVAR_ARCHIVE | CVAR_SERVERINFO);
+#else
 	Cvar_Get ("dmflags", va("%i", DF_INSTANT_ITEMS), CVAR_SERVERINFO);
+#endif
 	Cvar_Get ("fraglimit", "0", CVAR_SERVERINFO);
 	Cvar_Get ("timelimit", "0", CVAR_SERVERINFO);
+#ifdef KINGPIN_ENGINE
+	Cvar_Get ("cashlimit", "0", CVAR_SERVERINFO);
+#endif
 	Cvar_Get ("cheats", "0", CVAR_SERVERINFO|CVAR_LATCH);
 	Cvar_Get ("protocol", va("%i", PROTOCOL_VERSION), CVAR_SERVERINFO|CVAR_NOSET);;
 	maxclients = Cvar_Get ("maxclients", "1", CVAR_SERVERINFO | CVAR_LATCH);
@@ -967,16 +989,30 @@ void SV_Init (void)
 	sv_timedemo = Cvar_Get ("timedemo", "0", 0);
 	sv_enforcetime = Cvar_Get ("sv_enforcetime", "0", 0);
 	allow_download = Cvar_Get ("allow_download", "1", CVAR_ARCHIVE);
+#ifdef KINGPIN_ENGINE
+	allow_download_players  = Cvar_Get ("allow_download_players", "1", CVAR_ARCHIVE);
+#else
 	allow_download_players  = Cvar_Get ("allow_download_players", "0", CVAR_ARCHIVE);
+#endif
 	allow_download_models = Cvar_Get ("allow_download_models", "1", CVAR_ARCHIVE);
 	allow_download_sounds = Cvar_Get ("allow_download_sounds", "1", CVAR_ARCHIVE);
 	allow_download_maps	  = Cvar_Get ("allow_download_maps", "1", CVAR_ARCHIVE);
 
 	sv_noreload = Cvar_Get ("sv_noreload", "0", 0);
 
-	sv_airaccelerate = Cvar_Get("sv_airaccelerate", "0", CVAR_LATCH);
+#ifdef KINGPIN_ENGINE
+	Cvar_Get ("g_vehicle_test", "0", 0);
+	net_origin_offset = Cvar_Get ("net_origin_offset", "1", 0);
+	voice_test = Cvar_Get ("voice_test", "1.0", 0);
 
+	public_server = Cvar_Get ("public", "1", 0);
+#else
+	sv_airaccelerate = Cvar_Get("sv_airaccelerate", "0", CVAR_LATCH);
+	
 	public_server = Cvar_Get ("public", "0", 0);
+#endif
+
+
 
 	sv_reconnect_limit = Cvar_Get ("sv_reconnect_limit", "3", CVAR_ARCHIVE);
 
@@ -1034,6 +1070,10 @@ before Sys_Quit or Sys_Error
 */
 void SV_Shutdown (char *finalmsg, qboolean reconnect)
 {
+#if defined(KINGPIN_ENGINE) && defined(_WIN32)
+	SV_GameSpyShutdown ();
+#endif
+
 	if (svs.clients)
 		SV_FinalMessage (finalmsg, reconnect);
 

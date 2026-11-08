@@ -59,6 +59,62 @@ float	pm_wateraccelerate = 10;
 float	pm_friction = 6;
 float	pm_waterfriction = 1;
 float	pm_waterspeed = 400;
+#ifdef KINGPIN_ENGINE
+vec3_t	pm_vehicle_angles;
+
+/*
+==================
+PM_VehicleSlope
+
+kingpin.exe @00432510 tilts vehicles to the ground: it drops two small boxes
+128 units from 10 units either side of the vehicle along axis and returns
+the pitch of the line between where they land, in -180..180 (the angle
+maths is @004341b0, which unlike vectoangles does not round to integers).
+==================
+*/
+static vec3_t pm_vehicle_probe_mins = {-4, -4, 0};
+static vec3_t pm_vehicle_probe_maxs = {4, 4, 4};
+
+static float PM_VehicleSlope (vec3_t axis)
+{
+	vec3_t	start, end, first, delta;
+	trace_t	tr;
+	float	pitch, forward;
+
+	VectorMA (pml.origin, 10, axis, start);
+	start[2] = pml.origin[2];
+	VectorCopy (start, end);
+	end[2] = pml.origin[2] - 128;
+	tr = pm->trace (start, pm_vehicle_probe_mins, pm_vehicle_probe_maxs, end);
+	VectorCopy (tr.endpos, first);
+
+	VectorMA (pml.origin, -10, axis, start);
+	start[2] = pml.origin[2];
+	VectorCopy (start, end);
+	end[2] = pml.origin[2] - 128;
+	tr = pm->trace (start, pm_vehicle_probe_mins, pm_vehicle_probe_maxs, end);
+
+	VectorSubtract (tr.endpos, first, delta);
+	VectorNormalize (delta);
+
+	if (delta[0] == 0 && delta[1] == 0)
+		pitch = delta[2] > 0 ? 90 : 270;
+	else
+	{
+		forward = sqrt (delta[0]*delta[0] + delta[1]*delta[1]);
+		pitch = atan2 (delta[2], forward) * 180 / M_PI;
+		if (pitch < 0)
+			pitch += 360;
+	}
+
+	pitch = -pitch;
+	if (pitch > 180)
+		pitch -= 360;
+	if (pitch < -180)
+		pitch += 360;
+	return pitch;
+}
+#endif
 
 /*
 
@@ -171,6 +227,12 @@ void PM_StepSlideMove_ (void)
 		VectorCopy (trace.plane.normal, planes[numplanes]);
 		numplanes++;
 
+#ifdef KINGPIN_ENGINE
+		// kingpin.exe @00431400 reports near-vertical impacts (vehicle crash sounds)
+		if (fabs (trace.plane.normal[2]) < 0.6)
+			pm->wall_collision = 1;
+#endif
+
 #if 0
 	float		rub;
 
@@ -260,6 +322,43 @@ void PM_StepSlideMove_ (void)
 	{
 		VectorCopy (primal_velocity, pml.velocity);
 	}
+
+#ifdef KINGPIN_ENGINE
+	// kingpin.exe @00431400: keep contact with the ground when walking down
+	// slopes and stairs
+	if (pm->groundentity && pml.velocity[2] <= 0)
+	{
+		VectorCopy (pml.origin, end);
+		end[2] -= pml.frametime * 400;
+		trace = pm->trace (pml.origin, pm->mins, pm->maxs, end);
+		if (trace.fraction < 1 && !trace.startsolid)
+			VectorCopy (trace.endpos, pml.origin);
+	}
+
+	// bikes and cars that lost speed against a slope get deflected up it
+	// (or launched off a ramp) instead of stopping
+	if (pm->s.pm_type == PM_BIKE || pm->s.pm_type == PM_CAR)
+	{
+		float	speed;
+
+		speed = VectorLength (primal_velocity);
+		if (speed - VectorLength (pml.velocity) > 10)
+		{
+			VectorAdd (pml.origin, primal_velocity, end);
+			trace = pm->trace (pml.origin, pm->mins, pm->maxs, end);
+			if (trace.fraction < 1 && trace.plane.normal[2] < 0.5 && trace.plane.normal[2] > -0.8)
+			{
+				VectorNormalize2 (primal_velocity, dir);
+				VectorAdd (dir, trace.plane.normal, dir);
+				VectorNormalize (dir);
+				VectorScale (dir, speed, pml.velocity);
+				if (trace.plane.normal[2] > -0.3)
+					pml.velocity[2] += 180;
+				pm->groundentity = NULL;
+			}
+		}
+	}
+#endif
 }
 
 /*
@@ -348,6 +447,11 @@ void PM_Friction (void)
 	float	speed, newspeed, control;
 	float	friction;
 	float	drop;
+
+#ifdef KINGPIN_ENGINE
+	if (pm->s.pm_type == PM_CAR)
+		return;		// kingpin.exe @00431b80
+#endif
 	
 	vel = pml.velocity;
 	
@@ -365,13 +469,31 @@ void PM_Friction (void)
 	if ((pm->groundentity && pml.groundsurface && !(pml.groundsurface->flags & SURF_SLICK) ) || (pml.ladder) )
 	{
 		friction = pm_friction;
+#ifdef KINGPIN_ENGINE
+		if (pm->s.pm_type == PM_HOVERCAR ||
+			pm->s.pm_type == PM_HOVERCAR_GROUND || pm->s.pm_type == PM_BIKE)
+		{
+			friction *= 0.1f;
+			if (pm->s.pm_type == PM_BIKE && speed > 1000)
+				friction *= 0.3f;
+		}
+#endif
+
 		control = speed < pm_stopspeed ? pm_stopspeed : speed;
 		drop += control*friction*pml.frametime;
 	}
 
 // apply water friction
+#ifdef KINGPIN_ENGINE
+	// only when swimming; the jetpack gets a fixed air drag instead
+	if (pm->waterlevel >= 2 && !pml.ladder)
+		drop += speed*pm_waterfriction*pm->waterlevel*pml.frametime;
+	else if (pm->s.pm_type == PM_NORMAL_WITH_JETPACK)
+		drop += speed*pm_waterfriction*2*pml.frametime;
+#else
 	if (pm->waterlevel && !pml.ladder)
 		drop += speed*pm_waterfriction*pm->waterlevel*pml.frametime;
+#endif
 
 // scale the velocity
 	newspeed = speed - drop;
@@ -394,6 +516,93 @@ PM_Accelerate
 Handles user intended acceleration
 ==============
 */
+#ifdef KINGPIN_ENGINE
+/*
+kingpin.exe @00431d40. Vehicles get twice the wish speed and a thrust that
+grows with their speed, never push against their direction of travel
+(the input is then replaced by the view direction with no speed), and are
+steered: the velocity is turned towards the wanted direction by a fraction
+of 2*frametime (all at once for a bike on the ground). Hovercars and
+bikes only accelerate on the ground. PM_CAR is not accelerated at all.
+*/
+void PM_Accelerate (vec3_t wishdir, float wishspeed, float accel)
+{
+	static vec3_t	steer;		// kept between calls, as in kingpin.exe
+	int			i;
+	float		addspeed, accelspeed, currentspeed;
+	float		speed, frac;
+	vec3_t		veldir;
+	int			type;
+
+	type = pm->s.pm_type;
+	if (type == PM_CAR)
+		return;
+
+	if (type == PM_HOVERCAR_GROUND || type == PM_HOVERCAR
+		|| (type == PM_BIKE && pm->cmd.forwardmove >= 0))
+	{
+		wishspeed *= 2;
+		accel *= VectorLength (pml.velocity) / (pm_maxspeed + pm_maxspeed) * 0.08 + 0.02;
+		if (type == PM_BIKE)
+			accel *= 0.75;
+		if (VectorNormalize2 (pml.velocity, veldir) > 0 && DotProduct (veldir, wishdir) < 0)
+		{
+			wishspeed = 0;
+			VectorCopy (pml.forward, wishdir);
+		}
+	}
+
+	if ((type != PM_HOVERCAR_GROUND && type != PM_BIKE) || pm->groundentity)
+	{
+		currentspeed = DotProduct (pml.velocity, wishdir);
+		addspeed = wishspeed - currentspeed;
+		if (addspeed > 0)
+		{
+			accelspeed = pml.frametime*wishspeed*accel;
+			if (accelspeed > addspeed)
+				accelspeed = addspeed;
+			for (i=0 ; i<3 ; i++)
+				pml.velocity[i] += accelspeed*wishdir[i];
+		}
+	}
+
+	// steering
+	if ((type == PM_HOVERCAR_GROUND || type == PM_HOVERCAR) && pm->cmd.forwardmove > 0)
+		;
+	else if (type == PM_BIKE && VectorLength (pml.velocity) > 0)
+		;
+	else
+		return;
+
+	speed = VectorNormalize2 (pml.velocity, veldir);
+	frac = pml.frametime + pml.frametime;
+	if (type == PM_BIKE && pm->groundentity)
+		frac = 1.0;
+
+	if (wishdir[0] == 0 && wishdir[1] == 0)
+	{
+		if (DotProduct (pml.forward, veldir) <= 0)
+			VectorScale (pml.forward, -frac, steer);
+		else
+			VectorScale (pml.forward, frac, steer);
+	}
+	else if (DotProduct (pml.forward, veldir) <= 0)
+	{	// facing away from the travel direction: push straight on and
+		// steer with what is left from the last call
+		if (pm->cmd.forwardmove < 1)
+			return;
+		VectorMA (pml.velocity, wishspeed + wishspeed, wishdir, pml.velocity);
+	}
+	else if (pm->cmd.forwardmove >= 0)
+		VectorScale (wishdir, frac, steer);
+	else
+		VectorScale (pml.forward, frac, steer);
+
+	VectorMA (steer, 1.0 - frac, veldir, steer);
+	VectorNormalize (steer);
+	VectorScale (steer, speed, pml.velocity);
+}
+#else
 void PM_Accelerate (vec3_t wishdir, float wishspeed, float accel)
 {
 	int			i;
@@ -410,6 +619,7 @@ void PM_Accelerate (vec3_t wishdir, float wishspeed, float accel)
 	for (i=0 ; i<3 ; i++)
 		pml.velocity[i] += accelspeed*wishdir[i];	
 }
+#endif
 
 void PM_AirAccelerate (vec3_t wishdir, float wishspeed, float accel)
 {
@@ -425,6 +635,13 @@ void PM_AirAccelerate (vec3_t wishdir, float wishspeed, float accel)
 	accelspeed = accel * wishspeed * pml.frametime;
 	if (accelspeed > addspeed)
 		accelspeed = addspeed;
+
+#ifdef KINGPIN_ENGINE
+	// kingpin.exe @004320a0: vehicles have less air control
+	if (pm->s.pm_type == PM_HOVERCAR_GROUND || pm->s.pm_type == PM_HOVERCAR
+		|| pm->s.pm_type == PM_BIKE)
+		accelspeed *= 0.6;
+#endif
 	
 	for (i=0 ; i<3 ; i++)
 		pml.velocity[i] += accelspeed*wishdir[i];	
@@ -572,6 +789,139 @@ PM_AirMove
 
 ===================
 */
+#ifdef KINGPIN_ENGINE
+/*
+kingpin.exe @00432510. Besides walking this moves the vehicles and the
+jetpack. Unlike Quake II gravity also pulls while on the ground (the slide
+move then keeps the player on it), and after moving a vehicle the ground
+under it is probed for pm_vehicle_angles.
+*/
+void PM_AirMove (void)
+{
+	int			i;
+	int			type;
+	vec3_t		wishvel;
+	float		fmove, smove;
+	vec3_t		wishdir;
+	float		wishspeed;
+	float		maxspeed;
+	float		angle;
+
+	type = pm->s.pm_type;
+	fmove = pm->cmd.forwardmove;
+	smove = pm->cmd.sidemove;
+	if (type == PM_BIKE && fmove < 0)
+		fmove *= 0.1;	// slow reverse
+
+	if (type == PM_HOVERCAR)
+	{	// flies where it looks
+		pml.right[2] = 0;
+		VectorNormalize (pml.forward);
+		VectorNormalize (pml.right);
+		for (i=0 ; i<3 ; i++)
+			wishvel[i] = pml.forward[i]*fmove + pml.right[i]*smove;
+		wishvel[2] += pm->cmd.upmove;
+	}
+	else
+	{
+		if (type == PM_BIKE)
+			smove = 0;	// bikes only steer by turning
+		for (i=0 ; i<2 ; i++)
+			wishvel[i] = pml.forward[i]*fmove + pml.right[i]*smove;
+		wishvel[2] = 0;
+	}
+
+	PM_AddCurrents (wishvel);
+
+	VectorCopy (wishvel, wishdir);
+	wishspeed = VectorNormalize(wishdir);
+
+//
+// clamp to server defined max speed
+//
+	maxspeed = (pm->s.pm_flags & PMF_DUCKED) ? pm_duckspeed : pm_maxspeed;
+	if (type == PM_HOVERCAR_GROUND || type == PM_HOVERCAR || type == PM_BIKE)
+		maxspeed *= 2;
+
+	if (wishspeed > maxspeed)
+	{
+		VectorScale (wishvel, maxspeed/wishspeed, wishvel);
+		wishspeed = maxspeed;
+	}
+
+	if (type == PM_HOVERCAR)
+	{
+		PM_Accelerate (wishdir, wishspeed, 3);
+		if (pml.velocity[0] || pml.velocity[1] || pml.velocity[2])
+			PM_StepSlideMove ();
+		return;
+	}
+
+	if (type == PM_NORMAL_WITH_JETPACK && !pm->groundentity)
+	{	// hovering: weak control and no gravity; PM_CheckJump sets the climb
+		PM_Accelerate (wishdir, wishspeed, pm_accelerate * (1.0f/6));
+		if (pml.velocity[0] || pml.velocity[1] || pml.velocity[2])
+			PM_StepSlideMove ();
+		return;
+	}
+
+	if ( pml.ladder )
+	{
+		PM_Accelerate (wishdir, wishspeed, pm_accelerate);
+		if (!wishvel[2])
+		{
+			if (pml.velocity[2] > 0)
+			{
+				pml.velocity[2] -= pm->s.gravity * pml.frametime;
+				if (pml.velocity[2] < 0)
+					pml.velocity[2]  = 0;
+			}
+			else
+			{
+				pml.velocity[2] += pm->s.gravity * pml.frametime;
+				if (pml.velocity[2] > 0)
+					pml.velocity[2]  = 0;
+			}
+		}
+		PM_StepSlideMove ();
+		return;
+	}
+
+	if (!pm->groundentity && type != PM_HOVERCAR_GROUND && type != PM_BIKE)
+	{	// not on ground, so little effect on velocity
+		PM_AirAccelerate (wishdir, wishspeed, pm_accelerate);
+		pml.velocity[2] -= pm->s.gravity * pml.frametime;
+		PM_StepSlideMove ();
+		return;
+	}
+
+	if (pm->groundentity)
+		pml.velocity[2] = 0;
+	PM_Accelerate (wishdir, wishspeed, pm_accelerate);
+	pml.velocity[2] -= pm->s.gravity * pml.frametime;
+
+	if (type == PM_HOVERCAR_GROUND || type == PM_BIKE
+		|| pml.velocity[0] || pml.velocity[1])
+		PM_StepSlideMove ();
+
+	if (type != PM_HOVERCAR_GROUND && type != PM_BIKE)
+		return;
+
+	// tilt the vehicle to the ground (bikes don't roll)
+	if (type == PM_BIKE)
+		pm_vehicle_angles[ROLL] = 0;
+	else
+		pm_vehicle_angles[ROLL] = PM_VehicleSlope (pml.right);
+
+	angle = -PM_VehicleSlope (pml.forward);
+	if (angle > 180)
+		angle -= 360;
+	if (angle < -180)
+		angle += 360;
+	pm_vehicle_angles[PITCH] = angle;
+	pm_vehicle_angles[YAW] = 0;
+}
+#else
 void PM_AirMove (void)
 {
 	int			i;
@@ -660,7 +1010,7 @@ void PM_AirMove (void)
 		PM_StepSlideMove ();
 	}
 }
-
+#endif
 
 
 /*
@@ -675,6 +1025,9 @@ void PM_CatagorizePosition (void)
 	trace_t		trace;
 	int			sample1;
 	int			sample2;
+#ifdef KINGPIN_ENGINE
+	int			flags;
+#endif
 
 // if the player hull point one unit down is solid, the player
 // is on ground
@@ -683,7 +1036,12 @@ void PM_CatagorizePosition (void)
 	point[0] = pml.origin[0];
 	point[1] = pml.origin[1];
 	point[2] = pml.origin[2] - 0.25;
+#ifdef KINGPIN_ENGINE
+	// kingpin.exe @00432cf0: vehicles stick to the ground up to 360
+	if (pml.velocity[2] > ((pm->s.pm_type == PM_HOVERCAR_GROUND || pm->s.pm_type == PM_BIKE) ? 360 : 180))
+#else
 	if (pml.velocity[2] > 180) //!!ZOID changed from 100 to 180 (ramp accel)
+#endif
 	{
 		pm->s.pm_flags &= ~PMF_ON_GROUND;
 		pm->groundentity = NULL;
@@ -694,6 +1052,31 @@ void PM_CatagorizePosition (void)
 		pml.groundplane = trace.plane;
 		pml.groundsurface = trace.surface;
 		pml.groundcontents = trace.contents;
+#ifdef KINGPIN_ENGINE
+		// kingpin.exe PM_CatagorizePosition @00432cf0: first matching
+		// surface material wins; water at ankle height overrides it below.
+		flags = trace.surface ? trace.surface->flags : 0;
+		if (flags & SURF_CONCRETE)
+			pm->footsteptype = 0;
+		else if (flags & SURF_FABRIC)
+			pm->footsteptype = 1;
+		else if (flags & SURF_GRAVEL)
+			pm->footsteptype = 2;
+		else if (flags & SURF_METAL)
+			pm->footsteptype = 3;
+		else if (flags & SURF_METAL_L)
+			pm->footsteptype = 4;
+		else if (flags & SURF_SNOW)
+			pm->footsteptype = 5;
+		else if (flags & SURF_TILE)
+			pm->footsteptype = 6;
+		else if (flags & SURF_WOOD)
+			pm->footsteptype = 7;
+		else if (flags & SURF_WATER)
+			pm->footsteptype = 8;
+		else
+			pm->footsteptype = 0;
+#endif
 
 		if (!trace.ent || (trace.plane.normal[2] < 0.7 && !trace.startsolid) )
 		{
@@ -767,6 +1150,11 @@ void PM_CatagorizePosition (void)
 		}
 	}
 
+#ifdef KINGPIN_ENGINE
+	if (pm->waterlevel == 1)
+		pm->footsteptype = 8;
+#endif
+
 }
 
 
@@ -777,6 +1165,30 @@ PM_CheckJump
 */
 void PM_CheckJump (void)
 {
+#ifdef KINGPIN_ENGINE
+	if (pm->s.pm_type == PM_NORMAL_WITH_JETPACK)
+	{
+		if (!pm->cmd.upmove)
+			return;		// no regular jumping (PMF_JUMP_HELD is left alone)
+		// kingpin.exe @00433100: rising input is three times the command
+		// speed; descending input snaps to -300 below the 300 threshold.
+		if (pm->cmd.upmove > 0)
+		{
+			pml.velocity[2] += 3 * pm->cmd.upmove * pml.frametime;
+			if (pml.velocity[2] > 500)
+				pml.velocity[2] = 500;
+		}
+		else if (pml.velocity[2] < 300)
+			pml.velocity[2] = -300;
+		pm->groundentity = NULL;
+		return;
+	}
+
+	// The bike never enters the regular jump path in the Kingpin PMove.
+	if (pm->s.pm_type == PM_BIKE)
+		return;
+#endif
+
 	if (pm->s.pm_flags & PMF_TIME_LAND)
 	{	// hasn't been long enough since landing to jump again
 		return;
@@ -810,6 +1222,27 @@ void PM_CheckJump (void)
 			pml.velocity[2] = 50;
 		return;
 	}
+
+#ifdef KINGPIN_ENGINE
+	if (pm->s.pm_type == PM_HOVERCAR || pm->s.pm_type == PM_HOVERCAR_GROUND)
+	{
+		vec3_t end;
+		trace_t tr;
+
+		VectorCopy (pml.origin, end);
+		end[2] -= 48;
+		tr = pm->trace (pml.origin, pm->mins, pm->maxs, end);
+		if (tr.fraction < 1)
+		{
+			pml.velocity[2] += 500 * pml.frametime;
+			if (pml.velocity[2] > 300)
+				pml.velocity[2] = 300;
+			if (pml.velocity[2] > 0)
+				pm->groundentity = NULL;
+		}
+		return;
+	}
+#endif
 
 	if (pm->groundentity == NULL)
 		return;		// in air, so no effect
@@ -886,12 +1319,17 @@ void PM_FlyMove (qboolean doclip)
 	int			i;
 	vec3_t		wishvel;
 	float		fmove, smove;
+	float		maxspeed;
 	vec3_t		wishdir;
 	float		wishspeed;
 	vec3_t		end;
-	trace_t	trace;
+	trace_t		trace;
 
+#ifdef KINGPIN_ENGINE
+	pm->viewheight = 40;	// kingpin.exe @004334f0 spectator movement
+#else
 	pm->viewheight = 22;
+#endif
 
 	// friction
 
@@ -920,6 +1358,16 @@ void PM_FlyMove (qboolean doclip)
 	// accelerate
 	fmove = pm->cmd.forwardmove;
 	smove = pm->cmd.sidemove;
+	maxspeed = pm_maxspeed;
+
+#ifdef KINGPIN_ENGINE
+	// kingpin.exe @004334f0: spectators fly forward three times as fast
+	if (pm->s.pm_type == PM_SPECTATOR)
+	{
+		fmove *= 3;
+		maxspeed *= 3;
+	}
+#endif
 	
 	VectorNormalize (pml.forward);
 	VectorNormalize (pml.right);
@@ -934,10 +1382,10 @@ void PM_FlyMove (qboolean doclip)
 	//
 	// clamp to server defined max speed
 	//
-	if (wishspeed > pm_maxspeed)
+	if (wishspeed > maxspeed)
 	{
-		VectorScale (wishvel, pm_maxspeed/wishspeed, wishvel);
-		wishspeed = pm_maxspeed;
+		VectorScale (wishvel, maxspeed / wishspeed, wishvel);
+		wishspeed = maxspeed;
 	}
 
 
@@ -976,6 +1424,12 @@ Sets mins, maxs, and pm->viewheight
 void PM_CheckDuck (void)
 {
 	trace_t	trace;
+#ifdef KINGPIN_ENGINE
+	qboolean vehicle;
+
+	vehicle = pm->s.pm_type == PM_HOVERCAR ||
+		pm->s.pm_type == PM_HOVERCAR_GROUND || pm->s.pm_type == PM_BIKE;
+#endif
 
 	pm->mins[0] = -16;
 	pm->mins[1] = -16;
@@ -991,28 +1445,60 @@ void PM_CheckDuck (void)
 		return;
 	}
 
-	pm->mins[2] = -24;
-
-	if (pm->s.pm_type == PM_DEAD)
+#ifdef KINGPIN_ENGINE
+	// kingpin.exe @004337b0: no ducking decisions in a vehicle
+	if (vehicle)
 	{
-		pm->s.pm_flags |= PMF_DUCKED;
-	}
-	else if (pm->cmd.upmove < 0 && (pm->s.pm_flags & PMF_ON_GROUND) )
-	{	// duck
-		pm->s.pm_flags |= PMF_DUCKED;
+		pm->mins[2] = -2;
 	}
 	else
-	{	// stand up if possible
-		if (pm->s.pm_flags & PMF_DUCKED)
+#endif
+	{
+		pm->mins[2] = -24;
+
+		if (pm->s.pm_type == PM_DEAD)
 		{
-			// try to stand up
-			pm->maxs[2] = 32;
-			trace = pm->trace (pml.origin, pm->mins, pm->maxs, pml.origin);
-			if (!trace.allsolid)
-				pm->s.pm_flags &= ~PMF_DUCKED;
+			pm->s.pm_flags |= PMF_DUCKED;
+		}
+		else if (pm->cmd.upmove < 0 && (pm->s.pm_flags & PMF_ON_GROUND) )
+		{	// duck
+			pm->s.pm_flags |= PMF_DUCKED;
+		}
+		else
+		{	// stand up if possible
+			if (pm->s.pm_flags & PMF_DUCKED)
+			{
+				// try to stand up
+#ifdef KINGPIN_ENGINE
+				pm->maxs[2] = 48;
+#else
+				pm->maxs[2] = 32;
+#endif
+				trace = pm->trace (pml.origin, pm->mins, pm->maxs, pml.origin);
+				if (!trace.allsolid)
+					pm->s.pm_flags &= ~PMF_DUCKED;
+			}
 		}
 	}
 
+#ifdef KINGPIN_ENGINE
+	if (pm->s.pm_flags & PMF_DUCKED)
+	{
+		pm->maxs[2] = 24;
+		pm->viewheight = 18;
+	}
+	else
+	{
+		pm->maxs[2] = 48;
+		pm->viewheight = 36;
+	}
+
+	if (vehicle)
+	{
+		pm->mins[0] = pm->mins[1] = -32;
+		pm->maxs[0] = pm->maxs[1] = 32;
+	}
+#else
 	if (pm->s.pm_flags & PMF_DUCKED)
 	{
 		pm->maxs[2] = 4;
@@ -1023,6 +1509,7 @@ void PM_CheckDuck (void)
 		pm->maxs[2] = 32;
 		pm->viewheight = 22;
 	}
+#endif
 }
 
 
@@ -1120,7 +1607,8 @@ void PM_SnapPosition (void)
 //	Com_DPrintf ("using previous_origin\n");
 }
 
-#if 0
+#if 0 // def KINGPIN_ENGINE
+// kingpin.exe @00433c10 still uses this search order (+1, 0, -1)
 //NO LONGER USED
 /*
 ================
@@ -1248,6 +1736,10 @@ void Pmove (pmove_t *pmove)
 	pm->groundentity = 0;
 	pm->watertype = 0;
 	pm->waterlevel = 0;
+#ifdef KINGPIN_ENGINE
+	pm->footsteptype = 0;
+	pm->wall_collision = 0;
+#endif
 
 	// clear all pmove local vars
 	memset (&pml, 0, sizeof(pml));
@@ -1265,6 +1757,11 @@ void Pmove (pmove_t *pmove)
 	VectorCopy (pm->s.origin, pml.previous_origin);
 
 	pml.frametime = pm->cmd.msec * 0.001;
+#ifdef KINGPIN_ENGINE
+	// kingpin.exe @00433e50: hovercars near the ground feel less gravity
+	if (pm->s.pm_type == PM_HOVERCAR_GROUND)
+		pm->s.gravity = (short)(pm->s.gravity * 0.4);
+#endif
 
 	PM_ClampAngles ();
 

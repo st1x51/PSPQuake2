@@ -44,11 +44,18 @@ file_t	*log_stats_file;
 cvar_t	*host_speeds;
 cvar_t	*log_stats;
 cvar_t	*developer;
+#ifdef KINGPIN_ENGINE
+cvar_t	*verbose;
+#endif
 cvar_t	*timescale;
 cvar_t	*fixedtime;
 cvar_t	*logfile_active;	// 1 = buffer log, 2 = flush after each print
 cvar_t	*showtrace;
 cvar_t	*dedicated;
+
+#ifdef KINGPIN_ENGINE
+qboolean	com_stoprender;
+#endif
 
 file_t	*logfile;
 
@@ -164,6 +171,12 @@ void Com_DPrintf (char *fmt, ...)
 
 	if (!developer || !developer->value)
 		return;			// don't confuse non-developers with techie stuff...
+
+#ifdef KINGPIN_ENGINE
+	/* kingpin.exe @0041f730 requires both developer and verbose. */
+	if (!verbose || !verbose->value)
+		return;
+#endif
 
 	va_start (argptr,fmt);
 	vsprintf (msg,fmt,argptr);
@@ -471,7 +484,326 @@ void MSG_ReadDir (sizebuf_t *sb, vec3_t dir)
 	VectorCopy (bytedirs[b], dir);
 }
 
+#ifdef KINGPIN_ENGINE
+/*
+==================
+MSG_WriteDeltaModelParts
 
+Kingpin .mdx model parts: a byte mask of changed parts, then for each
+changed part a byte of change flags followed by the changed fields.
+==================
+*/
+void MSG_WriteDeltaModelParts (model_part_t *from, model_part_t *to, sizebuf_t *msg)
+{
+	int		i, j;
+	int		partbits, bits, skinbits;
+
+	partbits = 0;
+	for (i=0 ; i<MAX_MODEL_PARTS ; i++)
+		if (memcmp (&from[i], &to[i], sizeof(model_part_t)))
+			partbits |= 1<<i;
+
+	MSG_WriteByte (msg, partbits);
+
+	for (i=0 ; i<MAX_MODEL_PARTS ; i++)
+	{
+		if (!(partbits & (1<<i)))
+			continue;
+
+		bits = 0;
+		if (to[i].modelindex != from[i].modelindex)
+			bits |= 1;
+		if (to[i].invisible_objects != from[i].invisible_objects)
+			bits |= 2;
+		if (memcmp (to[i].skinnum, from[i].skinnum, sizeof(to[i].skinnum)))
+			bits |= 4;
+
+		MSG_WriteByte (msg, bits);
+
+		if (bits & 1)
+			MSG_WriteByte (msg, to[i].modelindex);
+		if (bits & 2)
+			MSG_WriteByte (msg, to[i].invisible_objects);
+		if (bits & 4)
+		{
+			skinbits = 0;
+			for (j=0 ; j<MAX_MODELPART_OBJECTS ; j++)
+				if (to[i].skinnum[j] != from[i].skinnum[j])
+					skinbits |= 1<<j;
+
+			MSG_WriteByte (msg, skinbits);
+			for (j=0 ; j<MAX_MODELPART_OBJECTS ; j++)
+				if (skinbits & (1<<j))
+					MSG_WriteByte (msg, to[i].skinnum[j]);
+		}
+	}
+}
+
+/*
+==================
+MSG_WriteDeltaEntity
+
+Writes part of a packetentities message.
+Can delta from either a baseline or a previous packet_entity.
+If originoffset is set, small moves are sent as byte offsets
+from the previous origin (U_ORIGIN_OFFSET).
+==================
+*/
+void MSG_WriteDeltaEntity (entity_state_t *from, entity_state_t *to, sizebuf_t *msg, qboolean force, qboolean newentity, qboolean originoffset)
+{
+	int		bits;
+	int		i, lights;
+	vec3_t	delta;
+
+	if (!to->number)
+		Com_Error (ERR_FATAL, "Unset entity number");
+	if (to->number >= MAX_EDICTS)
+		Com_Error (ERR_FATAL, "Entity number >= MAX_EDICTS");
+
+// send an update
+	bits = 0;
+
+	if (to->number >= 256)
+		bits |= U_NUMBER16;		// number8 is implicit otherwise
+
+	if (to->origin[0] != from->origin[0])
+		bits |= U_ORIGIN1;
+	if (to->origin[1] != from->origin[1])
+		bits |= U_ORIGIN2;
+	if (to->origin[2] != from->origin[2])
+		bits |= U_ORIGIN3;
+
+	if (originoffset && (bits & (U_ORIGIN1|U_ORIGIN2|U_ORIGIN3)))
+	{
+		VectorSubtract (to->origin, from->origin, delta);
+		if (VectorLength (delta) < ORIGIN_OFFSET_RANGE)
+			bits |= U_ORIGIN_OFFSET;
+	}
+
+	if ( to->angles[0] != from->angles[0] )
+		bits |= U_ANGLE1;
+	if ( to->angles[1] != from->angles[1] )
+		bits |= U_ANGLE2;
+	if ( to->angles[2] != from->angles[2] )
+		bits |= U_ANGLE3;
+
+	if ( to->skinnum != from->skinnum )
+	{
+		if ((unsigned)to->skinnum < 256)
+			bits |= U_SKIN8;
+		else if ((unsigned)to->skinnum < 0x10000)
+			bits |= U_SKIN16;
+		else
+			bits |= (U_SKIN8|U_SKIN16);
+	}
+
+	if ( to->frame != from->frame )
+	{
+		if (to->frame < 256)
+			bits |= U_FRAME8;
+		else
+			bits |= U_FRAME16;
+	}
+
+	// effects are compared signed, as in kingpin.exe
+	if ( to->effects != from->effects )
+	{
+		if ((int)to->effects < 256)
+			bits |= U_EFFECTS8;
+		else if ((int)to->effects < 0x8000)
+			bits |= U_EFFECTS16;
+		else
+			bits |= U_EFFECTS8|U_EFFECTS16;
+	}
+
+	// renderfx and renderfx2 share the size bits
+	if ( to->renderfx != from->renderfx )
+	{
+		if (to->renderfx < 256)
+			bits |= U_RENDERFX8;
+		else if (to->renderfx < 0x8000)
+			bits |= U_RENDERFX16;
+		else
+			bits |= U_RENDERFX8|U_RENDERFX16;
+	}
+	if ( to->renderfx2 != from->renderfx2 )
+	{
+		if (to->renderfx2 < 256)
+			bits |= U_RENDERFX8;
+		else if (to->renderfx2 < 0x8000)
+			bits |= U_RENDERFX16;
+		else
+			bits |= U_RENDERFX8|U_RENDERFX16;
+	}
+
+	if ( to->solid != from->solid )
+		bits |= U_SOLID;
+
+	// event is not delta compressed, just 0 compressed
+	if ( to->event  )
+		bits |= U_EVENT;
+
+	if ( to->modelindex != from->modelindex )
+		bits |= U_MODEL;
+
+	if ( to->num_parts != from->num_parts )
+		bits |= U_NUM_PARTS;
+	if ( memcmp (to->model_parts, from->model_parts, sizeof(to->model_parts)) )
+		bits |= U_MODEL_PARTS;
+
+	if ( to->sound != from->sound )
+	{
+		if (to->sound < 256)
+			bits |= U_SOUND;
+		else
+			bits |= U_SOUND16;
+	}
+
+	if (newentity || (to->renderfx & RF_BEAM))
+		bits |= U_OLDORIGIN;
+
+	if ( memcmp (&to->model_lighting, &from->model_lighting, sizeof(to->model_lighting)) )
+		bits |= U_LIGHTING;
+
+	if ( to->scale != from->scale )
+		bits |= U_SCALE;
+
+	//
+	// write the message
+	//
+	if (!bits && !force)
+		return;		// nothing to send!
+
+	//----------
+
+	if (bits & 0xff000000)
+		bits |= U_MOREBITS3 | U_MOREBITS2 | U_MOREBITS1;
+	else if (bits & 0x00ff0000)
+		bits |= U_MOREBITS2 | U_MOREBITS1;
+	else if (bits & 0x0000ff00)
+		bits |= U_MOREBITS1;
+
+	MSG_WriteByte (msg,	bits&255 );
+
+	if (bits & 0xff000000)
+	{
+		MSG_WriteByte (msg,	(bits>>8)&255 );
+		MSG_WriteByte (msg,	(bits>>16)&255 );
+		MSG_WriteByte (msg,	(bits>>24)&255 );
+	}
+	else if (bits & 0x00ff0000)
+	{
+		MSG_WriteByte (msg,	(bits>>8)&255 );
+		MSG_WriteByte (msg,	(bits>>16)&255 );
+	}
+	else if (bits & 0x0000ff00)
+	{
+		MSG_WriteByte (msg,	(bits>>8)&255 );
+	}
+
+	//----------
+
+	if (bits & U_NUMBER16)
+		MSG_WriteShort (msg, to->number);
+	else
+		MSG_WriteByte (msg,	to->number);
+
+	if (bits & U_MODEL)
+		MSG_WriteByte (msg,	to->modelindex);
+	if (bits & U_NUM_PARTS)
+		MSG_WriteByte (msg,	to->num_parts);
+	if (bits & U_MODEL_PARTS)
+		MSG_WriteDeltaModelParts (from->model_parts, to->model_parts, msg);
+
+	if (bits & U_FRAME8)
+		MSG_WriteByte (msg, to->frame);
+	if (bits & U_FRAME16)
+		MSG_WriteShort (msg, to->frame);
+
+	if ((bits & U_SKIN8) && (bits & U_SKIN16))		//used for laser colors
+		MSG_WriteLong (msg, to->skinnum);
+	else if (bits & U_SKIN8)
+		MSG_WriteByte (msg, to->skinnum);
+	else if (bits & U_SKIN16)
+		MSG_WriteShort (msg, to->skinnum);
+
+	if ( (bits & (U_EFFECTS8|U_EFFECTS16)) == (U_EFFECTS8|U_EFFECTS16) )
+		MSG_WriteLong (msg, to->effects);
+	else if (bits & U_EFFECTS8)
+		MSG_WriteByte (msg, to->effects);
+	else if (bits & U_EFFECTS16)
+		MSG_WriteShort (msg, to->effects);
+
+	if ( (bits & (U_RENDERFX8|U_RENDERFX16)) == (U_RENDERFX8|U_RENDERFX16) )
+	{
+		MSG_WriteLong (msg, to->renderfx);
+		MSG_WriteLong (msg, to->renderfx2);
+	}
+	else if (bits & U_RENDERFX8)
+	{
+		MSG_WriteByte (msg, to->renderfx);
+		MSG_WriteByte (msg, to->renderfx2);
+	}
+	else if (bits & U_RENDERFX16)
+	{
+		MSG_WriteShort (msg, to->renderfx);
+		MSG_WriteShort (msg, to->renderfx2);
+	}
+
+	if (bits & U_ORIGIN_OFFSET)
+	{	// quarter units, biased by 128
+		if (bits & U_ORIGIN1)
+			MSG_WriteByte (msg, (int)((to->origin[0] - from->origin[0])*4 + 128));
+		if (bits & U_ORIGIN2)
+			MSG_WriteByte (msg, (int)((to->origin[1] - from->origin[1])*4 + 128));
+		if (bits & U_ORIGIN3)
+			MSG_WriteByte (msg, (int)((to->origin[2] - from->origin[2])*4 + 128));
+	}
+	else
+	{
+		if (bits & U_ORIGIN1)
+			MSG_WriteCoord (msg, to->origin[0]);
+		if (bits & U_ORIGIN2)
+			MSG_WriteCoord (msg, to->origin[1]);
+		if (bits & U_ORIGIN3)
+			MSG_WriteCoord (msg, to->origin[2]);
+	}
+
+	if (bits & U_ANGLE1)
+		MSG_WriteAngle(msg, to->angles[0]);
+	if (bits & U_ANGLE2)
+		MSG_WriteAngle(msg, to->angles[1]);
+	if (bits & U_ANGLE3)
+		MSG_WriteAngle(msg, to->angles[2]);
+
+	if (bits & U_OLDORIGIN)
+	{
+		MSG_WriteCoord (msg, to->old_origin[0]);
+		MSG_WriteCoord (msg, to->old_origin[1]);
+		MSG_WriteCoord (msg, to->old_origin[2]);
+	}
+
+	if (bits & U_SOUND)
+		MSG_WriteByte (msg, to->sound);
+	if (bits & U_SOUND16)
+		MSG_WriteShort (msg, to->sound);
+	if (bits & U_EVENT)
+		MSG_WriteByte (msg, to->event);
+	if (bits & U_SOLID)
+		MSG_WriteShort (msg, to->solid);
+
+	if (bits & U_SCALE)
+		MSG_WriteByte (msg, (int)((to->scale + 1.0) * 127));
+
+	if (bits & U_LIGHTING)
+	{	// light indexes + 1, 10 bits each, 0 terminates
+		lights = 0;
+		for (i=0 ; i<to->model_lighting.num_dir_lights ; i++)
+			lights += (to->model_lighting.light_indexes[i] + 1) << (i*10);
+		MSG_WriteLong (msg, lights);
+	}
+}
+#else
 /*
 ==================
 MSG_WriteDeltaEntity
@@ -673,7 +1005,7 @@ void MSG_WriteDeltaEntity (entity_state_t *from, entity_state_t *to, sizebuf_t *
 	if (bits & U_SOLID)
 		MSG_WriteShort (msg, to->solid);
 }
-
+#endif
 
 //============================================================
 
@@ -870,6 +1202,42 @@ void MSG_ReadDeltaUsercmd (sizebuf_t *msg_read, usercmd_t *from, usercmd_t *move
 	move->lightlevel = MSG_ReadByte (msg_read);
 }
 
+#ifdef KINGPIN_ENGINE
+/*
+==================
+MSG_ReadDeltaModelParts
+
+Reads the changes written by MSG_WriteDeltaModelParts on top of parts,
+which must hold the state being delta'd from.
+==================
+*/
+void MSG_ReadDeltaModelParts (sizebuf_t *msg, model_part_t *parts)
+{
+	int		i, j;
+	int		partbits, bits, skinbits;
+
+	partbits = MSG_ReadByte (msg);
+
+	for (i=0 ; i<MAX_MODEL_PARTS ; i++)
+	{
+		if (!(partbits & (1<<i)))
+			continue;
+
+		bits = MSG_ReadByte (msg);
+		if (bits & 1)
+			parts[i].modelindex = MSG_ReadByte (msg);
+		if (bits & 2)
+			parts[i].invisible_objects = MSG_ReadByte (msg);
+		if (bits & 4)
+		{
+			skinbits = MSG_ReadByte (msg);
+			for (j=0 ; j<MAX_MODELPART_OBJECTS ; j++)
+				if (skinbits & (1<<j))
+					parts[i].skinnum[j] = MSG_ReadByte (msg);
+		}
+	}
+}
+#endif
 
 void MSG_ReadData (sizebuf_t *msg_read, void *data, int len)
 {
@@ -1211,6 +1579,46 @@ static byte chktbl[1024] = {
 0x39, 0x4f, 0xdd, 0xe4, 0xb6, 0x19, 0x27, 0xfb, 0xb8, 0xf5, 0x32, 0x73, 0xe5, 0xcb, 0x32
 };
 
+#ifdef KINGPIN_ENGINE
+/*
+====================
+COM_BlockSequenceCRCByte
+
+kingpin.exe @00420d60: the move command bytes plus eight key bytes taken
+from two bytedirs floats picked by the sequence and sequence+challenge,
+mixed with the sequence and the connection challenge, then MD4
+(Com_BlockChecksum). The low byte of the result is the checksum.
+====================
+*/
+byte	COM_BlockSequenceCRCByte (byte *base, int length, int sequence, int challenge)
+{
+	byte	chkb[60 + 8];
+	union { float f; byte b[4]; } k1, k2;
+	int		n;
+
+	n = sequence;
+	k1.f = LittleFloat (bytedirs[(n/3) % NUMVERTEXNORMALS][n%3]);
+
+	if (length > 60)
+		length = 60;
+	memcpy (chkb, base, length);
+
+	chkb[length]   = k1.b[0] ^ (byte)sequence;
+	chkb[length+1] = k1.b[1];
+	chkb[length+2] = k1.b[2] ^ (byte)(sequence >> 8);
+	chkb[length+3] = k1.b[3];
+
+	n = challenge + sequence;
+	k2.f = LittleFloat (bytedirs[(n/3) % NUMVERTEXNORMALS][n%3]);
+
+	chkb[length+4] = k2.b[3] ^ (byte)sequence;
+	chkb[length+5] = k2.b[2] ^ (byte)challenge;
+	chkb[length+6] = k2.b[1] ^ (byte)(sequence >> 8);
+	chkb[length+7] = k2.b[0] ^ (byte)(challenge >> 7);
+
+	return (byte)LittleLong (Com_BlockChecksum (chkb, length + 8));
+}
+#else
 /*
 ====================
 COM_BlockSequenceCRCByte
@@ -1252,6 +1660,7 @@ byte	COM_BlockSequenceCRCByte (byte *base, int length, int sequence)
 
 	return crc;
 }
+#endif
 
 //========================================================
 
@@ -1379,6 +1788,9 @@ void Qcommon_Init (int argc, char **argv)
 	host_speeds = Cvar_Get ("host_speeds", "0", 0);
 	log_stats = Cvar_Get ("log_stats", "0", 0);
 	developer = Cvar_Get ("developer", "0", 0);
+#ifdef KINGPIN_ENGINE
+	verbose = Cvar_Get ("verbose", "0", CVAR_ARCHIVE);
+#endif
 	timescale = Cvar_Get ("timescale", "1", 0);
 	fixedtime = Cvar_Get ("fixedtime", "0", 0);
 	logfile_active = Cvar_Get ("logfile", "0", 0);
@@ -1387,6 +1799,10 @@ void Qcommon_Init (int argc, char **argv)
 	dedicated = Cvar_Get ("dedicated", "1", CVAR_NOSET);
 #else
 	dedicated = Cvar_Get ("dedicated", "0", CVAR_NOSET);
+#endif
+#ifdef KINGPIN_ENGINE
+	/* kingpin.exe @00420f00 creates this before the server subsystem. */
+	Cvar_Get ("deathmatch", "0", CVAR_LATCH);
 #endif
 
 	s = va("%4.2f %s %s %s", VERSION, CPUSTRING, __DATE__, BUILDSTRING);
@@ -1422,7 +1838,11 @@ void Qcommon_Init (int argc, char **argv)
 		SCR_EndLoadingPlaque ();
 	}
 
+#ifdef KINGPIN_ENGINE
+	Com_Printf ("====== Kingpin Initialized ======\n\n");
+#else
 	Com_Printf ("====== Quake2 Initialized ======\n\n");
+#endif
 }
 
 /*
@@ -1515,8 +1935,14 @@ void Qcommon_Frame (int msec)
 		rf = time_after_ref - time_before_ref;
 		sv -= gm;
 		cl -= rf;
+#ifdef KINGPIN_ENGINE
+		// kingpin.exe @00421170 also shows the frame rate
+		Com_Printf ("FPS=%3.f, all:%3i sv:%3i gm:%3i cl:%3i rf:%3i\n",
+			1000.0 / (all ? all : -1), all, sv, gm, cl, rf);
+#else
 		Com_Printf ("all:%3i sv:%3i gm:%3i cl:%3i rf:%3i\n",
 			all, sv, gm, cl, rf);
+#endif
 	}
 }
 

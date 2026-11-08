@@ -72,3 +72,9 @@ void Key_Init (void)
 	Cmd_AddCommand ("bind", Key_Bind_Null_f);
 }
 
+#ifdef KINGPIN_ENGINE
+void CL_ActivateButton (qboolean down)
+{
+}
+#endif
+

@@ -43,8 +43,13 @@ int SV_FindIndex (char *name, int start, int max, qboolean create)
 	if (!create)
 		return 0;
 
+#ifdef KINGPIN_ENGINE
+	if (i == max)
+		Com_Error (ERR_DROP, "*Index: overflow [%i]", start);	// @0043cdfe
+#else
 	if (i == max)
 		Com_Error (ERR_DROP, "*Index: overflow");
+#endif
 
 	strncpy (sv.configstrings[start+i], name, sizeof(sv.configstrings[i]));
 
@@ -76,6 +81,48 @@ int SV_ImageIndex (char *name)
 	return SV_FindIndex (name, CS_IMAGES, MAX_IMAGES, true);
 }
 
+#ifdef KINGPIN_ENGINE
+/*
+================
+SV_SkinIndex
+
+CS_MODELSKINS+modelindex holds every skin used with a model, all the same
+length and concatenated. Returns the offset of the skin in that string.
+New skins are sent with their length appended so clients can find the new
+name at the end of the string (kingpin.exe @0043cee0).
+================
+*/
+int SV_SkinIndex (int modelindex, char *name)
+{
+	int		len, total, ofs;
+	char	*skins;
+
+	skins = sv.configstrings[CS_MODELSKINS + modelindex];
+	len = strlen (name);
+	total = strlen (skins);
+
+	for (ofs=0 ; len && ofs<total ; ofs+=len)
+		if (!strncmp (skins + ofs, name, len))
+			return ofs;
+
+	if (total + len >= MAX_QPATH)
+		Com_Error (ERR_DROP, "SV_SkinIndex: overflow");
+	strcat (skins, name);
+
+	if (sv.state != ss_loading)
+	{	// send the update to everyone
+		SZ_Clear (&sv.multicast);
+		MSG_WriteByte (&sv.multicast, svc_configstring);
+		MSG_WriteShort (&sv.multicast, CS_MODELSKINS + modelindex);
+		MSG_WriteString (&sv.multicast, skins);
+		MSG_WriteByte (&sv.multicast, len);
+		SV_Multicast (vec3_origin, MULTICAST_ALL_R);
+	}
+
+	return ofs;
+}
+#endif
+
 
 /*
 ================
@@ -96,7 +143,11 @@ void SV_CreateBaseline (void)
 		svent = EDICT_NUM(entnum);
 		if (!svent->inuse)
 			continue;
-		if (!svent->s.modelindex && !svent->s.sound && !svent->s.effects)
+		if (!svent->s.modelindex
+#ifdef KINGPIN_ENGINE
+			&& !svent->s.num_parts
+#endif
+			&& !svent->s.sound && !svent->s.effects)
 			continue;
 		svent->s.number = entnum;
 
@@ -195,6 +246,7 @@ void SV_SpawnServer (char *server, char *spawnpoint, server_state_t serverstate,
 
 	// save name for levels that don't set message
 	strcpy (sv.configstrings[CS_NAME], server);
+#ifndef KINGPIN_ENGINE
 	if (Cvar_VariableValue ("deathmatch"))
 	{
 		sprintf(sv.configstrings[CS_AIRACCEL], "%g", sv_airaccelerate->value);
@@ -205,6 +257,7 @@ void SV_SpawnServer (char *server, char *spawnpoint, server_state_t serverstate,
 		strcpy(sv.configstrings[CS_AIRACCEL], "0");
 		pm_airaccelerate = 0;
 	}
+#endif
 
 	SZ_Init (&sv.multicast, sv.multicast_buf, sizeof(sv.multicast_buf));
 
@@ -295,6 +348,9 @@ void SV_InitGame (void)
 	int		i;
 	edict_t	*ent;
 	char	idmaster[32];
+#if defined(KINGPIN_ENGINE) && defined(_WIN32)
+	int		gamespy_result;
+#endif
 
 	if (svs.initialized)
 	{
@@ -361,8 +417,28 @@ void SV_InitGame (void)
 
 	// heartbeats will always be sent to the id master
 	svs.last_heartbeat = -99999;		// send immediately
+#ifdef KINGPIN_ENGINE
+	if (maxclients->value > 1)
+	{
+#ifdef _WIN32
+		// kingpin.exe @0043d694: the retail GameSpy query port is game port - 10;
+		// the master is only set up when goa_init succeeds
+		gamespy_result = SV_GameSpyInit ();
+		if (!gamespy_result)
+		{
+			Com_sprintf(idmaster, sizeof(idmaster), "master.gamespy.com:%i", PORT_MASTER);
+			NET_StringToAdr (idmaster, &master_adr[0], PORT_MASTER);
+		}
+		Com_Printf ("goa_init returned: %d\n", gamespy_result);
+#else
+		Com_sprintf(idmaster, sizeof(idmaster), "master.gamespy.com:%i", PORT_MASTER);
+		NET_StringToAdr (idmaster, &master_adr[0], PORT_MASTER);
+#endif
+	}
+#else
 	Com_sprintf(idmaster, sizeof(idmaster), "192.246.40.37:%i", PORT_MASTER);
 	NET_StringToAdr (idmaster, &master_adr[0], PORT_MASTER);
+#endif
 
 	// init game
 	SV_InitGameProgs ();
@@ -419,9 +495,11 @@ void SV_Map (qboolean attractloop, char *levelstring, qboolean loadgame)
 	else
 		Cvar_Set ("nextserver", "");
 
+#ifndef KINGPIN_ENGINE	// not in kingpin.exe @0043d810
 	//ZOID special hack for end game screen in coop mode
 	if (Cvar_VariableValue ("coop") && !Q_stricmp(level, "victory.pcx"))
 		Cvar_Set ("nextserver", "gamemap \"*base1\"");
+#endif
 
 	// if there is a $, use the remainder as a spawnpoint
 	ch = strstr(level, "$");
@@ -444,7 +522,11 @@ void SV_Map (qboolean attractloop, char *levelstring, qboolean loadgame)
 			serverstate = ss_cinematic;
 		else if (!strcmp (level+l-4, ".dm2") )
 			serverstate = ss_demo;
+#ifdef KINGPIN_ENGINE
+		else if (!strcmp (level+l-4, ".pcx") || !strcmp (level+l-4, ".tga") )
+#else
 		else if (!strcmp (level+l-4, ".pcx") )
+#endif
 			serverstate = ss_pic;
 	}
 

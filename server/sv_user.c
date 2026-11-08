@@ -140,7 +140,18 @@ void SV_Configstrings_f (void)
 		SV_New_f ();
 		return;
 	}
-	
+
+#ifdef KINGPIN_ENGINE
+	if (!Cvar_VariableValue ("deathmatch") && !dedicated->value)
+	{
+		MSG_WriteByte (&sv_client->netchan.message, svc_configstring_pointer);
+		MSG_WriteLong (&sv_client->netchan.message, (int)sv.configstrings);
+		MSG_WriteByte (&sv_client->netchan.message, svc_stufftext);
+		MSG_WriteString (&sv_client->netchan.message, va("cmd baselines %i 0\n",svs.spawncount) );
+		return;
+	}
+#endif
+
 	start = atoi(Cmd_Argv(2));
 
 	// write a packet full of data
@@ -208,10 +219,18 @@ void SV_Baselines_f (void)
 		&& start < MAX_EDICTS)
 	{
 		base = &sv.baselines[start];
-		if (base->modelindex || base->sound || base->effects)
+		if (base->modelindex
+#ifdef KINGPIN_ENGINE
+			|| base->num_parts
+#endif
+			|| base->sound || base->effects)
 		{
 			MSG_WriteByte (&sv_client->netchan.message, svc_spawnbaseline);
+#ifdef KINGPIN_ENGINE
+			MSG_WriteDeltaEntity (&nullstate, base, &sv_client->netchan.message, true, true, false);
+#else
 			MSG_WriteDeltaEntity (&nullstate, base, &sv_client->netchan.message, true, true);
+#endif
 		}
 		start++;
 	}
@@ -421,9 +440,15 @@ void SV_Nextserver (void)
 {
 	char	*v;
 
+#ifdef KINGPIN_ENGINE
+	// kingpin.exe @00440c20: no coop exception for ss_pic
+	if (sv.state == ss_game || sv.state == ss_pic)
+		return;		// can't nextserver while playing a normal game
+#else
 	//ZOID, ss_pic can be nextserver'd in coop mode
 	if (sv.state == ss_game || (sv.state == ss_pic && !Cvar_VariableValue("coop")))
 		return;		// can't nextserver while playing a normal game
+#endif
 
 	svs.spawncount++;	// make sure another doesn't sneak in
 	v = Cvar_VariableString ("nextserver");
@@ -504,6 +529,16 @@ void SV_ExecuteUserCommand (char *s)
 			u->func ();
 			break;
 		}
+
+#ifdef KINGPIN_ENGINE
+	if (!strcmp (Cmd_Argv(0), "+activate"))
+		CL_ActivateButton (true);
+	else if (!strcmp (Cmd_Argv(0), "-activate"))
+	{
+		CL_ActivateButton (false);
+		return;
+	}
+#endif
 
 	if (!u->name && sv.state == ss_game)
 		ge->ClientCommand (sv_player);
@@ -625,13 +660,21 @@ void SV_ExecuteClientMessage (client_t *cl)
 			calculatedChecksum = COM_BlockSequenceCRCByte (
 				net_message.data + checksumIndex + 1,
 				net_message.readcount - checksumIndex - 1,
+#ifdef KINGPIN_ENGINE
+				cl->netchan.incoming_sequence, cl->challenge);
+#else
 				cl->netchan.incoming_sequence);
+#endif
 
 			if (calculatedChecksum != checksum)
 			{
+#ifdef KINGPIN_ENGINE
+				Com_DPrintf ("Failed command checksum for %s\n", cl->name);	// @00440e60
+#else
 				Com_DPrintf ("Failed command checksum for %s (%d != %d)/%d\n", 
 					cl->name, calculatedChecksum, checksum, 
 					cl->netchan.incoming_sequence);
+#endif
 				return;
 			}
 

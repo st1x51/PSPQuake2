@@ -361,6 +361,15 @@ float LerpAngle (float a2, float a1, float frac)
 	return a2 + frac * (a1 - a2);
 }
 
+// Ridah, another handy util
+float AngleDiff (float a2, float a1)
+{
+	if (a1 - a2 > 180)
+		a1 -= 360;
+	if (a1 - a2 < -180)
+		a1 += 360;
+	return (a1 - a2);
+}
 
 float	anglemod(float a)
 {
@@ -374,6 +383,42 @@ float	anglemod(float a)
 	return a;
 }
 
+#ifdef KINGPIN_ENGINE
+void vectoangles (vec3_t value1, vec3_t angles)
+{
+	float	forward;
+	float	yaw, pitch;
+	
+	if (value1[1] == 0 && value1[0] == 0)
+	{
+		yaw = 0;
+		if (value1[2] > 0)
+			pitch = 90;
+		else
+			pitch = 270;
+	}
+	else
+	{
+		if (value1[0])
+			yaw = (int) (atan2(value1[1], value1[0]) * 180 / M_PI);
+		else if (value1[1] > 0)
+			yaw = 90;
+		else
+			yaw = -90;
+		if (yaw < 0)
+			yaw += 360;
+
+		forward = sqrt (value1[0]*value1[0] + value1[1]*value1[1]);
+		pitch = (int) (atan2(value1[2], forward) * 180 / M_PI);
+		if (pitch < 0)
+			pitch += 360;
+	}
+
+	angles[PITCH] = -pitch;
+	angles[YAW] = yaw;
+	angles[ROLL] = 0;
+}
+#endif
 
 // this is the slow, general version
 int BoxOnPlaneSide2 (vec3_t emins, vec3_t emaxs, struct cplane_s *p)
@@ -895,6 +940,14 @@ vec_t VectorLength(vec3_t v)
 	return length;
 }
 
+float VectorDistance(vec3_t vec1, vec3_t vec2)
+{
+	vec3_t	vec;
+
+	VectorSubtract(vec1, vec2, vec);
+	return VectorLength(vec);
+}
+
 void _VectorInverse (vec3_t v)
 {
 	v[0] = -v[0];
@@ -1275,6 +1328,20 @@ void Com_sprintf (char *dest, int size, char *fmt, ...)
 		Com_Printf ("Com_sprintf: overflow of %i in %i\n", len, size);
 	strncpy (dest, bigbuffer, size-1);
 #endif
+}
+
+// Ridah, portable strlwr()
+char *kp_strlwr( char *name )
+{
+	int i;
+
+	for (i = 0; name[i]; i++)
+	{
+		if (name[i] >= 'A' && name[i] <= 'Z')
+			name[i] -= 'A' - 'a';
+	}
+
+	return name;
 }
 
 /*

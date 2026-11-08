@@ -2,7 +2,7 @@
 
 #include "pspstub.s"
 
-	STUB_START "q_shared",0x00090000,0x002C0005
+	STUB_START "q_shared",0x00090000,0x002F0005
 	STUB_FUNC  0xF0841032,RotatePointAroundVector
 	STUB_FUNC  0x60DA255F,AngleVectors
 	STUB_FUNC  0x75ABDBEB,ProjectPointOnPlane
@@ -11,6 +11,7 @@
 	STUB_FUNC  0x2F7CE26A,R_ConcatTransforms
 	STUB_FUNC  0x3B916080,Q_fabs
 	STUB_FUNC  0xD7CA7A4D,LerpAngle
+	STUB_FUNC  0x82EEE9D7,AngleDiff
 	STUB_FUNC  0xD1E210FF,anglemod
 	STUB_FUNC  0x8324F996,BoxOnPlaneSide2
 	STUB_FUNC  0xF70BA176,BoxOnPlaneSide
@@ -26,6 +27,7 @@
 	STUB_FUNC  0xEE3DDB05,_VectorCopy
 	STUB_FUNC  0x3448E433,_CrossProduct
 	STUB_FUNC  0xDBCDF2AA,VectorLength
+	STUB_FUNC  0x6B54DBF2,VectorDistance
 	STUB_FUNC  0x5677A978,_VectorInverse
 	STUB_FUNC  0x2844193D,_VectorScale
 	STUB_FUNC  0xA66883C5,Q_log2
@@ -43,6 +45,7 @@
 	STUB_FUNC  0xB4E674C3,Q_strncasecmp
 	STUB_FUNC  0x0776B962,Q_strcasecmp
 	STUB_FUNC  0x422CBBB6,Com_sprintf
+	STUB_FUNC  0xBEC32393,kp_strlwr
 	STUB_FUNC  0x997705D5,Info_ValueForKey
 	STUB_FUNC  0x3BEEE3F2,Info_RemoveKey
 	STUB_FUNC  0x73758340,Info_Validate

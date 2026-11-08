@@ -159,6 +159,88 @@ typedef struct
 
 } dmdl_t;
 
+#ifdef KINGPIN_ENGINE
+/*
+========================================================================
+
+.MDX triangle model file format (Kingpin, version 4)
+
+The animated vertex records are identical to MD2.  MDX removes the ST
+table, tags each GL command group with a sub-object number, and appends
+vertex/SFX/object-bounds tables used by Kingpin's multipart models.
+
+========================================================================
+*/
+
+#define IDMDXHEADER		(('X'<<24)+('P'<<16)+('D'<<8)+'I')
+#define MDX_VERSION		4
+
+#define MAX_MDXSKINS	64
+
+typedef struct
+{
+	int			ident;
+	int			version;
+
+	int			skinwidth;
+	int			skinheight;
+	int			framesize;
+
+	int			num_skins;
+	int			num_xyz;
+	int			num_tris;
+	int			num_glcmds;
+	int			num_frames;
+	int			num_sfxdefs;
+	int			num_sfxentries;
+	int			num_subobjects;
+
+	int			ofs_skins;
+	int			ofs_tris;
+	int			ofs_frames;
+	int			ofs_glcmds;
+	int			ofs_vertexinfo;
+	int			ofs_sfxdefs;
+	int			ofs_sfxentries;
+	int			ofs_bbox_frames;
+	int			ofs_dummyend;
+	int			ofs_end;
+} dmdx_t;
+
+/* On-disk records referenced by dmdx_t::ofs_sfxdefs/ofs_sfxentries. */
+typedef struct
+{
+	int			sprite;
+	int			flags;
+	int			direction_mode;
+	float		direction;
+	float		offset;
+	int			interval_mask;	/* 0, or 0.05/0.1/0.2/0.5/1 second bits */
+	float		chance;
+	float		start_alpha;
+	float		end_alpha;
+	float		fade_time;
+	float		lifetime;
+	float		time_variance;
+	float		start_width;
+	float		end_width;
+	float		start_height;
+	float		end_height;
+	float		size_variance;
+} dmdx_sfxdef_t;
+
+#define MDX_SFX_FRAME_BYTES 128
+
+typedef struct
+{
+	int			anchor;			/* vertex, or first triangle index */
+	int			definition;
+	int			anchor_mode;	/* 0 = vertex, 1 = triangle */
+	byte		frames[MDX_SFX_FRAME_BYTES];
+} dmdx_sfxentry_t;
+
+#endif
+
 /*
 ========================================================================
 
@@ -338,7 +420,12 @@ typedef struct
 #define	CONTENTS_SLIME			16
 #define	CONTENTS_WATER			32
 #define	CONTENTS_MIST			64
+#ifdef KINGPIN_ENGINE
+#define CONTENTS_ALPHA			128
+#define	LAST_VISIBLE_CONTENTS	128
+#else
 #define	LAST_VISIBLE_CONTENTS	64
+#endif
 
 // remaining contents are non-visible, and don't eat brushes
 
@@ -376,6 +463,28 @@ typedef struct
 #define	SURF_FLOWING	0x40	// scroll towards angle
 #define	SURF_NODRAW		0x80	// don't bother referencing the texture
 
+#ifdef KINGPIN_ENGINE
+#define	SURF_BURNT			0x100		// charred by explosions
+#define	SURF_SPECULAR		0x400		// specular highlight from light flares
+#define	SURF_DIFFUSE		0x800		// wider, weaker specular
+#define	SURF_ALPHA			0x1000		// alpha-tested texture (fences)
+#define	SURF_REFLECT_WEAK	0x4000		// reflection-map overlay, alpha 0.1
+#define	SURF_REFLECT_STRONG	0x8000		// reflection-map overlay, alpha 0.3
+
+// footstep / impact material
+#define	SURF_WATER			0x80000
+#define	SURF_CONCRETE		0x100000
+#define	SURF_FABRIC			0x200000
+#define	SURF_GRAVEL			0x400000
+#define	SURF_METAL			0x800000
+#define	SURF_METAL_L		0x1000000
+#define	SURF_SNOW			0x2000000
+#define	SURF_TILE			0x4000000
+#define	SURF_WOOD			0x8000000
+
+#define	SURF_REFLECT_FAKE	0x10000000
+#define	SURF_REFLECT_LIGHT	0x20000000
+#endif
 
 
 

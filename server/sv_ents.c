@@ -168,7 +168,12 @@ void SV_EmitPacketEntities (client_frame_t *from, client_frame_t *to, sizebuf_t 
 			// in any bytes being emited if the entity has not changed at all
 			// note that players are always 'newentities', this updates their oldorigin always
 			// and prevents warping
+#ifdef KINGPIN_ENGINE
+			MSG_WriteDeltaEntity (oldent, newent, msg, false, false,
+				net_origin_offset->value && (sv.framenum + newnum) % 20);
+#else
 			MSG_WriteDeltaEntity (oldent, newent, msg, false, newent->number <= maxclients->value);
+#endif
 			oldindex++;
 			newindex++;
 			continue;
@@ -176,7 +181,11 @@ void SV_EmitPacketEntities (client_frame_t *from, client_frame_t *to, sizebuf_t 
 
 		if (newnum < oldnum)
 		{	// this is a new entity, send it from the baseline
+#ifdef KINGPIN_ENGINE
+			MSG_WriteDeltaEntity (&sv.baselines[newnum], newent, msg, true, true, false);
+#else
 			MSG_WriteDeltaEntity (&sv.baselines[newnum], newent, msg, true, true);
+#endif
 			newindex++;
 			continue;
 		}
@@ -346,9 +355,15 @@ void SV_WritePlayerstateToClient (client_frame_t *from, client_frame_t *to, size
 	//
 	if (pflags & PS_VIEWOFFSET)
 	{
+#ifdef KINGPIN_ENGINE
+		MSG_WriteChar (msg, ps->viewoffset[0]*4);
+		MSG_WriteChar (msg, ps->viewoffset[1]*4);
+		MSG_WriteAngle16 (msg, ps->viewoffset[2]);
+#else
 		MSG_WriteChar (msg, ps->viewoffset[0]*4);
 		MSG_WriteChar (msg, ps->viewoffset[1]*4);
 		MSG_WriteChar (msg, ps->viewoffset[2]*4);
+#endif
 	}
 
 	if (pflags & PS_VIEWANGLES)
@@ -368,6 +383,9 @@ void SV_WritePlayerstateToClient (client_frame_t *from, client_frame_t *to, size
 	if (pflags & PS_WEAPONINDEX)
 	{
 		MSG_WriteByte (msg, ps->gunindex);
+#ifdef KINGPIN_ENGINE
+		MSG_WriteDeltaModelParts (ops->model_parts, ps->model_parts, msg);
+#endif
 	}
 
 	if (pflags & PS_WEAPONFRAME)
@@ -580,7 +598,11 @@ void SV_BuildClientFrame (client_t *client)
 			continue;
 
 		// ignore ents without visible models unless they have an effect
-		if (!ent->s.modelindex && !ent->s.effects && !ent->s.sound
+		if (!ent->s.modelindex
+#ifdef KINGPIN_ENGINE
+			&& !ent->s.num_parts
+#endif
+			&& !ent->s.effects && !ent->s.sound
 			&& !ent->s.event)
 			continue;
 
@@ -632,7 +654,11 @@ void SV_BuildClientFrame (client_t *client)
 						continue;		// not visible
 				}
 
+#ifdef KINGPIN_ENGINE
+				if (!ent->s.modelindex && !ent->s.num_parts)
+#else
 				if (!ent->s.modelindex)
+#endif
 				{	// don't send sounds if they will be attenuated away
 					vec3_t	delta;
 					float	len;
@@ -703,12 +729,20 @@ void SV_RecordDemoMessage (void)
 	while (e < ge->num_edicts) 
 	{
 		// ignore ents without visible models unless they have an effect
+#ifdef KINGPIN_ENGINE
+		if (ent->inuse &&
+			ent->s.number && 
+			(ent->s.modelindex || ent->s.num_parts || ent->s.effects
+				|| ent->s.sound || ent->s.event) && 
+			!(ent->svflags & SVF_NOCLIENT))
+			MSG_WriteDeltaEntity (&nostate, &ent->s, &buf, false, true, false);
+#else
 		if (ent->inuse &&
 			ent->s.number && 
 			(ent->s.modelindex || ent->s.effects || ent->s.sound || ent->s.event) && 
 			!(ent->svflags & SVF_NOCLIENT))
 			MSG_WriteDeltaEntity (&nostate, &ent->s, &buf, false, true);
-
+#endif
 		e++;
 		ent = EDICT_NUM(e);
 	}
