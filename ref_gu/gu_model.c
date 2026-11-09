@@ -1588,6 +1588,7 @@ void Mod_Free (model_t *mod)
 		return;
 
 	mod->needload = nl_unreferenced;
+	memset (mod->skins, 0, sizeof(mod->skins));
 	if (mod->type == mod_alias || mod->type == mod_mdx)
 	{
 		if (mod != &mod_known[0]) // worldmodel slot?
