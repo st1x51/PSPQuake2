@@ -401,11 +401,6 @@ void CL_ParseMuzzleFlash (void)
 CL_ParseMuzzleFlash2
 ==============
 */
-#ifdef __psp__
-#define MZ2_GUNNER_MACHINEGUN_1_X (30.1f * 1.15f)
-#define MZ2_GUNNER_MACHINEGUN_1_Y (3.9f * 1.15f)
-#define MZ2_GUNNER_MACHINEGUN_1_Z (19.6f * 1.15f)
-#endif
 void CL_ParseMuzzleFlash2 (void)
 {
 	int ent, flash;
@@ -417,22 +412,14 @@ void CL_ParseMuzzleFlash2 (void)
 	if (ent < 1 || ent >= MAX_EDICTS)
 		Com_Error (ERR_DROP, "CL_ParseMuzzleFlash2: bad entity");
 	flash = MSG_ReadByte (&net_message);
+	if (flash < 0 || flash >= monster_flash_offset_count)
+		Com_Error (ERR_DROP, "CL_ParseMuzzleFlash2: bad flash");
 	cent = &cl_entities[ent];
 	AngleVectors (cent->current.angles, forward, right, NULL);
 	dl = CL_AllocDlight (ent);
-#ifdef __psp__
-    /*
-     * Kingpin gamesrc emits only MZ2_GUNNER_MACHINEGUN_1.
-     * Keep this local to avoid the monster_flash_offset/m_flash.c dependency.
-     */
-	VectorMA (cent->current.origin, MZ2_GUNNER_MACHINEGUN_1_X, forward, dl->origin);
-	VectorMA (dl->origin, MZ2_GUNNER_MACHINEGUN_1_Y, right, dl->origin);
-	dl->origin[2] += MZ2_GUNNER_MACHINEGUN_1_Z;
-#else
 	VectorMA (cent->current.origin, monster_flash_offset[flash][0], forward, dl->origin);
 	VectorMA (dl->origin, monster_flash_offset[flash][1], right, dl->origin);
 	dl->origin[2] += monster_flash_offset[flash][2];
-#endif
 	dl->radius = 200 + (rand() & 31);
 	dl->minlight = 32;
 	dl->die = cl.time;
