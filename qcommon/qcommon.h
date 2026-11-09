@@ -352,6 +352,7 @@ enum clc_ops_e
 #define	PS_WEAPONINDEX		(1<<12)
 #define	PS_WEAPONFRAME		(1<<13)
 #define	PS_RDFLAGS			(1<<14)
+#endif
 
 //==============================================
 
