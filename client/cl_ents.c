@@ -1271,6 +1271,9 @@ void CL_AddPacketEntities (frame_t *frame)
 			renderfx |= RF_SHELL_BLUE;
 		}
 
+		if (effects & EF_REFL)
+			renderfx |= RF_REFL_MAP;
+
 		ent.oldframe = cent->prev.frame;
 		ent.backlerp = 1.0 - cl.lerpfrac;
 		ent.scale = s1->scale;
