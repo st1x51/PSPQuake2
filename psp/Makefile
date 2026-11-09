@@ -77,7 +77,7 @@ endif
 
 #LDFLAGS = -lm
 
-LIBS = -lpspwlan -lpspnet_adhoc -lpspnet_adhocctl -lpspgum_vfpu -lpspvfpu -lpspgu -lpspdmac -lm
+LIBS = -lpsppower -lpspwlan -lpspnet_adhoc -lpspnet_adhocctl -lpspgum_vfpu -lpspvfpu -lpspgu -lpspdmac -lm
 
 ifeq ($(USE_VAUDIO), 1)
 LIBS += -lpspvaudio

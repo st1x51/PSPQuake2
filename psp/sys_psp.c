@@ -21,6 +21,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 
 #include <pspctrl.h>
 #include <pspkernel.h>
+#include <psppower.h>
 #include <pspsdk.h>
 #include <psputility.h>
 
@@ -573,6 +574,7 @@ int main (int argc, char **argv)
 	int time, oldtime, newtime;
 
 	pspSdkDisableFPUExceptions();
+	scePowerSetClockFrequency (333, 333, 166);
 
 	Qcommon_Init (argc, argv);
 
