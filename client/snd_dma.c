@@ -1043,7 +1043,7 @@ void S_AddLoopSounds (void)
 		ch->sfx = sfx;
 		ch->pos = paintedtime % sc->length;
 #if defined(KINGPIN_ENGINE) && defined(__psp__)
-		ch->pitch_samplepos = ch->pos * S_PITCH_UNIT;
+		ch->pitch_samplepos = (uint64_t)ch->pos * S_PITCH_UNIT;
 		ch->pitch_samplestep = S_PITCH_UNIT;
 #endif
 		ch->end = paintedtime + sc->length - ch->pos;

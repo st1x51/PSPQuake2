@@ -72,6 +72,7 @@ typedef struct playsound_s
 } playsound_t;
 
 #if defined(KINGPIN_ENGINE) && defined(__psp__)
+#include <stdint.h>
 #define S_PITCH_FRACBITS	12
 #define S_PITCH_UNIT		(1 << S_PITCH_FRACBITS)
 #define S_PITCH_FRACMASK	(S_PITCH_UNIT - 1)
@@ -105,7 +106,7 @@ typedef struct
 	qboolean	fixed_origin;	// use origin instead of fetching entnum's origin
 	qboolean	autosound;		// from an entity->sound, cleared each frame
 #if defined(KINGPIN_ENGINE) && defined(__psp__)
-	int			pitch_samplepos;	// 20.12 source-sample position for pitched playback
+	uint64_t	pitch_samplepos;	// source-sample position with 12 fractional bits
 	int			pitch_samplestep;	// 20.12 source samples consumed per output sample
 #endif
 } channel_t;

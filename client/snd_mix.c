@@ -348,7 +348,7 @@ void S_PaintChannels(int endtime)
 #if defined(KINGPIN_ENGINE) && defined(__psp__)
 						if (ch->pitch_samplestep > 0)
 						{
-							ch->pitch_samplepos = ch->pos * S_PITCH_UNIT;
+							ch->pitch_samplepos = (uint64_t)ch->pos * S_PITCH_UNIT;
 							ch->end = ltime + (int)(((unsigned long long)(sc->length - ch->pos) *
 								S_PITCH_UNIT + ch->pitch_samplestep - 1) / ch->pitch_samplestep);
 						}
@@ -397,6 +397,63 @@ void S_InitScaletable (void)
 #if !(defined __linux__ && defined __i386__)
 #if	!id386
 
+#if defined(KINGPIN_ENGINE) && defined(__psp__)
+static void S_PaintPitchedChannel (channel_t *ch, sfxcache_t *sc, int count, int offset)
+{
+	int echo, i;
+	int echoes = S_CHECKREVERB(ch) ? (int)s_reverb_count->value : 1;
+	int delay = S_CHECKREVERB(ch) ? (int)s_reverb_delay->value : 0;
+	float volume_scale = 1.0f;
+	uint64_t source_end = (uint64_t)sc->length * S_PITCH_UNIT;
+
+	for (echo = 0; echo < echoes; echo++)
+	{
+		uint64_t samplepos = ch->pitch_samplepos;
+		uint64_t echo_offset = (uint64_t)delay * echo * ch->pitch_samplestep;
+		int leftvol = ch->leftvol, rightvol = ch->rightvol;
+		portable_samplepair_t *samp = &paintbuffer[offset];
+
+		if (sc->width == 1)
+		{
+			leftvol = Q_min(leftvol, 255) & ~7;
+			rightvol = Q_min(rightvol, 255) & ~7;
+		}
+		leftvol = (int)(leftvol * snd_vol * volume_scale);
+		rightvol = (int)(rightvol * snd_vol * volume_scale);
+		for (i = 0; i < count; i++, samp++, samplepos += ch->pitch_samplestep)
+		{
+			uint64_t position;
+			int index, next, fraction, sample0, sample1, data;
+
+			if (samplepos < echo_offset)
+				continue;
+			position = samplepos - echo_offset;
+			if (position >= source_end)
+				continue;
+			index = (int)(position >> S_PITCH_FRACBITS);
+			next = Q_min(index + 1, sc->length - 1);
+			fraction = (int)(position & S_PITCH_FRACMASK);
+			if (sc->width == 1)
+			{
+				sample0 = ((signed char *)sc->data)[index] * 256;
+				sample1 = ((signed char *)sc->data)[next] * 256;
+			}
+			else
+			{
+				sample0 = ((short *)sc->data)[index];
+				sample1 = ((short *)sc->data)[next];
+			}
+			data = sample0 + (((sample1 - sample0) * fraction) >> S_PITCH_FRACBITS);
+			samp->left += (data * leftvol) >> 8;
+			samp->right += (data * rightvol) >> 8;
+		}
+		volume_scale *= s_reverb_volscale->value;
+	}
+	ch->pitch_samplepos += (uint64_t)count * ch->pitch_samplestep;
+	ch->pos = (int)(ch->pitch_samplepos >> S_PITCH_FRACBITS);
+}
+#endif
+
 void S_PaintChannelFrom8 (channel_t *ch, sfxcache_t *sc, int count, int offset)
 {
 	int 	data;
@@ -404,6 +461,16 @@ void S_PaintChannelFrom8 (channel_t *ch, sfxcache_t *sc, int count, int offset)
 	unsigned char *sfx;
 	int		i;
 	portable_samplepair_t	*samp;
+
+#if defined(KINGPIN_ENGINE) && defined(__psp__)
+	if (ch->pitch_samplestep != S_PITCH_UNIT || S_CHECKREVERB(ch))
+	{
+		if (ch->pitch_samplestep == S_PITCH_UNIT)
+			ch->pitch_samplepos = (uint64_t)ch->pos * S_PITCH_UNIT;
+		S_PaintPitchedChannel(ch, sc, count, offset);
+		return;
+	}
+#endif
 
 	if (ch->leftvol > 255)
 		ch->leftvol = 255;
@@ -518,37 +585,11 @@ void S_PaintChannelFrom16 (channel_t *ch, sfxcache_t *sc, int count, int offset)
 	 * resampling path allocates a private sfx_t for every pitched voice;
 	 * on PSP we advance through the original 16-bit PCM at a fractional rate.
 	 */
-	if (ch->pitch_samplestep != S_PITCH_UNIT)
+	if (ch->pitch_samplestep != S_PITCH_UNIT || S_CHECKREVERB(ch))
 	{
-		int samplepos = ch->pitch_samplepos;
-
-		leftvol = ch->leftvol * snd_vol;
-		rightvol = ch->rightvol * snd_vol;
-		sfx = (signed short *)sc->data;
-		samp = &paintbuffer[offset];
-
-		for (i = 0; i < count; i++, samp++)
-		{
-			int sampleindex = samplepos >> S_PITCH_FRACBITS;
-			int nextindex = sampleindex + 1;
-			int fraction = samplepos & S_PITCH_FRACMASK;
-			int sample0, sample1;
-
-			if (sampleindex >= sc->length)
-				sampleindex = sc->length - 1;
-			if (nextindex >= sc->length)
-				nextindex = sc->length - 1;
-
-			sample0 = sfx[sampleindex];
-			sample1 = sfx[nextindex];
-			data = sample0 + (((sample1 - sample0) * fraction) >> S_PITCH_FRACBITS);
-			samp->left += (data * leftvol) >> 8;
-			samp->right += (data * rightvol) >> 8;
-			samplepos += ch->pitch_samplestep;
-		}
-
-		ch->pitch_samplepos = samplepos;
-		ch->pos = samplepos >> S_PITCH_FRACBITS;
+		if (ch->pitch_samplestep == S_PITCH_UNIT)
+			ch->pitch_samplepos = (uint64_t)ch->pos * S_PITCH_UNIT;
+		S_PaintPitchedChannel(ch, sc, count, offset);
 		return;
 	}
 #endif

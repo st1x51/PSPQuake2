@@ -62,7 +62,7 @@ void S_Resample (const byte *src, int inrate, int inwidth, int insamples, byte *
 			if (inwidth == 2)
 				sample = LittleShort (((short *)src)[srcsample]);
 			else
-				sample = (int)((unsigned char)(src[srcsample]) - 128) << 8;
+				sample = ((int)src[srcsample] - 128) * 256;
 
 			if (outwidth == 2)
 				((short *)dst)[i] = sample;
@@ -126,7 +126,7 @@ sfxcache_t *S_LoadSound (sfx_t *s)
 	int		outsamples;
 	float	stepscale;
 	sfxcache_t	*sc;
-	int		size;
+	size_t		size;
 	char	*name;
 
 	if (s->name[0] == '*')
@@ -168,9 +168,8 @@ sfxcache_t *S_LoadSound (sfx_t *s)
 
 	stepscale = (float)info.rate / dma.speed;
 	outsamples = info.samples / stepscale;
-	outsamples = outsamples * dma.width * info.channels;
-
-	sc = Cache_Alloc ( &s->cache, outsamples + sizeof(sfxcache_t), s->name);
+	sc = Cache_Alloc ( &s->cache,
+		outsamples * dma.width * info.channels + sizeof(sfxcache_t), s->name);
 	if (!sc)
 		return NULL;
 
