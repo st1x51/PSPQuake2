@@ -525,7 +525,7 @@ void CL_ParseTEnt (void)
 			VectorMA (pos, 4, dir, start);		// unused, as in kingpin.exe
 			VectorScale (dir, 12, vel);
 			if (vel[2] <= 1)
-				vel[2] += 4 * rand() * (1.0/32768);
+				vel[2] += 4.0f * frand();
 
 			if (type == TE_GUNSHOT_VISIBLE)
 			{
@@ -544,7 +544,7 @@ void CL_ParseTEnt (void)
 
 			VectorScale (dir, 8, vel);
 			if (vel[2] <= 1)
-				vel[2] += 12 * rand() * (1.0/32768);
+				vel[2] += 12.0f * frand();
 			re.AddSFX (SFX_SPRITE_SMOKE_SMALL, 0, pos, vel, 0,
 				0.5, alpha*2, 0, 0.2,
 				1, 80, 1, 80);
@@ -920,11 +920,13 @@ void CL_ParseTEnt (void)
 		r = MSG_ReadByte (&net_message);
 		alpha = r ? r * 0.1 : 0.5;
 
+		/* PSP rand() is 31-bit. Use the engine's normalized RNG so fire
+		 * sizes stay bounded and integer multiplication cannot overflow. */
 		vel[0] = vel[1] = 0;
-		vel[2] = 10 + (2*rand()*(1.0/32768) - 1) * 4;
+		vel[2] = 10 + (2.0f * frand() - 1) * 4;
 		f = (size>>2) + size;
-		g = (2*rand()*(1.0/32768) - 0.5) * 15 + f;		// end height
-		t = (2*rand()*(1.0/32768) - 0.5) * 10 + f;		// end width
+		g = (2.0f * frand() - 0.5) * 15 + f;		// end height
+		t = (2.0f * frand() - 0.5) * 10 + f;		// end width
 		re.AddSFX (type == TE_SFXFIRET ? SFX_SPRITE_FIREWALL : SFX_SPRITE_FIRE, 0x20, pos, vel, 0,
 			0.7, alpha, 0, 0.3,
 			size, t, (size>>1) + size, g);
@@ -937,12 +939,12 @@ void CL_ParseTEnt (void)
 		alpha = r ? r * 0.1 : 0.4;
 
 		f = size >> 3;
-		vel[0] = (2*rand()*(1.0/32768) - 1) * f;
-		vel[1] = (2*rand()*(1.0/32768) - 1) * f;
-		vel[2] = (size >> 2) * (2*rand()*(1.0/32768) + 1);
+		vel[0] = (2.0f * frand() - 1) * f;
+		vel[1] = (2.0f * frand() - 1) * f;
+		vel[2] = (size >> 2) * (2.0f * frand() + 1);
 		k = size - size/5;
-		g = k*6 + (2*rand()*(1.0/32768) - 1) * 16;
-		t = size*4 + (2*rand()*(1.0/32768) - 1) * 16;
+		g = k*6 + (2.0f * frand() - 1) * 16;
+		t = size*4 + (2.0f * frand() - 1) * 16;
 		re.AddSFX (SFX_SPRITE_SMOKE_SMALL, 0, pos, vel, 0,
 			4.5, alpha, 0, 1.8,
 			size, t, k, g);
@@ -1036,7 +1038,7 @@ void CL_ParseTEnt (void)
 		}
 		else if (r == SFX_SPRITE_SURF_RIPPLE)
 		{
-			t = 2*rand()*(1.0/32768) - 1;
+			t = 2.0f * frand() - 1;
 			re.AddSFX (r, SFX_FLAG_SURFACE_EFFECT|SFX_FLAG_NO_FLIP, pos, dir, 0,
 				0.6, 1.0, 0, 0.2,
 				0, t*f*0.5 + f, 0, t*g*0.5 + g);
@@ -1094,13 +1096,13 @@ void CL_ParseTEnt (void)
 		if (!vel[0] && !vel[1] && !vel[2])
 		{
 			f = size >> 3;
-			vel[0] = (2*rand()*(1.0/32768) - 1) * f;
-			vel[1] = (2*rand()*(1.0/32768) - 1) * f;
-			vel[2] = 2*rand()*(1.0/32768) * height;
+			vel[0] = (2.0f * frand() - 1) * f;
+			vel[1] = (2.0f * frand() - 1) * f;
+			vel[2] = 2.0f * frand() * height;
 		}
 		k = size - size/5;
-		g = k*6 + (2*rand()*(1.0/32768) - 1) * 16;
-		t = size*4 + (2*rand()*(1.0/32768) - 1) * 16;
+		g = k*6 + (2.0f * frand() - 1) * 16;
+		t = size*4 + (2.0f * frand() - 1) * 16;
 		re.AddSFX (SFX_SPRITE_SMOKE_SMALL, 0, pos, vel, 0,
 			lt, alpha, 0, 1.8,
 			size, t, k, g);
