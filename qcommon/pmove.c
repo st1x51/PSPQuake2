@@ -1607,9 +1607,8 @@ void PM_SnapPosition (void)
 //	Com_DPrintf ("using previous_origin\n");
 }
 
-#if 0 // def KINGPIN_ENGINE
+#ifdef KINGPIN_ENGINE
 // kingpin.exe @00433c10 still uses this search order (+1, 0, -1)
-//NO LONGER USED
 /*
 ================
 PM_InitialSnapPosition

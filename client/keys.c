@@ -907,7 +907,7 @@ void Key_Event (int key, qboolean down, unsigned time)
 		return;
 	}
 
-#if 0 //def KINGPIN_ENGINE
+#ifdef KINGPIN_ENGINE
 	/*
 	 * kingpin.exe @00427750 forwards the first arrow press to the game DLL.
 	 * Dialog and interaction code consumes these commands independently of
