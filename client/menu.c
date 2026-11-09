@@ -2911,7 +2911,7 @@ void Game_MenuInit( void )
 {
 	static const char *difficulty_names[] =
 	{
-		"novice"
+		"novice",
 		"easy",
 		"medium",
 		"hard",
@@ -2929,7 +2929,7 @@ void Game_MenuInit( void )
 	s_novice_game_action.generic.x		= 0;
 	s_novice_game_action.generic.y		= 0;
 	s_novice_game_action.generic.name	= "novice";
-	s_novice_game_action.generic.callback = EasyGameFunc;
+	s_novice_game_action.generic.callback = NoviceGameFunc;
 
 	s_easy_game_action.generic.type	= MTYPE_ACTION;
 	s_easy_game_action.generic.flags  = QMF_LEFT_JUSTIFY;
@@ -2994,6 +2994,7 @@ void Game_MenuInit( void )
 	Menu_AddItem( &s_game_menu, ( void * ) &s_credits_action );
 
 	Menu_Center( &s_game_menu );
+	s_game_menu.cursor = 2;	// medium
 }
 #else
 void Game_MenuInit( void )
