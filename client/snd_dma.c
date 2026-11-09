@@ -997,13 +997,12 @@ void S_AddLoopSounds (void)
 		if (!sfx)
 			continue;		// bad sound effect
 		sc = Cache_Check (&sfx->cache);
+#ifdef KINGPIN_ENGINE
 		if (!sc)
-		{
-#ifdef KINGPIN_ENGINE // FIXME: verify Kingpin engine behavior
-			S_LoadSound (sfx);	// kingpin.exe @004372cb
+			sc = S_LoadSound (sfx);	// kingpin.exe @004372cb
 #endif
+		if (!sc)
 			continue;
-		}
 
 		num = (cl.frame.parse_entities + i)&(MAX_PARSE_ENTITIES-1);
 		ent = &cl_parse_entities[num];
