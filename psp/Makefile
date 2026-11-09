@@ -216,6 +216,7 @@ QUAKE2_OBJS = \
 	$(COMMON_DIR)/crc.o \
 	$(COMMON_DIR)/cvar.o \
 	$(COMMON_DIR)/files.o \
+	$(COMMON_DIR)/fs_patch.o \
 	$(COMMON_DIR)/md4.o \
 	$(COMMON_DIR)/net_chan.o \
 	$(COMMON_DIR)/zone.o \
@@ -225,6 +226,7 @@ QUAKE2_OBJS = \
 	$(SERVER_DIR)/sv_game.o \
 	$(SERVER_DIR)/sv_init.o \
 	$(SERVER_DIR)/sv_main.o \
+	$(SERVER_DIR)/sv_gamespy.o \
 	$(SERVER_DIR)/sv_send.o \
 	$(SERVER_DIR)/sv_user.o \
 	$(SERVER_DIR)/sv_world.o \
@@ -239,10 +241,9 @@ QUAKE2_OBJS = \
 	$(PSP_DIR)/glob.o \
 	\
 	$(SHARED_DIR)/q_shared.o \
+	$(SHARED_DIR)/m_flash.o \
 	$(SHARED_DIR)/BOPS.o \
 	$(COMMON_DIR)/pmove.o
-
-#$(SHARED_DIR)/m_flash.o \
 
 VAUDIO_OBJS = $(PSP_DIR)/snd_psp_vaudio.o
 CDMP3_OBJS = $(PSP_DIR)/cd_mp3.o

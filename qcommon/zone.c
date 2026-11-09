@@ -22,8 +22,8 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "qcommon.h"
 #include <malloc.h>
 
-#define	ZONE_SIZE_MAIN	(2 * 1024 * 1024)
-#define	ZONE_SIZE_SMALL	(256 * 1024)
+#define	ZONE_SIZE_MAIN	(10 * 1024 * 1024)
+#define	ZONE_SIZE_SMALL	(4 * 1024 * 1024)
 
 #define	ZONEID	0x1d4a11
 #define MINFRAGMENT	64

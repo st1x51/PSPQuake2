@@ -90,6 +90,7 @@ typedef struct pack_s
 	dpackfile_t	*files;
 #ifdef USE_HASH_FOR_FILES
 	filehash_t	**hashtable;
+	filehash_t	*hashes;
 	int		hashsize;
 #endif
 } pack_t;
@@ -123,6 +124,13 @@ typedef struct searchpath_s
 
 searchpath_t	*fs_searchpaths;
 searchpath_t	*fs_base_searchpaths;	// without gamedirs
+
+/* Base paths live for the process lifetime. Mod paths must be reclaimable
+ * when `game` changes, without rewinding the shared PSP hunk. */
+static void *FS_PathAlloc (int size, const char *name)
+{
+	return fs_base_searchpaths ? Z_Malloc(size) : Hunk_AllocName(size, name);
+}
 
 
 /*
@@ -1172,9 +1180,9 @@ pack_t *FS_LoadPackFile (char *packfile)
 	if (numpackfiles > MAX_FILES_IN_PACK)
 		Com_Error (ERR_FATAL, "%s has %i files", packfile, numpackfiles);
 
-	packfiles = Hunk_AllocName (header.dirlen, "packfiles");
+	packfiles = FS_PathAlloc (header.dirlen, "packfiles");
 #ifdef USE_HASH_FOR_FILES
-	packhashes = Hunk_AllocName (numpackfiles * sizeof(filehash_t), "packhashes");
+	packhashes = FS_PathAlloc (numpackfiles * sizeof(filehash_t), "packhashes");
 #endif
 
 #ifdef PSP_FIO
@@ -1195,8 +1203,8 @@ pack_t *FS_LoadPackFile (char *packfile)
 
 #ifdef USE_HASH_FOR_FILES
 // build hash table
-	hashsize = numpackfiles >> 2;
-	hashtable = Hunk_Alloc (sizeof (filehash_t) * hashsize);
+	hashsize = Q_max (1, numpackfiles >> 2);
+	hashtable = FS_PathAlloc (sizeof (*hashtable) * hashsize, "packhash");
 #endif
 
 // parse the directory
@@ -1215,12 +1223,13 @@ pack_t *FS_LoadPackFile (char *packfile)
 #endif
 	}
 
-	pack = Hunk_Alloc (sizeof (pack_t));
+	pack = FS_PathAlloc (sizeof (pack_t), "pack");
 	strcpy (pack->filename, packfile);
 	pack->numfiles = numpackfiles;
 	pack->files = packfiles;
 #ifdef USE_HASH_FOR_FILES
 	pack->hashtable = hashtable;
+	pack->hashes = packhashes;
 	pack->hashsize = hashsize;
 #endif
 
@@ -1259,7 +1268,7 @@ void FS_AddGameDirectory (char *dir, int flags)
 	//
 	// add the directory to the search path
 	//
-	search = Hunk_Alloc(sizeof(searchpath_t));
+	search = FS_PathAlloc(sizeof(searchpath_t), "searchpath");
 	strcpy (search->filename, dir);
 	search->flags = flags | FS_TYPE_RFS;
 	search->next = fs_searchpaths;
@@ -1274,7 +1283,7 @@ void FS_AddGameDirectory (char *dir, int flags)
 		pak = FS_LoadPackFile (pakfile);
 		if (!pak)
 			continue;
-		search = Hunk_Alloc(sizeof(searchpath_t));
+		search = FS_PathAlloc(sizeof(searchpath_t), "searchpath");
 		search->pack = pak;
 		search->flags = flags | FS_TYPE_PAK;
 		search->next = fs_searchpaths;
@@ -1333,7 +1342,6 @@ void FS_SetGamedir (char *dir)
 		Com_Printf ("Gamedir should be a single filename, not a path\n");
 		return;
 	}
-#if 0
 	//
 	// free up any current game dir info
 	//
@@ -1342,13 +1350,16 @@ void FS_SetGamedir (char *dir)
 		if (fs_searchpaths->pack)
 		{
 			Z_Free (fs_searchpaths->pack->files);
+#ifdef USE_HASH_FOR_FILES
+			Z_Free (fs_searchpaths->pack->hashes);
+			Z_Free (fs_searchpaths->pack->hashtable);
+#endif
 			Z_Free (fs_searchpaths->pack);
 		}
 		next = fs_searchpaths->next;
 		Z_Free (fs_searchpaths);
 		fs_searchpaths = next;
 	}
-#endif
 	//
 	// flush all data, so it will be forced to reload
 	//
@@ -1621,6 +1632,9 @@ void FS_InitFilesystem (void)
 	// check for game override
 	if (fs_gamedirvar->string[0])
 		FS_SetGamedir (fs_gamedirvar->string);
+#ifdef KINGPIN_ENGINE
+	FS_InitPatchCommands ();
+#endif
 }
 
 

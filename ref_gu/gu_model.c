@@ -533,6 +533,35 @@ void Mod_LoadEdges (lump_t *l)
 Mod_LoadTexinfo
 =================
 */
+#ifdef KINGPIN_ENGINE
+static qboolean Mod_TestSpecularTexture (const char *texture, int flags)
+{
+	static const char *mode1_names[] = {
+		"pvglass/pv_g10", "props/w_sr_m6d", "bricks/b_sr_v30",
+		"bricks/b_sr_v26", "bricks/b_sr_v31", "bricks/b_sr_v27",
+		"props/w_sr_m6e", "wood/wd_st_m3", "floors/dr_sr_v1", NULL
+	};
+	int mode = (int)gl_test_specular->value;
+	int i;
+	if (!mode)
+		return false;
+	if (mode == 1)
+	{
+		for (i = 0; mode1_names[i]; i++)
+			if (strstr (texture, mode1_names[i]))
+				return true;
+		return false;
+	}
+	if (mode >= 4)
+		return (flags & 0x100c) == 0;
+	if (flags & 0x103c)
+		return false;
+	if (mode == 3)
+		return true;
+	return (flags & 0x800000) != 0 || strstr (texture, "metals/") != NULL;
+}
+#endif
+
 void Mod_LoadTexinfo (lump_t *l)
 {
 	texinfo_t *in;
@@ -559,6 +588,10 @@ void Mod_LoadTexinfo (lump_t *l)
 		}
 
 		out->flags = LittleLong (in->flags);
+#ifdef KINGPIN_ENGINE
+		if (Mod_TestSpecularTexture (in->texture, out->flags))
+			out->flags |= SURF_SPECULAR;
+#endif
 		next = LittleLong (in->nexttexinfo);
 		if (next > 0)
 			out->next = loadmodel->texinfo + next;
@@ -570,7 +603,14 @@ void Mod_LoadTexinfo (lump_t *l)
 		Com_sprintf (name, sizeof(name), "textures/%s.wal", in->texture);
 #endif
 
+#ifdef KINGPIN_ENGINE
+		if (out->flags & SURF_ALPHA)
+			out->flags |= SURF_TRANS33;
+		out->image = GL_FindImage (name, IMG_TYPE_WALL |
+			((gl_test_specular->value && !(out->flags & 0x100c)) ? IMG_FLAG_SPECULAR_MASK : 0));
+#else
 		out->image = GL_FindImage (name, IMG_TYPE_WALL);
+#endif
 		if (!out->image)
 		{
 			ri.Con_Printf (PRINT_ALL, "Couldn't load %s\n", name);
@@ -1480,8 +1520,17 @@ struct model_s *R_RegisterModel (char *name)
 	mod = Mod_ForName (name, false);
 	if (mod)
 	{
-		// mdx has a different header (dmdx_t) and its skins are already
-		// loaded in Mod_LoadMdxModel, don't parse it as md2 here
+#ifdef KINGPIN_ENGINE
+		// Cached geometry survives registration clears; its images do not.
+		if (mod->type == mod_mdx)
+		{
+			dmdx_t *mdx = (dmdx_t *)Mod_Extradata (mod);
+			if (!Mod_MdxUsesExternalSkins (mod->name))
+				for (i = 0; i < mdx->num_skins; i++)
+					mod->skins[i] = GL_FindImage ((char *)mdx + mdx->ofs_skins + i * MAX_SKINNAME, IMG_TYPE_SKIN);
+			mod->numframes = mdx->num_frames;
+		}
+#endif
 		if (mod->type == mod_alias)
 		{
 			pheader = (dmdl_t *)Mod_Extradata (mod);

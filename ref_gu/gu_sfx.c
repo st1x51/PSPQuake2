@@ -49,7 +49,9 @@ typedef struct
 	vec3_t		axis1;
 	float		half_width;
 	float		half_height;
-	float		modelview[16];
+	ScePspFMatrix4 model __attribute__((aligned(16)));
+	ScePspFMatrix4 view __attribute__((aligned(16)));
+	ScePspFMatrix4 projection __attribute__((aligned(16)));
 } r_deferred_sfx_t;
 
 image_t *r_sfx_images[MAX_SFX_SPRITES];
@@ -195,8 +197,6 @@ R_InitSFX
 void R_InitSFX (void)
 {
 	int			i;
-	char		texname[MAX_QPATH];
-	const char	bloodpf[] = " bcdefghi";
 
 	R_ClearSFX ();
 
@@ -223,11 +223,15 @@ void R_InitSFX (void)
 	R_RegisterSFXImage (SFX_SPRITE_SNIPER2, "sniper2");
 	R_RegisterSFXImage (SFX_SPRITE_RIPPLE_ALT, "ripple");
 
-	for (i = 0; i < sizeof(bloodpf) - 1; i++)
-	{
-		Com_sprintf(texname, sizeof(texname), "blood/blood1%c", bloodpf[i]);
-		R_RegisterSFXImage (SFX_SPRITE_BLOOD1 + i, texname);
-	}
+	R_RegisterSFXImage (SFX_SPRITE_BLOOD1 + 0, "blood/blood1");
+	R_RegisterSFXImage (SFX_SPRITE_BLOOD1 + 1, "blood/blood1b");
+	R_RegisterSFXImage (SFX_SPRITE_BLOOD1 + 2, "blood/blood1c");
+	R_RegisterSFXImage (SFX_SPRITE_BLOOD1 + 3, "blood/blood1d");
+	R_RegisterSFXImage (SFX_SPRITE_BLOOD1 + 4, "blood/blood1e");
+	R_RegisterSFXImage (SFX_SPRITE_BLOOD1 + 5, "blood/blood1f");
+	R_RegisterSFXImage (SFX_SPRITE_BLOOD1 + 6, "blood/blood1g");
+	R_RegisterSFXImage (SFX_SPRITE_BLOOD1 + 7, "blood/blood1h");
+	R_RegisterSFXImage (SFX_SPRITE_BLOOD1 + 8, "blood/blood1i");
 
 	R_RegisterSFXImage (SFX_SPRITE_MUZZLE3_ALT, "muzz3");
 	R_RegisterSFXImage (SFX_SPRITE_MUZZLE_HMG, "muzzhmg");
@@ -833,114 +837,95 @@ R_SetDeferredSFX
 ===============
 */
 void R_SetDeferredSFX (int sprite, float alpha, vec3_t center,
-		vec3_t axis0, vec3_t axis1, float half_width, float half_height)
+        vec3_t axis0, vec3_t axis1, float half_width, float half_height)
 {
-#if 0
-	if (sprite < 0 || sprite >= MAX_SFX_SPRITES)
-		return;
+    if (sprite < 0 || sprite >= MAX_SFX_SPRITES)
+        return;
 
-	r_deferred_sfx.valid = true;
-	r_deferred_sfx.image = r_sfx_images[sprite] ? r_sfx_images[sprite] : r_notexture;
-	r_deferred_sfx.alpha = alpha;
-	VectorCopy (center, r_deferred_sfx.center);
-	VectorCopy (axis0, r_deferred_sfx.axis0);
-	VectorCopy (axis1, r_deferred_sfx.axis1);
-	r_deferred_sfx.half_width = half_width;
-	r_deferred_sfx.half_height = half_height;
+    r_deferred_sfx.valid = true;
+    r_deferred_sfx.image = r_sfx_images[sprite] ? r_sfx_images[sprite] : r_notexture;
+    r_deferred_sfx.alpha = Q_bound (0.0f, alpha, 1.0f);
+    VectorCopy (center, r_deferred_sfx.center);
+    VectorCopy (axis0, r_deferred_sfx.axis0);
+    VectorCopy (axis1, r_deferred_sfx.axis1);
+    r_deferred_sfx.half_width = half_width;
+    r_deferred_sfx.half_height = half_height;
 
-	qglGetFloatv (GL_MODELVIEW_MATRIX, r_deferred_sfx.modelview);
-#endif
+    /* Keep the weapon transform, including left-handed projection, until
+     * the late pass. GUM matrices are copied here, never shared with GE. */
+    sceGumMatrixMode (GU_PROJECTION);
+    sceGumStoreMatrix (&r_deferred_sfx.projection);
+    sceGumMatrixMode (GU_VIEW);
+    sceGumStoreMatrix (&r_deferred_sfx.view);
+    sceGumMatrixMode (GU_MODEL);
+    sceGumStoreMatrix (&r_deferred_sfx.model);
 }
 
-/*
-===============
-R_DrawDeferredSFX
-===============
-*/
 void R_DrawDeferredSFX (void)
 {
-#if 0
-	r_deferred_sfx_t effect;
-	vec3_t verts[4], temp;
-	qboolean mirrored;
+    vec3_t temp;
+    gu_vert_ftv_t *out;
+    int blend, alpha_test, cull, lighting;
 
-	if (!r_deferred_sfx.valid)
-		return;
-	effect = r_deferred_sfx;
-	r_deferred_sfx.valid = false;
+    if (!r_deferred_sfx.valid)
+        return;
+    r_deferred_sfx.valid = false;
 
-	mirrored = r_lefthand->value == 1.0f;
-	if (mirrored)
-	{
-		extern void MYgluPerspective (GLdouble fovy, GLdouble aspect,
-			GLdouble zNear, GLdouble zFar);
-		qglMatrixMode (GL_PROJECTION);
-		qglPushMatrix ();
-		qglLoadIdentity ();
-		qglScalef (-1, 1, 1);
-		MYgluPerspective (r_newrefdef.fov_y,
-			(float)r_newrefdef.width / r_newrefdef.height, 4, 4096);
-	}
+    blend = sceGuGetStatus (GU_BLEND);
+    alpha_test = sceGuGetStatus (GU_ALPHA_TEST);
+    cull = sceGuGetStatus (GU_CULL_FACE);
+    lighting = sceGuGetStatus (GU_LIGHTING);
 
-	qglMatrixMode (GL_MODELVIEW);
-	qglPushMatrix ();
-	qglLoadMatrixf (effect.modelview);
+    sceGumMatrixMode (GU_PROJECTION);
+    sceGumPushMatrix ();
+    sceGumLoadMatrix (&r_deferred_sfx.projection);
+    sceGumMatrixMode (GU_VIEW);
+    sceGumPushMatrix ();
+    sceGumLoadMatrix (&r_deferred_sfx.view);
+    sceGumMatrixMode (GU_MODEL);
+    sceGumPushMatrix ();
+    sceGumLoadMatrix (&r_deferred_sfx.model);
 
-	VectorMA (effect.center, -effect.half_width, effect.axis0, temp);
-	VectorMA (temp, -effect.half_height, effect.axis1, verts[0]);
-	VectorMA (effect.center, effect.half_width, effect.axis0, temp);
-	VectorMA (temp, -effect.half_height, effect.axis1, verts[1]);
-	VectorMA (effect.center, effect.half_width, effect.axis0, temp);
-	VectorMA (temp, effect.half_height, effect.axis1, verts[2]);
-	VectorMA (effect.center, -effect.half_width, effect.axis0, temp);
-	VectorMA (temp, effect.half_height, effect.axis1, verts[3]);
+    /* Per-draw list memory remains alive until GE consumes this frame. */
+    out = (gu_vert_ftv_t *)sceGuGetMemory (sizeof(*out) * 4);
+    VectorMA (r_deferred_sfx.center, -r_deferred_sfx.half_width,
+        r_deferred_sfx.axis0, temp);
+    VectorMA (temp, -r_deferred_sfx.half_height, r_deferred_sfx.axis1, out[0].xyz);
+    VectorMA (temp, r_deferred_sfx.half_height, r_deferred_sfx.axis1, out[3].xyz);
+    VectorMA (r_deferred_sfx.center, r_deferred_sfx.half_width,
+        r_deferred_sfx.axis0, temp);
+    VectorMA (temp, -r_deferred_sfx.half_height, r_deferred_sfx.axis1, out[1].xyz);
+    VectorMA (temp, r_deferred_sfx.half_height, r_deferred_sfx.axis1, out[2].xyz);
+    out[0].u = 0; out[0].v = 1;
+    out[1].u = 1; out[1].v = 1;
+    out[2].u = 1; out[2].v = 0;
+    out[3].u = 0; out[3].v = 0;
 
-	GL_Bind (effect.image->texnum);
-	qglDisable (GL_CULL_FACE);
-	qglDisable (GL_ALPHA_TEST);
-	qglDepthMask (GL_FALSE);
-	qglEnable (GL_BLEND);
-	GL_TexEnv (GL_MODULATE);
-	qglBlendFunc (GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-	qglColor4f (1, 1, 1, effect.alpha);
+    GL_Bind (r_deferred_sfx.image);
+    sceGuDisable (GU_CULL_FACE);
+    sceGuDisable (GU_ALPHA_TEST);
+    sceGuDisable (GU_LIGHTING);
+    sceGuDepthMask (GU_TRUE);
+    sceGuEnable (GU_BLEND);
+    GL_TexEnv (GU_TFX_MODULATE);
+    sceGuBlendFunc (GU_ADD, GU_SRC_ALPHA, GU_ONE_MINUS_SRC_ALPHA, 0, 0);
+    sceGuColor (GU_HCOLOR_4F (1, 1, 1, r_deferred_sfx.alpha));
+    sceGumDrawArray (GU_TRIANGLE_FAN, GU_TEXTURE_32BITF | GU_VERTEX_32BITF,
+        4, 0, out);
 
-#if 1
-	gu_vert_ftv_t* const out = (gu_vert_ftv_t*)sceGuGetMemory (sizeof(gu_vert_ftv_t) * 2);
-	out[0].u = 0;
-	out[0].v = 0;
-	out[0].x = verts[3][0];
-	out[0].y = verts[3][1];
-	out[0].z = verts[3][2];
+    sceGumPopMatrix ();
+    sceGumMatrixMode (GU_VIEW);
+    sceGumPopMatrix ();
+    sceGumMatrixMode (GU_PROJECTION);
+    sceGumPopMatrix ();
+    sceGumMatrixMode (GU_MODEL);
+    sceGumUpdateMatrix ();
 
-	out[1].u = 1;
-	out[1].v = 1;
-	out[1].x = verts[1][0];
-	out[1].y = verts[1][1];
-	out[1].z = verts[1][2];
-	sceGuDrawArray (GU_SPRITES, GU_TEXTURE_32BITF | GU_VERTEX_32BITF,  2, 0, out);
-#else
-	qglBegin (GL_QUADS);
-	qglTexCoord2f (0, 1); qglVertex3fv (verts[0]);
-	qglTexCoord2f (1, 1); qglVertex3fv (verts[1]);
-	qglTexCoord2f (1, 0); qglVertex3fv (verts[2]);
-	qglTexCoord2f (0, 0); qglVertex3fv (verts[3]);
-	qglEnd ();
-#endif
-
-	qglPopMatrix ();
-
-	if (mirrored)
-	{
-		qglMatrixMode (GL_PROJECTION);
-		qglPopMatrix ();
-		qglMatrixMode (GL_MODELVIEW);
-	}
-
-	qglEnable (GL_CULL_FACE);
-	GL_TexEnv (GL_REPLACE);
-	qglEnable (GL_ALPHA_TEST);
-	qglDepthMask (GL_TRUE);
-	qglDisable (GL_BLEND);
-	qglColor4f (1, 1, 1, 1);
-#endif
+    sceGuSetStatus (GU_CULL_FACE, cull);
+    sceGuSetStatus (GU_ALPHA_TEST, alpha_test);
+    sceGuSetStatus (GU_LIGHTING, lighting);
+    sceGuSetStatus (GU_BLEND, blend);
+    sceGuDepthMask (GU_FALSE);
+    GL_TexEnv (GU_TFX_REPLACE);
+    sceGuColor (GU_HCOLOR_DEFAULT);
 }

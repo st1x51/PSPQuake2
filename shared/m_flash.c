@@ -488,3 +488,6 @@ static vec3_t monster_flash_offset_tab [] =
 };
 
 vec3_t *monster_flash_offset = monster_flash_offset_tab;
+/* The trailing zero entry is a sentinel, not a network flash number. */
+const int monster_flash_offset_count = sizeof(monster_flash_offset_tab) /
+	sizeof(monster_flash_offset_tab[0]) - 1;

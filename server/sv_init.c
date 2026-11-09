@@ -348,7 +348,7 @@ void SV_InitGame (void)
 	int		i;
 	edict_t	*ent;
 	char	idmaster[32];
-#if defined(KINGPIN_ENGINE) && defined(_WIN32)
+#ifdef KINGPIN_ENGINE
 	int		gamespy_result;
 #endif
 
@@ -420,7 +420,6 @@ void SV_InitGame (void)
 #ifdef KINGPIN_ENGINE
 	if (maxclients->value > 1)
 	{
-#ifdef _WIN32
 		// kingpin.exe @0043d694: the retail GameSpy query port is game port - 10;
 		// the master is only set up when goa_init succeeds
 		gamespy_result = SV_GameSpyInit ();
@@ -430,10 +429,6 @@ void SV_InitGame (void)
 			NET_StringToAdr (idmaster, &master_adr[0], PORT_MASTER);
 		}
 		Com_Printf ("goa_init returned: %d\n", gamespy_result);
-#else
-		Com_sprintf(idmaster, sizeof(idmaster), "master.gamespy.com:%i", PORT_MASTER);
-		NET_StringToAdr (idmaster, &master_adr[0], PORT_MASTER);
-#endif
 	}
 #else
 	Com_sprintf(idmaster, sizeof(idmaster), "192.246.40.37:%i", PORT_MASTER);

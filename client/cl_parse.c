@@ -84,7 +84,8 @@ char *svc_strings[256] =
 
 int CL_DownloadFileName(char *dest, int destlen, char *fn)
 {
-	Com_sprintf (dest, destlen, "%s/%s", BASEDIRNAME, fn);
+	/* FS_FOpen/FS_FileRename add the selected write directory themselves. */
+	Com_sprintf (dest, destlen, "%s", fn);
 
 	if (strncmp(fn, "players", 7) == 0)
 		return FS_PATH_BASEDIR;
@@ -139,12 +140,6 @@ qboolean	CL_CheckOrDownloadFile (char *filename)
 	// check to see if we already have a tmp for this file, if so, try to resume
 	// open the file if not opened yet
 	pathflag = CL_DownloadFileName(name, sizeof(name), cls.downloadtempname);
-
-#ifdef KINGPIN_ENGINE
-	// kingpin.exe @0040f690 creates nested download directories before
-	// probing a resumable .tmp file.
-	FS_CreatePath (name);
-#endif
 
 	fp = FS_FOpen (name, FS_MODE_APPEND | pathflag);
 	if (fp) { // it exists
@@ -315,7 +310,7 @@ void CL_ParseDownload (void)
 		CL_DownloadFileName(oldn, sizeof(oldn), cls.downloadtempname);
 		pathflag = CL_DownloadFileName(newn, sizeof(newn), cls.downloadname);
 		r = FS_FileRename (oldn, newn, pathflag);
-		if (r)
+		if (!r)
 			Com_Printf ("failed to rename.\n");
 
 		cls.download = NULL;
@@ -459,12 +454,31 @@ the n'th item of the group. extras.txt lists groups as a digit line
 followed by "+ name" lines (kingpin.exe @0040fd50).
 ================
 */
+/* Portable equivalent of the reference's bounded fscanf("%s") reads.
+ * Keep EOF as an int and accept all whitespace, including blank lines. */
+static qboolean CL_ReadPlayerToken (file_t *file, char *token, size_t capacity)
+{
+	int c;
+	size_t length = 0;
+	do {
+		c = FS_Getc (file);
+	} while (c != FS_EOF && isspace((unsigned char)c));
+	while (c != FS_EOF && !isspace((unsigned char)c))
+	{
+		if (length + 1 < capacity)
+			token[length++] = (char)c;
+		c = FS_Getc (file);
+	}
+	token[length] = '\0';
+	return length != 0;
+}
+
 static void CL_LoadModelParts (clientinfo_t *ci, char *modeldir, char *extras)
 {
 	char	name[MAX_QPATH];
 	char	items[4][8][16];
 	char	title[64];
-	char	c;
+	int		c;
 	int		i, group;
 	file_t	*f;
 
@@ -490,7 +504,6 @@ static void CL_LoadModelParts (clientinfo_t *ci, char *modeldir, char *extras)
 	memset (items, 0, sizeof(items));
 	if (!f)
 		return;
-#if 1
 	group = 0;
 	while ((c = FS_Getc(f)) != FS_EOF)
 	{
@@ -498,16 +511,7 @@ static void CL_LoadModelParts (clientinfo_t *ci, char *modeldir, char *extras)
 		{	// group heading
 			group = c - '1';
 
-			while ((c = FS_Getc(f)) == ' ' || c == '\t');
-
-			i = 0;
-			while (c != -1 && c != '\n' && c != '\r' && c != ' ' && c != '\t')
-			{
-				if (i < sizeof(title) - 1)
-					title[i++] = c;
-				c = FS_Getc(f);
-			}
-			title[i] = '\0';
+			CL_ReadPlayerToken (f, title, sizeof(title));
 		}
 		else if (c == '+')
 		{	// item of the current group
@@ -515,57 +519,16 @@ static void CL_LoadModelParts (clientinfo_t *ci, char *modeldir, char *extras)
 				if (!items[group & 3][i][0])
 					break;
 
-			while ((c = FS_Getc(f)) == ' ' || c == '\t');
-
-			int len = 0;
-			char temp_item[64];
-			
-			while (c != -1 && c != '\n' && c != '\r' && c != ' ' && c != '\t')
-			{
-				if (len < sizeof(temp_item) - 1)
-					temp_item[len++] = c;
-				c = FS_Getc(f);
-			}
-			temp_item[len] = '\0';
-
 			if (i == 8)
-			{
-				strncpy(title, temp_item, sizeof(title));
-			}
+				CL_ReadPlayerToken (f, title, sizeof(title));
 			else
-			{
-				strncpy(items[group & 3][i], temp_item, 16); 
-			}
+				CL_ReadPlayerToken (f, items[group & 3][i], sizeof(items[0][0]));
 		}
 	}
 	FS_FClose (f);
-#else
-	group = 0;
-	while (!feof(f))
-	{
-		if (fscanf (f, "%c", &c) != 1)
-			break;
-		if (c >= '1' && c <= '9')
-		{	// group heading
-			group = c - '1';
-			fscanf (f, " %s\n", title);
-		}
-		else if (c == '+')
-		{	// item of the current group
-			for (i=0 ; i<8 ; i++)
-				if (!items[group & 3][i][0])
-					break;
-			if (i == 8)
-				fscanf (f, "%s\n", title);
-			else
-				fscanf (f, "%15s\n", items[group & 3][i]);
-		}
-	}
-	fclose (f);
-#endif
 	for (i=0 ; extras[i] && i<4 && 3+i<MAX_CLIENTMODELPARTS ; i++)
 	{
-		if (extras[i] <= '0')
+		if (extras[i] <= '0' || extras[i] > '8')
 			continue;
 		Com_sprintf (name, sizeof(name), "%s%s.mdx", modeldir, items[i][extras[i] - '1']);
 		ci->model[3+i] = re.RegisterModel (name);
@@ -599,25 +562,13 @@ static void CL_LoadPartSkins (clientinfo_t *ci, char *skins, char *modeldir)
 	if (f)
 	{
 		memset (lines, 0, sizeof(lines));
-#if 1
 		for (i = 0; i < 3; i++)
 		{
-			if (FS_Gets(f, (byte *)lines[i], 64) <= FS_EOF)
+			if (!CL_ReadPlayerToken (f, lines[i], sizeof(lines[i])))
 				break;
-
-			int len = strlen(lines[i]);
-			while (len > 0 && isspace((unsigned char)lines[i][len - 1]))
-			{
-				lines[i][len - 1] = '\0';
-				len--;
-			}
 		}
 		
 		FS_FClose(f);
-#else
-		fscanf (f, "%63s\n%63s\n%63s", lines[0], lines[1], lines[2]);
-		fclose (f);
-#endif
 
 		if (lines[0][0])
 		{

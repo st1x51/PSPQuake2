@@ -1,6 +1,8 @@
 /* GLOBAL.H - RSAREF types and constants */
 
 #include <string.h>
+#include <stdio.h>
+#include <stdint.h>
 
 /* POINTER defines a generic pointer type */
 typedef unsigned char *POINTER;
@@ -9,11 +11,7 @@ typedef unsigned char *POINTER;
 typedef unsigned short int UINT2;
 
 /* UINT4 defines a four byte word */
-#ifdef __alpha__
-typedef unsigned int UINT4;
-#else
-typedef unsigned long int UINT4;
-#endif
+typedef uint32_t UINT4;
 
   
 /* MD4.H - header file for MD4C.C */
@@ -275,4 +273,20 @@ unsigned Com_BlockChecksum (void *buffer, int length)
 	val = digest[0] ^ digest[1] ^ digest[2] ^ digest[3];
 
 	return val;
+}
+
+/* Same digest fold as Com_BlockChecksum, with bounded PSP scratch memory. */
+unsigned Com_StreamChecksum (FILE *file, int *success)
+{
+	unsigned char buffer[8192];
+	unsigned digest[4];
+	size_t count;
+	MD4_CTX ctx;
+
+	MD4Init (&ctx);
+	while ((count = fread (buffer, 1, sizeof(buffer), file)) != 0)
+		MD4Update (&ctx, buffer, (unsigned int)count);
+	*success = !ferror (file);
+	MD4Final ((unsigned char *)digest, &ctx);
+	return digest[0] ^ digest[1] ^ digest[2] ^ digest[3];
 }

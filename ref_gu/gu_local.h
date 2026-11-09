@@ -99,7 +99,8 @@ extern	viddef_t	vid;
 #define IMG_FLAG_DYNAMIC		0x00010000
 #define IMG_FLAG_EXTERNAL		0x00020000
 #define IMG_FLAG_PALETTED		0x00040000
-#define IMG_FLAG_MASK			0x0007f800
+#define IMG_FLAG_SPECULAR_MASK	0x00080000
+#define IMG_FLAG_MASK			0x000ff800
 
 #define IMG_IS_IND(image)		(!((image)->flags & IMG_FORMAT_MASK) || ((image)->flags & IMG_FORMAT_IND_24))
 
@@ -309,6 +310,16 @@ void		R_Shutdown (void);
 void R_RenderView (refdef_t *fd);
 void GL_ScreenShot_f (void);
 void R_DrawAliasModel (entity_t *e);
+#ifdef KINGPIN_ENGINE
+void R_DrawAliasModelMapped (entity_t *e, int mapmode);
+qboolean R_AliasSetupDirectionalLights (void);
+const unsigned int *R_AliasDirectionalColors (int count, const dtrivertx_t *verts,
+    const dtrivertx_t *oldverts, float backlerp, float alpha);
+void R_AliasDirectionalShadow (vec3_t direction);
+void R_AliasMapTexCoords (int count, const dtrivertx_t *verts,
+    const dtrivertx_t *oldverts, float backlerp, const vec4_t *positions,
+    float (*texcoords)[2]);
+#endif
 #ifdef KINGPIN_ENGINE
 void R_UpdateMdxSFXIntervalMask (void);
 void R_DrawMDXModel (entity_t *e, int mapmode);

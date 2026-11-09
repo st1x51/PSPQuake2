@@ -814,7 +814,7 @@ void SV_Frame (int msec)
 	// save the entire world state if recording a serverdemo
 	SV_RecordDemoMessage ();
 
-#if defined(KINGPIN_ENGINE) && defined(_WIN32)
+#ifdef KINGPIN_ENGINE
 	// Process the separate retail GameSpy query socket before master heartbeat.
 	SV_GameSpyFrame ();
 #endif
@@ -968,7 +968,7 @@ void SV_Init (void)
 	Cvar_Get ("deathmatch", "0", CVAR_LATCH);
 	Cvar_Get ("coop", "0", CVAR_LATCH);
 #ifdef KINGPIN_ENGINE
-	Cvar_Get ("dmflags", va("%i", /*DF_INSTANT_ITEMS |*/ DF_NO_FRIENDLY_FIRE |
+	Cvar_Get ("dmflags", va("%i", DF_INSTANT_ITEMS | DF_NO_FRIENDLY_FIRE |
 		DF_SPAWN_FARTHEST), CVAR_ARCHIVE | CVAR_SERVERINFO);
 #else
 	Cvar_Get ("dmflags", va("%i", DF_INSTANT_ITEMS), CVAR_SERVERINFO);
@@ -1070,7 +1070,7 @@ before Sys_Quit or Sys_Error
 */
 void SV_Shutdown (char *finalmsg, qboolean reconnect)
 {
-#if defined(KINGPIN_ENGINE) && defined(_WIN32)
+#ifdef KINGPIN_ENGINE
 	SV_GameSpyShutdown ();
 #endif
 

@@ -35,7 +35,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 
 #ifndef HUNKSIZE
 #ifdef __psp__
-#define HUNKSIZE	0xe00000	// 14MB
+#define HUNKSIZE	0x2000000	// 32MB
 #else
 #define HUNKSIZE	0x2000000	// 32MB
 #endif
@@ -875,6 +875,9 @@ char		**FS_ListFiles(char *findname, int *numfiles, unsigned musthave, unsigned 
 char		*FS_NextPath (char *prevpath);
 
 void		FS_InitFilesystem (void);
+#ifdef KINGPIN_ENGINE
+void		FS_InitPatchCommands (void);
+#endif
 
 /*
 ==============================================================
@@ -911,6 +914,7 @@ int			Com_ServerState (void);		// this should have just been a cvar...
 void		Com_SetServerState (int state);
 
 unsigned	Com_BlockChecksum (void *buffer, int length);
+unsigned	Com_StreamChecksum (FILE *file, int *success);
 #ifdef KINGPIN_ENGINE
 byte		COM_BlockSequenceCRCByte (byte *base, int length, int sequence, int challenge);
 #else

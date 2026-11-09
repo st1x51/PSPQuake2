@@ -231,7 +231,9 @@ void SV_UserinfoChanged (client_t *cl);
 
 void Master_Heartbeat (void);
 void Master_Packet (void);
-#if defined(KINGPIN) && defined(_WIN32)
+#ifdef KINGPIN_ENGINE
+extern cvar_t *hostname;
+extern cvar_t *public_server;
 int SV_GameSpyInit (void);
 void SV_GameSpyFrame (void);
 void SV_GameSpyShutdown (void);

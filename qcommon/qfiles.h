@@ -239,6 +239,11 @@ typedef struct
 	byte		frames[MDX_SFX_FRAME_BYTES];
 } dmdx_sfxentry_t;
 
+typedef char dmdx_sfxdef_must_be_0x44[
+	(sizeof(dmdx_sfxdef_t) == 0x44) ? 1 : -1];
+typedef char dmdx_sfxentry_must_be_0x8c[
+	(sizeof(dmdx_sfxentry_t) == 0x8c) ? 1 : -1];
+
 #endif
 
 /*

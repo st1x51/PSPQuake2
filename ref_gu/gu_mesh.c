@@ -42,6 +42,11 @@ float	r_avertexnormals[NUMVERTEXNORMALS][3] = {
 
 static vec4_t	s_lerped[MAX_VERTS] __attribute__((aligned(16)));
 static vec4_t	shadelight;
+#ifdef KINGPIN_ENGINE
+static qboolean alias_directional;
+static int alias_mapmode;
+static float alias_map_texcoords[MAX_VERTS][2];
+#endif
 
 #if 1
 static inline void GL_LerpVerts( int nverts, dtrivertx_t *v, dtrivertx_t *ov, dtrivertx_t *verts, float *lerp, float move[3], float frontv[3], float backv[3] )
@@ -238,6 +243,14 @@ void GL_DrawAliasFrameLerp (dmdl_t *paliashdr, float backlerp)
 	GL_LerpVerts( paliashdr->num_xyz, v, ov, verts, lerp, move, frontv, backv );
 
 #ifdef KINGPIN_ENGINE
+	const unsigned int *colors = NULL;
+	if (alias_directional)
+		colors = R_AliasDirectionalColors (paliashdr->num_xyz, verts, ov, backlerp, alpha);
+	if (alias_mapmode)
+		R_AliasMapTexCoords (paliashdr->num_xyz, verts, ov, backlerp, s_lerped, alias_map_texcoords);
+#endif
+
+#ifdef KINGPIN_ENGINE
 	if (currententity->flags & ( RF_SHELL_RED | RF_SHELL_GREEN | RF_SHELL_BLUE ))
 #else
 	// PMM - added double shell
@@ -294,6 +307,22 @@ void GL_DrawAliasFrameLerp (dmdl_t *paliashdr, float backlerp)
 				prim = GU_TRIANGLE_STRIP;
 			}
 
+#ifdef KINGPIN_ENGINE
+			if (alias_directional)
+			{
+				gu_vert_ftcv_t *out = (gu_vert_ftcv_t *)sceGuGetMemory (sizeof(*out) * count);
+				for (i = 0; i < count; i++, order += 3)
+				{
+					index_xyz = order[2];
+					out[i].u = alias_mapmode ? alias_map_texcoords[index_xyz][0] : ((float *)order)[0];
+					out[i].v = alias_mapmode ? alias_map_texcoords[index_xyz][1] : ((float *)order)[1];
+					out[i].c = colors[index_xyz];
+					VectorCopy (s_lerped[index_xyz], out[i].xyz);
+				}
+				sceGuDrawArray (prim, GU_TEXTURE_32BITF | GU_COLOR_8888 | GU_VERTEX_32BITF, count, 0, out);
+				continue;
+			}
+#endif
 			gu_vert_ftnv_t* const out = (gu_vert_ftnv_t*)sceGuGetMemory (sizeof(gu_vert_ftnv_t) * count);
 			gu_vert_ftnv_t* out_ptr = out;
 			for (i = 0; i < count; i++, order += 3, out_ptr++)
@@ -303,6 +332,13 @@ void GL_DrawAliasFrameLerp (dmdl_t *paliashdr, float backlerp)
 				// texture coordinates come from the draw list
 				out_ptr->u = ((float *)order)[0];
 				out_ptr->v = ((float *)order)[1];
+#ifdef KINGPIN_ENGINE
+				if (alias_mapmode)
+				{
+					out_ptr->u = alias_map_texcoords[index_xyz][0];
+					out_ptr->v = alias_map_texcoords[index_xyz][1];
+				}
+#endif
 
 				// normals
 				norm = r_avertexnormals[verts[index_xyz].lightnormalindex];
@@ -340,6 +376,9 @@ void GL_DrawAliasShadow (dmdl_t *paliashdr, int posenum)
 	shadevector[1] = sin (-an);
 	shadevector[2] = 1;
 	VectorNormalize (shadevector);
+#ifdef KINGPIN_ENGINE
+	R_AliasDirectionalShadow (shadevector);
+#endif
 
 	lheight = currententity->origin[2] - lightspot[2];
 
@@ -510,6 +549,15 @@ static qboolean R_SetupAliasLighting (void)
 	else
 	{
 		R_GetWorldLight (currententity->origin, shadelight);
+#ifdef KINGPIN_ENGINE
+		if (currententity->flags & RF_DIMLIGHT)
+			VectorSet (shadelight, 0.8f, 0.8f, 0.8f);
+		else if (currententity->flags2 & RF2_PASSLIGHT)
+		{
+			float passed = (currententity->flags2 & 0x1f) * (1.0f / 31.0f);
+			VectorSet (shadelight, passed, passed, passed);
+		}
+#endif
 
 		sun_dir.x = lightspot[0];
 		sun_dir.y = lightspot[1];
@@ -589,6 +637,11 @@ static qboolean R_SetupAliasLighting (void)
 		}
 	}
 
+#ifdef KINGPIN_ENGINE
+	alias_directional = R_AliasSetupDirectionalLights ();
+	if (alias_directional)
+		return false;
+#endif
 	if (flat_light)
 		return false;
 
@@ -653,8 +706,15 @@ void R_DrawAliasModel (entity_t *e)
 	vec3_t		mins, maxs;
 	image_t		*skin;
 	qboolean	light_en;
+#ifdef KINGPIN_ENGINE
+	qboolean alias_blend;
+#endif
 	ScePspFVector3	scale;
 
+#ifdef KINGPIN_ENGINE
+	if (e->flags2 & RF2_PASSALPHA)
+		e->flags |= RF_TRANSLUCENT;
+#endif
 	flags = e->flags;
 
 	if (flags & RF_WEAPONMODEL)
@@ -716,6 +776,11 @@ void R_DrawAliasModel (entity_t *e)
 	}
 
 	// select skin
+#ifdef KINGPIN_ENGINE
+	if (alias_mapmode)
+		skin = alias_mapmode == 2 ? r_speculartexture : r_reflectiontexture;
+	else
+#endif
 	if (currententity->skin)
 		skin = currententity->skin;	// custom player skin
 	else
@@ -736,7 +801,12 @@ void R_DrawAliasModel (entity_t *e)
 	sceGuShadeModel (GU_SMOOTH);
 
 	GL_TexEnv (GU_TFX_MODULATE);
+#ifdef KINGPIN_ENGINE
+	alias_blend = alias_mapmode == 2 || (!alias_mapmode && (flags & (RF_REFL_MAP | RF_TRANSLUCENT)));
+	if (alias_blend)
+#else
 	if (flags & RF_TRANSLUCENT)
+#endif
 		sceGuEnable (GU_BLEND);
 
 	if ((currententity->frame >= paliashdr->num_frames) || (currententity->frame < 0))
@@ -772,7 +842,11 @@ void R_DrawAliasModel (entity_t *e)
 		sceGuFrontFace (GU_CW); // GL_FRONT
 	}
 
+#ifdef KINGPIN_ENGINE
+	if (alias_blend)
+#else
 	if (flags & RF_TRANSLUCENT)
+#endif
 		sceGuDisable (GU_BLEND);
 
 	if (flags & RF_DEPTHHACK)
@@ -781,7 +855,11 @@ void R_DrawAliasModel (entity_t *e)
 	if (light_en)
 		sceGuDisable (GU_LIGHTING);
 #if 1
-	if (gl_shadows->value && !(flags & (RF_TRANSLUCENT | RF_WEAPONMODEL)))
+	if (gl_shadows->value && !(flags & (RF_TRANSLUCENT | RF_WEAPONMODEL))
+#ifdef KINGPIN_ENGINE
+		&& !alias_mapmode && !(currententity->flags2 & RF2_NOSHADOW)
+#endif
+		)
 	{
 		sceGumPushMatrix ();
 		R_RotateForEntity (e);
@@ -802,5 +880,15 @@ void R_DrawAliasModel (entity_t *e)
 		DEBUG_DrawAliasAABB (mins, maxs);
 #endif
 }
+
+#ifdef KINGPIN_ENGINE
+void R_DrawAliasModelMapped (entity_t *e, int mapmode)
+{
+	int previous = alias_mapmode;
+	alias_mapmode = mapmode;
+	R_DrawAliasModel (e);
+	alias_mapmode = previous;
+}
+#endif
 
 

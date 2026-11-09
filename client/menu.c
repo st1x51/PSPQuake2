@@ -1839,6 +1839,63 @@ static menulist_s		s_options_quality_list;
 static menulist_s		s_options_compatibility_list;
 #endif
 static menulist_s		s_options_console_action;
+#ifdef KINGPIN_ENGINE
+static menulist_s s_options_hudtalk_box, s_options_hudguys_box;
+static menulist_s s_options_captions_box, s_options_dirlight_box, s_options_props_box;
+static menuslider_s s_options_fireworks_slider, s_options_bloodtime_slider;
+
+static void HudTalkFunc (void *unused)
+{
+	Cvar_SetValue ("hudtalk", s_options_hudtalk_box.curvalue);
+}
+static void HudGuysFunc (void *unused)
+{
+	Cvar_SetValue ("hudguys", s_options_hudguys_box.curvalue);
+}
+static void CaptionsFunc (void *unused)
+{
+	Cvar_SetValue ("cl_captions", s_options_captions_box.curvalue);
+}
+static void FireworksFunc (void *unused)
+{
+	Cvar_SetValue ("cl_fireworks", s_options_fireworks_slider.curvalue);
+}
+static void DirLightFunc (void *unused)
+{
+	Cvar_SetValue ("r_directional_lighting", s_options_dirlight_box.curvalue);
+}
+static void BloodTimeFunc (void *unused)
+{
+	Cvar_SetValue ("cl_bloodtime", s_options_bloodtime_slider.curvalue);
+}
+static void PropsFunc (void *unused)
+{
+	Cvar_SetValue ("props", s_options_props_box.curvalue);
+	Cbuf_AddText (s_options_props_box.curvalue ? "cmd hideprops\n" : "cmd showprops\n");
+}
+
+static void Options_InitSpin (menulist_s *box, int y, char *name,
+		void (*callback)(void *), const char **itemnames)
+{
+	box->generic.type = MTYPE_SPINCONTROL;
+	box->generic.x = 0;
+	box->generic.y = y;
+	box->generic.name = name;
+	box->generic.callback = callback;
+	box->itemnames = itemnames;
+}
+static void Options_InitSlider (menuslider_s *slider, int y, char *name,
+		void (*callback)(void *), float minvalue, float maxvalue)
+{
+	slider->generic.type = MTYPE_SLIDER;
+	slider->generic.x = 0;
+	slider->generic.y = y;
+	slider->generic.name = name;
+	slider->generic.callback = callback;
+	slider->minvalue = minvalue;
+	slider->maxvalue = maxvalue;
+}
+#endif
 
 static void CrosshairFunc( void *unused )
 {
@@ -1917,6 +1974,21 @@ static void ControlsSetMenuItemValues( void )
 
 	Cvar_SetValue( "crosshair", ClampCvar( 0, 3, crosshair->value ) );
 	s_options_crosshair_box.curvalue		= crosshair->value;
+
+#ifdef KINGPIN_ENGINE
+	Cvar_SetValue ("hudtalk", ClampCvar (0, 1, hudtalk->value));
+	s_options_hudtalk_box.curvalue = hudtalk->value;
+	Cvar_SetValue ("hudguys", ClampCvar (0, 1, hudguys->value));
+	s_options_hudguys_box.curvalue = hudguys->value;
+	Cvar_SetValue ("cl_captions", ClampCvar (0, 1, Cvar_VariableValue ("cl_captions")));
+	s_options_captions_box.curvalue = Cvar_VariableValue ("cl_captions");
+	Cvar_SetValue ("r_directional_lighting", ClampCvar (0, 1, Cvar_VariableValue ("r_directional_lighting")));
+	s_options_dirlight_box.curvalue = Cvar_VariableValue ("r_directional_lighting");
+	Cvar_SetValue ("props", ClampCvar (0, 1, Cvar_VariableValue ("props")));
+	s_options_props_box.curvalue = Cvar_VariableValue ("props");
+	s_options_fireworks_slider.curvalue = ClampCvar (0, 3, Cvar_VariableValue ("cl_fireworks"));
+	s_options_bloodtime_slider.curvalue = Cvar_VariableValue ("cl_bloodtime");
+#endif
 
 	Cvar_SetValue( "in_joystick", ClampCvar( 0, 1, in_joystick->value ) );
 	s_options_joystick_box.curvalue		= in_joystick->value;
@@ -2188,6 +2260,23 @@ void Options_MenuInit( void )
 	s_options_crosshair_box.generic.callback = CrosshairFunc;
 	s_options_crosshair_box.itemnames = crosshair_names;
 
+#ifdef KINGPIN_ENGINE
+	position_y += 10;
+	Options_InitSpin (&s_options_hudtalk_box, position_y, "talk icons", HudTalkFunc, yesno_names);
+	position_y += 10;
+	Options_InitSpin (&s_options_hudguys_box, position_y, "hire icons", HudGuysFunc, yesno_names);
+	position_y += 10;
+	Options_InitSpin (&s_options_captions_box, position_y, "captions", CaptionsFunc, yesno_names);
+	position_y += 20;
+	Options_InitSlider (&s_options_fireworks_slider, position_y, "fireworks", FireworksFunc, 0, 3);
+	position_y += 10;
+	Options_InitSpin (&s_options_dirlight_box, position_y, "directional lighting", DirLightFunc, yesno_names);
+	position_y += 10;
+	Options_InitSlider (&s_options_bloodtime_slider, position_y, "blood time", BloodTimeFunc, 0, 10);
+	position_y += 10;
+	Options_InitSpin (&s_options_props_box, position_y, "props", PropsFunc, yesno_names);
+#endif
+
 /*
 #ifndef __psp__
 	position_y += 10;
@@ -2260,6 +2349,15 @@ void Options_MenuInit( void )
 	Menu_AddItem( &s_options_menu, ( void * ) &s_options_lookstrafe_box );
 	Menu_AddItem( &s_options_menu, ( void * ) &s_options_freelook_box );
 	Menu_AddItem( &s_options_menu, ( void * ) &s_options_crosshair_box );
+#ifdef KINGPIN_ENGINE
+	Menu_AddItem (&s_options_menu, &s_options_hudtalk_box);
+	Menu_AddItem (&s_options_menu, &s_options_hudguys_box);
+	Menu_AddItem (&s_options_menu, &s_options_captions_box);
+	Menu_AddItem (&s_options_menu, &s_options_fireworks_slider);
+	Menu_AddItem (&s_options_menu, &s_options_dirlight_box);
+	Menu_AddItem (&s_options_menu, &s_options_bloodtime_slider);
+	Menu_AddItem (&s_options_menu, &s_options_props_box);
+#endif
 	Menu_AddItem( &s_options_menu, ( void * ) &s_options_joystick_box );
 #ifdef __psp__
 	Menu_AddItem( &s_options_menu, ( void * ) &s_options_joystick_setup_action );

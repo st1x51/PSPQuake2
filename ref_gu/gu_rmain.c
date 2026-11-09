@@ -470,6 +470,10 @@ void R_DrawEntitiesOnList (void)
 			switch (currentmodel->type)
 			{
 			case mod_alias:
+#ifdef KINGPIN_ENGINE
+				if (currententity->flags & RF_REFL_MAP)
+					R_DrawAliasModelMapped (currententity, 1);
+#endif
 				R_DrawAliasModel (currententity);
 				break;
 #ifdef KINGPIN_ENGINE
@@ -707,11 +711,12 @@ static void GL_DrawSpriteParticles ( int num_particles, const particle_t *partic
 	vec3_t				right, up, vertex;
 	gu_color_32_t		color;
 	float				size, alpha;
+	float				s0, t0, s1, t1;
 
 	for ( p = particles, i = 0; i < num_particles; i++, p++)
 	{
-		//if (p->type < 0 || p->type >= MAX_SFX_SPRITES)
-		//	return;
+		if (p->type < 0 || p->type >= MAX_SFX_SPRITES)
+			continue;
 	
 		if (p->type == 0 || (!secondary && p->type >= 50))
 			continue;	
@@ -773,21 +778,27 @@ static void GL_DrawSpriteParticles ( int num_particles, const particle_t *partic
 
 		sceGuColor (color.c);
 
+		/* GU 3D UVs are normalized; image bounds are stored in texels. */
+		s0 = (float)image->sl / image->uplwidth;
+		t0 = (float)image->tl / image->uplheight;
+		s1 = (float)image->sh / image->uplwidth;
+		t1 = (float)image->th / image->uplheight;
+
 		gu_vert_ftv_t* const out = (gu_vert_ftv_t*)sceGuGetMemory (sizeof(gu_vert_ftv_t) * 4);
-		out[0].uv[0] = 0.0f;
-		out[0].uv[1] = 1.0f;
+		out[0].uv[0] = s0;
+		out[0].uv[1] = t0;
 		VectorSubtract (p->origin, right, out[0].xyz);
 		VectorAdd (out[0].xyz, up, out[0].xyz);
-		out[1].uv[0] = 0.0f;
-		out[1].uv[1] = 0.0f;
+		out[1].uv[0] = s1;
+		out[1].uv[1] = t0;
 		VectorAdd (p->origin, right, out[1].xyz);
 		VectorAdd (out[1].xyz, up, out[1].xyz);
-		out[2].uv[0] = 1.0f;
-		out[2].uv[1] = 0.0f;
+		out[2].uv[0] = s1;
+		out[2].uv[1] = t1;
 		VectorAdd (p->origin, right, out[2].xyz);
 		VectorSubtract (out[2].xyz, up, out[2].xyz);
-		out[3].uv[0] = 1.0f;
-		out[3].uv[1] = 1.0f;
+		out[3].uv[0] = s0;
+		out[3].uv[1] = t1;
 		VectorSubtract (p->origin, right, out[3].xyz);
 		VectorSubtract (out[3].xyz, up, out[3].xyz);
 
@@ -1234,6 +1245,12 @@ linear fog amount at the renderer's 4096-unit far clip matches GL_EXP.
 */
 void R_SetFog (float density, vec3_t color, float density2, vec3_t color2)
 {
+	/* SetFog also refreshes map resources, including on maps without fog. */
+	r_reflectiontexture = GL_FindImage ("textures/reflmap.tga", IMG_TYPE_SFX);
+	r_speculartexture = GL_FindImage ("textures/specular.tga", IMG_TYPE_SFX);
+	r_firescreentexture = GL_FindImage ("sprites/firescreen.tga", IMG_TYPE_SFX);
+	R_InitSFX ();
+
 	if (density <= 0.0f)
 	{
 		gl_state.fog.enabled = false;
@@ -2001,7 +2018,7 @@ GetRefAPI
 */
 refexport_t GetRefAPI (refimport_t rimp )
 {
-	refexport_t	re;
+	refexport_t	re = {0};
 
 	ri = rimp;
 
@@ -2017,6 +2034,7 @@ refexport_t GetRefAPI (refimport_t rimp )
 	re.SetFog = R_SetFog;
 
 	re.EndRegistration = R_EndRegistration;
+	re.ClearRegistered = R_ClearRegistered;
 
 	re.RenderFrame = R_RenderFrame;
 

@@ -17,10 +17,43 @@ License, or (at your option) any later version.
 
 #if defined(KINGPIN_ENGINE) && defined(_WIN32)
 #include "winsock.h"
+#elif defined(KINGPIN_ENGINE)
+#include <stdint.h>
+#include <sys/socket.h>
+#include <sys/select.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <netdb.h>
+#include <unistd.h>
+#ifdef __psp__
+#include <pspnet_inet.h>
+#define socket sceNetInetSocket
+#define bind sceNetInetBind
+#define connect sceNetInetConnect
+#define send sceNetInetSend
+#define sendto sceNetInetSendto
+#define recvfrom sceNetInetRecvfrom
+#define select sceNetInetSelect
+#define closesocket sceNetInetClose
+#else
+#define closesocket close
+#endif
+typedef int SOCKET;
+typedef struct sockaddr_in SOCKADDR_IN;
+typedef uint32_t DWORD;
+#define INVALID_SOCKET (-1)
+#define SOCKET_ERROR (-1)
+#ifndef INADDR_NONE
+#define INADDR_NONE 0xffffffffU
+#endif
 #endif
 #include "server.h"
 
-#if defined(KINGPIN_ENGINE) && defined(_WIN32)
+#ifdef KINGPIN_ENGINE
+
+#ifndef _WIN32
+#define GetTickCount() ((DWORD)Sys_Milliseconds())
+#endif
 
 #define GAMESPY_MASTER_HOST        "master.gamespy.com"
 #define GAMESPY_MASTER_PORT        27900
@@ -30,7 +63,9 @@ License, or (at your option) any later version.
 
 static SOCKET gs_query_socket = INVALID_SOCKET;
 static SOCKET gs_heartbeat_socket = INVALID_SOCKET;
+#ifdef _WIN32
 static qboolean gs_wsa_started;
+#endif
 static int gs_query_port;
 /* The embedded SDK starts at one, then increments before every query. */
 static int gs_query_id = 1;
@@ -346,24 +381,34 @@ static void GS_SendHeartbeat (qboolean state_changed)
 
 int SV_GameSpyInit (void)
 {
+#ifdef _WIN32
 	WSADATA wsa;
+#endif
 	SOCKADDR_IN address;
+#ifndef __psp__
 	struct hostent *host;
+#endif
 	cvar_t *port;
 	cvar_t *ip;
+#ifdef _WIN32
 	int result;
+#endif
 
 	if (!dedicated || !dedicated->value)
 		return 0;
+	SV_GameSpyShutdown ();
+	gs_callbacks = false;
 
 	port = Cvar_Get ("port", va("%i", PORT_SERVER), CVAR_NOSET);
 	ip = Cvar_Get ("ip", "localhost", CVAR_NOSET);
 	gs_query_port = atoi(port->string) - 10;
 
+#ifdef _WIN32
 	result = WSAStartup (MAKEWORD(1, 1), &wsa);
 	if (result)
 		return 1;
 	gs_wsa_started = true;
+#endif
 
 	gs_query_socket = socket (AF_INET, SOCK_DGRAM, IPPROTO_UDP);
 	gs_heartbeat_socket = socket (AF_INET, SOCK_DGRAM, IPPROTO_UDP);
@@ -379,10 +424,17 @@ int SV_GameSpyInit (void)
 		address.sin_addr.s_addr = inet_addr (ip->string);
 		if (address.sin_addr.s_addr == INADDR_NONE)
 		{
+#ifdef __psp__
+			netadr_t resolved;
+			if (!NET_StringToAdr(ip->string, &resolved, 0) || resolved.type != NA_IP)
+				return 3;
+			memcpy (&address.sin_addr.s_addr, resolved.ip, 4);
+#else
 			host = gethostbyname (ip->string);
 			if (!host)
 				return 3;
-			address.sin_addr.s_addr = *(u_long *)host->h_addr_list[0];
+			memcpy (&address.sin_addr.s_addr, host->h_addr_list[0], 4);
+#endif
 		}
 		if (address.sin_addr.s_addr == inet_addr("127.0.0.1"))
 			address.sin_addr.s_addr = INADDR_ANY;
@@ -397,10 +449,19 @@ int SV_GameSpyInit (void)
 		return 2;
 
 	address.sin_port = htons (GAMESPY_MASTER_PORT);
+#ifdef __psp__
+	{
+		netadr_t resolved;
+		if (!NET_StringToAdr(GAMESPY_MASTER_HOST, &resolved, 0) || resolved.type != NA_IP)
+			return 3;
+		memcpy (&address.sin_addr.s_addr, resolved.ip, 4);
+	}
+#else
 	host = gethostbyname (GAMESPY_MASTER_HOST);
 	if (!host)
 		return 3;
-	address.sin_addr.s_addr = *(u_long *)host->h_addr_list[0];
+	memcpy (&address.sin_addr.s_addr, host->h_addr_list[0], 4);
+#endif
 	if (connect(gs_heartbeat_socket, (struct sockaddr *)&address,
 		sizeof(address)) == SOCKET_ERROR)
 		return 4;
@@ -412,11 +473,19 @@ int SV_GameSpyInit (void)
 void SV_GameSpyFrame (void)
 {
 	SOCKADDR_IN from;
+#ifdef _WIN32
 	int from_length;
+#else
+	socklen_t from_length;
+#endif
 	char query[256];
 	int length;
 	fd_set read_set;
+#ifdef __psp__
+	struct SceNetInetTimeval timeout;
+#else
 	struct timeval timeout;
+#endif
 	DWORD now;
 
 	if (!dedicated || !dedicated->value ||
@@ -435,7 +504,7 @@ void SV_GameSpyFrame (void)
 		FD_SET (gs_query_socket, &read_set);
 		timeout.tv_sec = 0;
 		timeout.tv_usec = 0;
-		length = select (0, &read_set, NULL, NULL, &timeout);
+		length = select (gs_query_socket + 1, &read_set, NULL, NULL, &timeout);
 		if (length <= 0)
 			break;
 
@@ -461,11 +530,14 @@ void SV_GameSpyShutdown (void)
 		closesocket (gs_heartbeat_socket);
 		gs_heartbeat_socket = INVALID_SOCKET;
 	}
+#ifdef _WIN32
 	if (gs_wsa_started)
 	{
 		WSACleanup ();
 		gs_wsa_started = false;
 	}
+#endif
+	gs_callbacks = false;
 }
 
-#endif /* KINGPIN_ENGINE && _WIN32 */
+#endif /* KINGPIN_ENGINE */

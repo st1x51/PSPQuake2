@@ -335,6 +335,8 @@ void SV_BeginDownload_f(void)
 
 	if (Cmd_Argc() > 2)
 		offset = atoi(Cmd_Argv(2)); // downloaded offset
+	if (offset < 0)
+		offset = 0;
 
 	// hacked by zoid to allow more conrol over download
 	// first off, no .. or global allow check

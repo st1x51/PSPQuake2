@@ -1208,9 +1208,8 @@ typedef struct
 #define	MZ2_WIDOW2_BEAM_SWEEP_11		210
 // ROGUE
 #endif
-#ifndef __psp__
 extern	vec3_t *monster_flash_offset;
-#endif
+extern const int monster_flash_offset_count;
 
 #ifdef KINGPIN_ENGINE
 // ----------------------------------------------------------------
@@ -1544,8 +1543,8 @@ typedef enum
 #define	DF_WEAPONS_STAY		4
 #define	DF_NO_FALLING		8
 
-// Ridah, 27-may-99, not used
-//#define	DF_INSTANT_ITEMS	16
+// Kept in retail's default dmflags, although Kingpin has no instant-item use.
+#define	DF_INSTANT_ITEMS	16
 #define	DF_SAME_LEVEL		32
 
 // Ridah, 27-may-99, not used (teams determined by model and skin

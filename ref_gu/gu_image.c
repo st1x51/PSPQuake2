@@ -1378,6 +1378,19 @@ GL_LoadPicPaletted
 This is also used as an entry point for the generated r_notexture
 ================
 */
+#ifdef KINGPIN_ENGINE
+static void GL_SpecularAlphaMask (byte *rgba, int count)
+{
+	int i;
+	for (i = 0; i < count; i++, rgba += 4)
+	{
+		int brightness = Q_max3 (rgba[0], rgba[1], rgba[2]);
+		brightness = brightness * brightness / 16;
+		rgba[3] = Q_min (brightness, 255);
+	}
+}
+#endif
+
 static image_t *GL_LoadPicPaletted (char *name, byte *pic, byte *pal, int width, int height, int flags)
 {
 	image_t		*image;
@@ -1410,8 +1423,23 @@ static image_t *GL_LoadPicPaletted (char *name, byte *pic, byte *pal, int width,
 	gltextures_hash[image->hashkey] = image;
 #endif
 
-	// SFX sprites need their alpha channel, don't quantize them to 8 bit
-	if(!IMG_IS_IND(image) && !IMG_IS_PIC(image) && !IMG_IS_LM(image) && !IMG_IS_SFX(image))
+#ifdef KINGPIN_ENGINE
+	if ((image->flags & IMG_FORMAT_MASK) == IMG_FORMAT_RGBA_8888)
+	{
+		qboolean has_alpha = GL_TextureHasAplha (pic, width, height, 4);
+		if (!has_alpha && (image->flags & IMG_FLAG_SPECULAR_MASK))
+		{
+			GL_SpecularAlphaMask (pic, width * height);
+			has_alpha = true;
+		}
+		if (has_alpha)
+			image->flags |= IMG_FLAG_HAS_ALPHA;
+	}
+#endif
+	// Keep authored skin/fence alpha as well as SFX alpha; palette conversion
+	// discards the channel needed by Kingpin's reflection and cutout passes.
+	if(!IMG_IS_IND(image) && !IMG_IS_PIC(image) && !IMG_IS_LM(image) && !IMG_IS_SFX(image)
+		&& !(image->flags & IMG_FLAG_HAS_ALPHA))
 	{
 		if (!gl_state.d_16to8table)
 			ri.Sys_Error (ERR_DROP, "d_16to8table is null\n");

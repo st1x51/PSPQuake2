@@ -716,6 +716,40 @@ void DrawTextureChains (void)
 }
 
 #ifdef KINGPIN_ENGINE
+/* FUN_10012820 offsets the camera towards the surface before reflecting each
+ * view ray. Keep base/lightmap vertices intact: GE may still be reading them. */
+static void R_ReflectionPolyTexCoords (const msurface_t *surf,
+        const glpoly_t *poly, gu_vert_ftv_t *out)
+{
+    vec3_t camera, direction, reflected;
+    float push = 0.0f;
+    int j;
+
+    for (j = 0; j < poly->numverts; j++)
+    {
+        float distance;
+        VectorSubtract (poly->verts[j].xyz, r_origin, direction);
+        distance = VectorLength (direction);
+        if (distance < 2048.0f && (2048.0f - distance) * 0.1f > push)
+            push = (2048.0f - distance) * 0.1f;
+    }
+    if (surf->flags & SURF_PLANEBACK)
+        push = -push;
+    VectorMA (r_origin, push, surf->plane->normal, camera);
+    for (j = 0; j < poly->numverts; j++)
+    {
+        float dot;
+        VectorSubtract (poly->verts[j].xyz, camera, direction);
+        VectorNormalize (direction);
+        dot = DotProduct (direction, surf->plane->normal);
+        VectorMA (direction, -2.0f * dot, surf->plane->normal, reflected);
+        VectorNormalize (reflected);
+        out[j].u = 0.5f - reflected[0] * 0.5f;
+        out[j].v = 0.5f - reflected[1] * 0.5f;
+        VectorCopy (poly->verts[j].xyz, out[j].xyz);
+    }
+}
+
 /*
 =============
 R_DrawReflectionsSurfaces
@@ -733,19 +767,12 @@ void R_DrawReflectionsSurfaces (void)
 	// go back to the world matrix
 	//
 	sceGumLoadIdentity ();
+	sceGumUpdateMatrix ();
 
 	sceGuEnable (GU_BLEND);
 	sceGuBlendFunc (GU_ADD, GU_SRC_ALPHA, GU_FIX, 0, GU_HBLEND_ONE);
 
 	GL_TexEnv (GU_TFX_MODULATE);
-
-	sceGuDisable (GU_LIGHT2);
-	sceGuDisable (GU_LIGHT3);
-	sceGuLight (2, GU_DIRECTIONAL, GU_DIFFUSE, (const ScePspFVector3*)&vright);
-	sceGuLight (3, GU_DIRECTIONAL, GU_DIFFUSE, (const ScePspFVector3*)&vup);
-
-	sceGuTexMapMode (GU_ENVIRONMENT_MAP, 2, 3);
-	sceGuTexProjMapMode (GU_POSITION);
 
 	GL_Bind (r_worldreflectiontexture);
 
@@ -764,10 +791,26 @@ void R_DrawReflectionsSurfaces (void)
 
 		sceGuColor (GU_HCOLOR_4F (1.0f, 1.0f, 1.0f, alpha));
 
-		DrawGLPoly (surf);
+		{
+			glpoly_t *poly;
+			for (poly = surf->polys; poly; poly = poly->next)
+			{
+				gu_vert_ftv_t *out;
+				int count = poly->numverts;
+				if (count < 3)
+					continue;
+				out = (gu_vert_ftv_t *)sceGuGetMemory (sizeof(*out) * count);
+				R_ReflectionPolyTexCoords (surf, poly, out);
+				/* Reflection UVs need their own clipped copy; the base pass's
+				 * cached vertices still contain its skin/lightmap coordinates. */
+				if (GU_ClipIsRequired (out, count))
+					GU_Clip (out, count, &out, &count);
+				if (count)
+					sceGuDrawArray (GU_TRIANGLE_FAN, GU_TEXTURE_32BITF | GU_VERTEX_32BITF,
+						count, 0, out);
+			}
+		}
 	}
-
-	sceGuTexMapMode( GU_TEXTURE_COORDS, 0, 0 );
 
 	sceGuColor (GU_HCOLOR_DEFAULT);
 

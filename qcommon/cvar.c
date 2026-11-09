@@ -195,6 +195,7 @@ cvar_t *Cvar_Set2 (char *var_name, char *value, qboolean force)
 				if (strcmp(value, var->latched_string) == 0)
 					return var;
 				Z_Free (var->latched_string);
+				var->latched_string = NULL;
 			}
 			else
 			{
@@ -209,15 +210,14 @@ cvar_t *Cvar_Set2 (char *var_name, char *value, qboolean force)
 			}
 			else
 			{
+				Z_Free (var->string);
 				var->string = CopyString(value);
 				var->value = atof (var->string);
-#if 0
 				if (!strcmp(var->name, "game"))
 				{
 					FS_SetGamedir (var->string);
 					FS_ExecAutoexec ();
 				}
-#endif
 			}
 			return var;
 		}

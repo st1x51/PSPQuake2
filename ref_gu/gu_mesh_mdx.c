@@ -40,6 +40,241 @@ extern float	r_avertexnormals[NUMVERTEXNORMALS][3];
 static vec4_t	s_lerped[MAX_VERTS] __attribute__((aligned(16)));
 static vec4_t	shadelight;
 
+static float mdx_map_texcoords[MAX_VERTS][2];
+
+static void Mdx_DrawBoundingBoxes (const dmdx_t *header, int frame)
+{
+    static const byte faces[6][4] = {
+        {0, 1, 5, 4}, {2, 0, 4, 6}, {3, 2, 6, 7},
+        {1, 3, 7, 5}, {4, 5, 7, 6}, {0, 2, 3, 1}
+    };
+    int object, face, i, axis, blend, lighting;
+    if (!r_showbbox->value || header->num_subobjects <= 0 ||
+        frame < 0 || frame >= header->num_frames)
+        return;
+
+    blend = sceGuGetStatus (GU_BLEND);
+    lighting = sceGuGetStatus (GU_LIGHTING);
+    GL_Bind (r_notexture);
+    sceGuDisable (GU_LIGHTING);
+    sceGuEnable (GU_BLEND);
+    sceGuBlendFunc (GU_ADD, GU_SRC_ALPHA, GU_ONE_MINUS_SRC_ALPHA, 0, 0);
+    sceGuColor (GU_HCOLOR_4F (0.5f, 0.5f, 0.5f, 0.3f));
+    for (object = 0; object < header->num_subobjects; object++)
+    {
+        const float *bounds = (const float *)((const byte *)header + header->ofs_bbox_frames) +
+            (object * header->num_frames + frame) * 6;
+        for (face = 0; face < 6; face++)
+        {
+            gu_vert_ftv_t *out = (gu_vert_ftv_t *)sceGuGetMemory (sizeof(*out) * 4);
+            for (i = 0; i < 4; i++)
+            {
+                out[i].u = out[i].v = 0.4f;
+                for (axis = 0; axis < 3; axis++)
+                    out[i].xyz[axis] = bounds[axis + ((faces[face][i] & (1 << axis)) ? 3 : 0)];
+            }
+            sceGuDrawArray (GU_TRIANGLE_FAN, GU_TEXTURE_32BITF | GU_VERTEX_32BITF, 4, 0, out);
+        }
+    }
+    sceGuSetStatus (GU_LIGHTING, lighting);
+    sceGuSetStatus (GU_BLEND, blend);
+    sceGuColor (GU_HCOLOR_DEFAULT);
+}
+
+/* Retail reflects the camera ray about the interpolated normal and projects
+ * it in world space. GU environment mapping cannot express that operation. */
+void R_AliasMapTexCoords (int count, const dtrivertx_t *verts,
+        const dtrivertx_t *oldverts, float backlerp, const vec4_t *positions,
+        float (*texcoords)[2])
+{
+    vec3_t forward, right, up, delta, camera;
+    int v, i;
+
+    AngleVectors (currententity->angles, forward, right, up);
+    VectorSubtract (r_origin, currententity->origin, delta);
+    camera[0] = DotProduct (delta, forward);
+    camera[1] = -DotProduct (delta, right);
+    camera[2] = DotProduct (delta, up);
+    for (v = 0; v < count; v++)
+    {
+        vec3_t normal, direction, reflected, world;
+        float dot;
+        for (i = 0; i < 3; i++)
+            normal[i] = r_avertexnormals[verts[v].lightnormalindex][i] * (1.0f - backlerp) +
+                r_avertexnormals[oldverts[v].lightnormalindex][i] * backlerp;
+        VectorNormalize (normal);
+        VectorSubtract (positions[v], camera, direction);
+        VectorNormalize (direction);
+        dot = DotProduct (direction, normal);
+        VectorMA (direction, -2.0f * dot, normal, reflected);
+        VectorNormalize (reflected);
+        for (i = 0; i < 3; i++)
+            world[i] = forward[i] * reflected[0] - right[i] * reflected[1] + up[i] * reflected[2];
+        VectorNormalize (world);
+        texcoords[v][0] = 0.5f + world[1] * 0.5f;
+        texcoords[v][1] = 0.5f - world[2] * 0.5f;
+    }
+}
+
+static void Mdx_MapTexCoords (int count, const dtrivertx_t *verts,
+        const dtrivertx_t *oldverts, float backlerp)
+{
+    R_AliasMapTexCoords (count, verts, oldverts, backlerp, s_lerped, mdx_map_texcoords);
+}
+
+/* Authored model lights plus dynamic lights, as in the Kingpin renderer.
+ * Software vertex colours retain all twelve lights without the GU four-light
+ * limit; ordinary Q2-style lighting continues to use the existing GU path. */
+#define MDX_MAX_LIGHTS 12
+typedef struct
+{
+    vec3_t origin, direction, color;
+} mdx_light_t;
+static mdx_light_t mdx_lights[MDX_MAX_LIGHTS];
+static int mdx_num_lights;
+static qboolean mdx_directional;
+static unsigned int mdx_vertex_colors[MAX_VERTS];
+
+static void Mdx_AddLight (const vec3_t origin, const vec3_t color, float strength)
+{
+    vec3_t delta, forward, right, up;
+    mdx_light_t *light;
+    if (mdx_num_lights >= MDX_MAX_LIGHTS || strength <= 0.0f)
+        return;
+    light = &mdx_lights[mdx_num_lights++];
+    VectorCopy (origin, light->origin);
+    VectorSubtract (origin, currententity->origin, delta);
+    if (VectorNormalize (delta) == 0.0f)
+        VectorSet (delta, 0, 0, 1);
+    AngleVectors (currententity->angles, forward, right, up);
+    light->direction[0] = DotProduct (delta, forward);
+    light->direction[1] = -DotProduct (delta, right);
+    light->direction[2] = DotProduct (delta, up);
+    VectorNormalize (light->direction);
+    VectorScale (color, strength, light->color);
+}
+
+static void Mdx_SetupLights (void)
+{
+    model_lighting_t *lighting = &currententity->model_lighting;
+    vec3_t delta, color;
+    float distance, strength, dynamic_scale = 0.0f;
+    int i, count;
+
+    mdx_num_lights = 0;
+    mdx_directional = r_directional_lighting->value != 0.0f &&
+        (currententity->flags2 & RF2_DIR_LIGHTS) &&
+        !(currententity->flags & (RF_FULLBRIGHT | RF_SHELL_RED | RF_SHELL_GREEN | RF_SHELL_BLUE));
+    if (!mdx_directional)
+        return;
+
+    count = Q_bound (0, lighting->num_dir_lights, MAX_MODEL_DIR_LIGHTS);
+    for (i = 0; i < count; i++)
+    {
+        VectorSubtract (lighting->light_orgs[i], currententity->origin, delta);
+        distance = VectorLength (delta);
+        strength = (lighting->light_intensities[i] - distance) / 255.0f;
+        VectorCopy (lighting->light_colors[i], color);
+        if (r_newrefdef.lightstyles)
+        {
+            const float *rgb = r_newrefdef.lightstyles[lighting->light_styles[i]].rgb;
+            color[0] *= rgb[0]; color[1] *= rgb[1]; color[2] *= rgb[2];
+        }
+        Mdx_AddLight (lighting->light_orgs[i], color, strength);
+    }
+    for (i = 0; i < r_newrefdef.num_dlights && mdx_num_lights < MDX_MAX_LIGHTS; i++)
+    {
+        dlight_t *dl = &r_newrefdef.dlights[i];
+        VectorSubtract (dl->origin, currententity->origin, delta);
+        strength = (dl->intensity * 0.6f - VectorLength (delta)) / 256.0f;
+        if (strength > 0.0f)
+        {
+            dynamic_scale += Q_max3 (dl->color[0], dl->color[1], dl->color[2]);
+            strength *= dynamic_scale;
+        }
+        Mdx_AddLight (dl->origin, dl->color, strength);
+    }
+}
+
+static void Mdx_VertexColors (int count, const dtrivertx_t *verts,
+        const dtrivertx_t *oldverts, float backlerp, float alpha)
+{
+    int v, i, j;
+    for (v = 0; v < count; v++)
+    {
+        vec3_t normal, color;
+        for (i = 0; i < 3; i++)
+            normal[i] = r_avertexnormals[verts[v].lightnormalindex][i] * (1.0f - backlerp) +
+                r_avertexnormals[oldverts[v].lightnormalindex][i] * backlerp;
+        VectorNormalize (normal);
+        VectorSet (color, 0.05f, 0.05f, 0.05f);
+        for (i = 0; i < mdx_num_lights; i++)
+        {
+            float dot = DotProduct (normal, mdx_lights[i].direction);
+            if (dot <= 0.0f)
+                continue;
+            for (j = 0; j < 3; j++)
+                color[j] = Q_min (1.0f, color[j] + dot * mdx_lights[i].color[j]);
+        }
+        mdx_vertex_colors[v] = GU_HCOLOR_C4F (color[0], color[1], color[2], alpha);
+    }
+}
+
+static void Mdx_ShadowVector (vec3_t direction)
+{
+    vec3_t delta, forward, right, up;
+    float nearest = 9999.0f;
+    int i, best = -1;
+    if (!mdx_directional)
+        return;
+    for (i = 0; i < mdx_num_lights; i++)
+    {
+        float distance;
+        VectorSubtract (currententity->origin, mdx_lights[i].origin, delta);
+        distance = VectorLength (delta);
+        if (distance < nearest)
+        {
+            nearest = distance;
+            best = i;
+        }
+    }
+    if (best < 0)
+        return;
+    VectorSubtract (currententity->origin, mdx_lights[best].origin, delta);
+    VectorNormalize (delta);
+    if (delta[2] > -0.5f)
+    {
+        delta[2] = -0.5f;
+        VectorNormalize (delta);
+    }
+    AngleVectors (currententity->angles, forward, right, up);
+    direction[0] = -DotProduct (delta, forward);
+    direction[1] = DotProduct (delta, right);
+    direction[2] = -DotProduct (delta, up);
+}
+
+/* MD2 and MDX use the same Kingpin lighting rules. The scratch arrays are
+ * copied into GU list memory by each caller before the next entity is drawn. */
+qboolean R_AliasSetupDirectionalLights (void)
+{
+    Mdx_SetupLights ();
+    if (mdx_directional)
+        sceGuDisable (GU_LIGHTING);
+    return mdx_directional;
+}
+
+const unsigned int *R_AliasDirectionalColors (int count, const dtrivertx_t *verts,
+        const dtrivertx_t *oldverts, float backlerp, float alpha)
+{
+    Mdx_VertexColors (count, verts, oldverts, backlerp, alpha);
+    return mdx_vertex_colors;
+}
+
+void R_AliasDirectionalShadow (vec3_t direction)
+{
+    Mdx_ShadowVector (direction);
+}
+
 static float	mdx_sfx_previous[5];
 static float	mdx_sfx_frame_time = -1.0f;
 static int		mdx_sfx_frame_mask;
@@ -508,15 +743,12 @@ void GL_DrawMDXFrameLerp (dmdx_t *pmdxhdr, float backlerp, int mapmode)
 
 	GL_MDXLerpVerts( pmdxhdr->num_xyz, v, ov, verts, lerp, move, frontv, backv );
 
+	if (mdx_directional)
+		Mdx_VertexColors (pmdxhdr->num_xyz, verts, ov, backlerp, alpha);
+
 	if (mapmode)
 	{
-		sceGuDisable (GU_LIGHT2);
-		sceGuDisable (GU_LIGHT3);
-		sceGuLight (2, GU_DIRECTIONAL, GU_DIFFUSE, (const ScePspFVector3*)&vright);
-		sceGuLight (3, GU_DIRECTIONAL, GU_DIFFUSE, (const ScePspFVector3*)&vup);
-
-		sceGuTexMapMode (GU_ENVIRONMENT_MAP, 2, 3);
-		sceGuTexProjMapMode (GU_NORMAL);
+		Mdx_MapTexCoords (pmdxhdr->num_xyz, verts, ov, backlerp);
 	}
 	else
 	{
@@ -591,6 +823,22 @@ void GL_DrawMDXFrameLerp (dmdx_t *pmdxhdr, float backlerp, int mapmode)
 				prim = GU_TRIANGLE_STRIP;
 			}
 
+            if (mdx_directional)
+            {
+                gu_vert_ftcv_t *out = (gu_vert_ftcv_t *)sceGuGetMemory (sizeof(*out) * count);
+                for (i = 0; i < count; i++, order += 3)
+                {
+                    index_xyz = order[2];
+                    out[i].u = mapmode ? mdx_map_texcoords[index_xyz][0] : ((float *)order)[0];
+                    out[i].v = mapmode ? mdx_map_texcoords[index_xyz][1] : ((float *)order)[1];
+                    out[i].c = mdx_vertex_colors[index_xyz];
+                    VectorCopy (s_lerped[index_xyz], out[i].xyz);
+                }
+                sceGuDrawArray (prim, GU_TEXTURE_32BITF | GU_COLOR_8888 | GU_VERTEX_32BITF,
+                    count, 0, out);
+                continue;
+            }
+
 			gu_vert_ftnv_t* const out = (gu_vert_ftnv_t*)sceGuGetMemory (sizeof(gu_vert_ftnv_t) * count);
 			gu_vert_ftnv_t* out_ptr = out;
 			for (i = 0; i < count; i++, order += 3, out_ptr++)
@@ -598,8 +846,8 @@ void GL_DrawMDXFrameLerp (dmdx_t *pmdxhdr, float backlerp, int mapmode)
 				index_xyz = order[2];
 
 				// texture coordinates come from the draw list
-				out_ptr->u = ((float *)order)[0];
-				out_ptr->v = ((float *)order)[1];
+				out_ptr->u = mapmode ? mdx_map_texcoords[index_xyz][0] : ((float *)order)[0];
+				out_ptr->v = mapmode ? mdx_map_texcoords[index_xyz][1] : ((float *)order)[1];
 
 				// normals
 				norm = r_avertexnormals[verts[index_xyz].lightnormalindex];
@@ -612,8 +860,6 @@ void GL_DrawMDXFrameLerp (dmdx_t *pmdxhdr, float backlerp, int mapmode)
 		}
 	}
 
-	if (mapmode)
-		sceGuTexMapMode( GU_TEXTURE_COORDS, 0, 0 );
 }
 
 
@@ -640,6 +886,7 @@ void GL_DrawMDXShadow (dmdx_t *pmdxhdr, int posenum)
 	shadevector[1] = sin (-an);
 	shadevector[2] = 1;
 	VectorNormalize (shadevector);
+	Mdx_ShadowVector (shadevector);
 
 	lheight = currententity->origin[2] - lightspot[2];
 
@@ -778,6 +1025,8 @@ static qboolean R_SetupMDXLighting (void)
 	int			i, num_dls;
 	float		r, g, b;
 
+	Mdx_SetupLights ();
+
 	ScePspFVector3	sun_dir = { -0.5f, 0.8f, 0.5f };
 	qboolean		flat_light = currententity->flags & (  RF_SHELL_GREEN | RF_SHELL_RED | RF_SHELL_BLUE | RF_FULLBRIGHT );
 
@@ -803,6 +1052,13 @@ static qboolean R_SetupMDXLighting (void)
 	else
 	{
 		R_GetWorldLight (currententity->origin, shadelight);
+		if (currententity->flags & RF_DIMLIGHT)
+			VectorSet (shadelight, 0.8f, 0.8f, 0.8f);
+		else if (currententity->flags2 & RF2_PASSLIGHT)
+		{
+			float passed = (currententity->flags2 & 0x1f) * (1.0f / 31.0f);
+			VectorSet (shadelight, passed, passed, passed);
+		}
 
 		sun_dir.x = lightspot[0];
 		sun_dir.y = lightspot[1];
@@ -871,7 +1127,7 @@ static qboolean R_SetupMDXLighting (void)
 	}
 
 
-	if (flat_light)
+	if (flat_light || mdx_directional)
 		return false;
 
 	sceGuEnable (GU_LIGHTING);
@@ -1055,6 +1311,7 @@ void R_DrawMDXModel (entity_t *e, int mapmode)
 	if (!r_lerpmodels->value)
 		currententity->backlerp = 0;
 	GL_DrawMDXFrameLerp (pmdxhdr, currententity->backlerp, mapmode);
+	Mdx_DrawBoundingBoxes (pmdxhdr, currententity->frame);
 
 	GL_TexEnv (GU_TFX_REPLACE);
 	sceGuShadeModel (GU_FLAT);
@@ -1078,7 +1335,7 @@ void R_DrawMDXModel (entity_t *e, int mapmode)
 	if (light_en)
 		sceGuDisable (GU_LIGHTING);
 #if 1
-	if (gl_shadows->value && !(flags & (RF_TRANSLUCENT | RF_WEAPONMODEL)) && !(currententity->flags2 & RF2_NOSHADOW))
+	if (!mapmode && gl_shadows->value && !(flags & (RF_TRANSLUCENT | RF_WEAPONMODEL)) && !(currententity->flags2 & RF2_NOSHADOW))
 	{
 		sceGumPushMatrix ();
 		R_RotateForEntity (e);
