@@ -372,36 +372,82 @@ void Menu_Center( menuframework_s *menu )
 #endif
 }
 
+static void Menu_ItemBounds( menucommon_s *item, int *top, int *bottom )
+{
+	*top = item->y;
+	*bottom = item->y + 8;
+	if ( item->type == MTYPE_FIELD )
+	{
+		*top -= 4;
+		*bottom += 4;
+	}
+	else if ( item->type == MTYPE_SPINCONTROL )
+	{
+		menulist_s *list = (menulist_s *)item;
+		if ( list->itemnames && list->itemnames[list->curvalue] &&
+			strchr( list->itemnames[list->curvalue], '\n' ) )
+			*bottom += 10;
+	}
+	else if ( item->type == MTYPE_LIST )
+	{
+		const char **name = ((menulist_s *)item)->itemnames;
+		while ( name && *name++ )
+			*bottom += 10;
+	}
+}
+
 void Menu_Draw( menuframework_s *menu )
 {
 	int i;
 	menucommon_s *item;
 	int saved_y = menu->y;
+	int view_top = 8, view_bottom = VID_HEIGHT - 16;
+	int content_top = 0, content_bottom = 0;
+	int top, bottom;
 
 #ifdef KINGPIN_ENGINE
 	M_Main_Draw (); // keep the main menu background visible behind submenus
 #endif
 
 	/*
-	** menus taller than the screen (key bindings on a small screen) scroll
-	** so that the item under the cursor stays visible
+	** Include the menu origin and every item's full extent. A short menu can
+	** also overflow when its preferred origin is too far down the screen.
 	*/
 	if ( menu->nitems > 0 )
 	{
-		int height = ( ( menucommon_s * ) menu->items[menu->nitems-1] )->y + 10;
-		int avail = VID_HEIGHT - 16;	// keep the status bar free
+		int height, avail = view_bottom - view_top;
+		Menu_ItemBounds( menu->items[0], &content_top, &content_bottom );
+		for ( i = 1; i < menu->nitems; i++ )
+		{
+			Menu_ItemBounds( menu->items[i], &top, &bottom );
+			content_top = Q_min( content_top, top );
+			content_bottom = Q_max( content_bottom, bottom );
+		}
+		height = content_bottom - content_top;
 
 		if ( height > avail )
 		{
 			menucommon_s *cur = ( menucommon_s * ) Menu_ItemAtCursor( menu );
-			int scroll = cur ? cur->y - avail / 2 : 0;
+			int scroll = 0;
+			if ( cur )
+			{
+				Menu_ItemBounds( cur, &top, &bottom );
+				scroll = (top + bottom) / 2 - content_top - avail / 2;
+			}
 
 			if ( scroll > height - avail )
 				scroll = height - avail;
 			if ( scroll < 0 )
 				scroll = 0;
 
-			menu->y = 8 - scroll;
+			menu->y = view_top - content_top - scroll;
+		}
+		else
+		{
+			if ( menu->y + content_bottom > view_bottom )
+				menu->y = view_bottom - content_bottom;
+			if ( menu->y + content_top < view_top )
+				menu->y = view_top - content_top;
 		}
 	}
 
@@ -410,6 +456,9 @@ void Menu_Draw( menuframework_s *menu )
 	*/
 	for ( i = 0; i < menu->nitems; i++ )
 	{
+		Menu_ItemBounds( menu->items[i], &top, &bottom );
+		if ( menu->y + top < view_top || menu->y + bottom > view_bottom )
+			continue;
 		switch ( ( ( menucommon_s * ) menu->items[i] )->type )
 		{
 		case MTYPE_FIELD:
@@ -453,6 +502,14 @@ void Menu_Draw( menuframework_s *menu )
 		{
 			Draw_Char( menu->x + item->cursor_offset, menu->y + item->y, 12 + ( ( int ) ( Sys_Milliseconds()/250 ) & 1 ) );
 		}
+	}
+
+	if ( menu->nitems > 0 )
+	{
+		if ( menu->y + content_top < view_top )
+			re.DrawChar( VID_WIDTH - 12, view_top, '^' );
+		if ( menu->y + content_bottom > view_bottom )
+			re.DrawChar( VID_WIDTH - 12, view_bottom - 8, 'v' );
 	}
 
 	if ( item )
