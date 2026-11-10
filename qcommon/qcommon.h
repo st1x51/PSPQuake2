@@ -862,6 +862,7 @@ qboolean	FS_FCopy (file_t *outfile, file_t *infile);
 void		FS_FClose (file_t *file);
 
 byte		*FS_LoadFile (const char *path, size_t *size, int flags);
+byte		*FS_LoadCacheFile (const char *path, cache_user_t *cache, size_t *size, int flags);
 // a null buffer will just return the file length without loading
 // a -1 length is not present
 void		FS_FreeFile (void *buffer);

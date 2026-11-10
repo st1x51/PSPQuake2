@@ -1023,11 +1023,52 @@ void FS_FClose (file_t *file)
 
 /*
 ============
-FS_LoadFile
+FS_LoadCacheFile
 
 Filename are reletive to the quake search path
 ============
 */
+/* For loaders that can convert in place without further hunk allocations.
+ * Reading directly into the cache avoids evicting models for temporary copies. */
+byte *FS_LoadCacheFile (const char *path, cache_user_t *cache, size_t *size, int flags)
+{
+	file_t *file;
+	byte *buffer;
+	size_t length;
+
+	if (size)
+		*size = 0;
+	file = FS_FOpen (path, FS_MODE_READ | (flags & (FS_PATH_MASK | FS_TYPE_MASK)));
+	if (!file)
+		return NULL;
+	/* Cache_Alloc adds a header and rounds up using a signed int. */
+	if (file->length <= 0 || file->length > 0x7ffff000)
+	{
+		FS_FClose (file);
+		return NULL;
+	}
+	length = (size_t)file->length;
+	/* As with Hunk_TempAlloc, the previous temporary file is no longer live. */
+	Hunk_HighMark ();
+	buffer = Cache_Alloc (cache, (int)length, path);
+	if (!buffer)
+	{
+		FS_FClose (file);
+		return NULL;
+	}
+	if (FS_FRead (file, buffer, length) != (off_t)length)
+	{
+		FS_FClose (file);
+		Cache_Free (cache);
+		return NULL;
+	}
+	FS_FClose (file);
+	if (size)
+		*size = length;
+	return buffer;
+}
+
+/* Load a file using the allocation policy selected by flags. */
 byte *FS_LoadFile (const char *path, size_t *size, int flags)
 {
 	file_t	*file;

@@ -30,6 +30,18 @@ void Mod_LoadBrushModel (model_t *mod, void *buffer);
 void Mod_LoadAliasModel (model_t *mod, void *buffer);
 #ifdef KINGPIN_ENGINE
 void Mod_LoadMdxModel (model_t *mod, void *buffer);
+static qboolean Mod_MdxUsesExternalSkins (const char *name)
+{
+	if (!strstr (name, "actors") && !strstr (name, "players"))
+		return false;
+
+	return strstr (name, "head.mdx") != NULL ||
+		strstr (name, "legs.mdx") != NULL ||
+		strstr (name, "body.mdx") != NULL ||
+		strstr (name, "bald_head.mdx") != NULL ||
+		strstr (name, "ski_head.mdx") != NULL ||
+		strstr (name, "weld_head.mdx") != NULL;
+}
 #endif
 model_t *Mod_LoadModel (model_t *mod, qboolean crash);
 
@@ -38,11 +50,12 @@ byte	mod_novis[MAX_MAP_LEAFS/8];
 #define	MAX_MOD_KNOWN	512
 model_t	mod_known[MAX_MOD_KNOWN];
 int		mod_numknown = 0;
+unsigned int mod_file_loads, mod_cache_reloads;
 
 // the inline * models from the current map are kept seperate
 model_t	mod_inline[MAX_MOD_KNOWN];
 
-int		modfilelen;
+size_t	modfilelen;
 
 /*
 ===============
@@ -163,6 +176,8 @@ void Mod_Modellist_f (void)
 
 		ri.Con_Printf (PRINT_ALL, "\n");
 	}
+	ri.Con_Printf (PRINT_ALL, "Model file loads: %u, cache reloads: %u\n",
+		mod_file_loads, mod_cache_reloads);
 }
 
 /*
@@ -176,6 +191,7 @@ void Mod_Init (void)
 	memset (mod_known, 0, sizeof(mod_known));
 
 	mod_numknown = 0;
+	mod_file_loads = mod_cache_reloads = 0;
 }
 
 /*
@@ -287,6 +303,7 @@ model_t *Mod_LoadModel (model_t *mod, qboolean crash)
 			mod->needload = nl_present;
 			return mod;
 		}
+		mod_cache_reloads++;
 	}
 	else if (mod->needload == nl_present)
 	{
@@ -296,7 +313,15 @@ model_t *Mod_LoadModel (model_t *mod, qboolean crash)
 	//
 	// load the file
 	//
-	buf = ri.FS_LoadFile (mod->name, &modfilelen, FS_PATH_ALL | FS_FLAG_MTEMP);
+	mod_file_loads++;
+#if defined(KINGPIN_ENGINE) && defined(REF_HARD_LINKED)
+	/* External actor skins are registered separately. Their MDX conversion
+	 * makes no nested allocations, so it can operate in the final cache block. */
+	if (Mod_MdxUsesExternalSkins (mod->name))
+		buf = FS_LoadCacheFile (mod->name, &mod->cache, &modfilelen, FS_PATH_ALL);
+	else
+#endif
+		buf = ri.FS_LoadFile (mod->name, &modfilelen, FS_PATH_ALL | FS_FLAG_MTEMP);
 	if (!buf)
 	{
 		if (crash)
@@ -1262,18 +1287,7 @@ Loads Kingpin's IDPX version 4 alias format.  MDX keeps MD2 frame and GL
 vertex records, but every GL primitive has an extra sub-object dword.
 =================
 */
-static qboolean Mod_MdxUsesExternalSkins (const char *name)
-{
-	if (!strstr (name, "actors") && !strstr (name, "players"))
-		return false;
 
-	return strstr (name, "head.mdx") != NULL ||
-		strstr (name, "legs.mdx") != NULL ||
-		strstr (name, "body.mdx") != NULL ||
-		strstr (name, "bald_head.mdx") != NULL ||
-		strstr (name, "ski_head.mdx") != NULL ||
-		strstr (name, "weld_head.mdx") != NULL;
-}
 
 void Mod_LoadMdxModel (model_t *mod, void *buffer)
 {
@@ -1285,9 +1299,13 @@ void Mod_LoadMdxModel (model_t *mod, void *buffer)
 	int					*incmd, *outcmd;
 	float				*inbounds, *outbounds;
 	int					i, j, version, size;
-	int					start, end, total;
+	int					start;
+	qboolean			external_skins;
 
 	start = ri.Hunk_LowMark ();
+
+	if (modfilelen < sizeof(dmdx_t))
+		ri.Sys_Error (ERR_DROP, "model %s has a truncated MDX header", mod->name);
 
 	in = (dmdx_t *)buffer;
 	version = LittleLong (in->version);
@@ -1299,9 +1317,18 @@ void Mod_LoadMdxModel (model_t *mod, void *buffer)
 	if (size < (int)sizeof(dmdx_t) || size > modfilelen)
 		ri.Sys_Error (ERR_DROP, "model %s has a bad MDX file size", mod->name);
 
-	out = ri.Hunk_AllocName (size, loadname);
-
-	memcpy (out, in, size);
+	/* Actor bodies/heads/legs do not load embedded images. Keep their source
+	 * in place: growing the low hunk here would move/evict other actor models.
+	 * Embedded skin loading can replace the temporary file buffer, so those
+	 * models still require a separate low-hunk copy. */
+	external_skins = Mod_MdxUsesExternalSkins (mod->name);
+	if (external_skins)
+		out = in;
+	else
+	{
+		out = ri.Hunk_AllocName (size, loadname);
+		memcpy (out, in, size);
+	}
 	for (i = 0; i < sizeof(dmdx_t) / 4; i++)
 		((int *)out)[i] = LittleLong (((int *)in)[i]);
 
@@ -1401,7 +1428,7 @@ void Mod_LoadMdxModel (model_t *mod, void *buffer)
 		outbounds[i] = LittleFloat (inbounds[i]);
 
 	mod->type = mod_mdx;
-	if (!Mod_MdxUsesExternalSkins (mod->name))
+	if (!external_skins)
 	{
 		for (i = 0; i < out->num_skins; i++)
 		{
@@ -1418,15 +1445,20 @@ void Mod_LoadMdxModel (model_t *mod, void *buffer)
 	//
 	// move the complete, relocatable alias model to the cache
 	//
-	end = ri.Hunk_LowMark ();
-	total = end - start;
-
-	ri.Cache_Alloc (&mod->cache, total, loadname);
-	if (!mod->cache.data)
-		return;
-	memcpy (mod->cache.data, out, total);
-
-	ri.Hunk_FreeToLowMark (start);
+	if (out != mod->cache.data)
+	{
+		/* Copy only file payload, not the hunk header/alignment overhead. */
+		ri.Cache_Alloc (&mod->cache, size, loadname);
+		if (!mod->cache.data)
+		{
+			if (!external_skins)
+				ri.Hunk_FreeToLowMark (start);
+			return;
+		}
+		memcpy (mod->cache.data, out, size);
+	}
+	if (!external_skins)
+		ri.Hunk_FreeToLowMark (start);
 }
 #endif
 
