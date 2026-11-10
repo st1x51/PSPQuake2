@@ -1858,7 +1858,7 @@ void T_DamageMDX (edict_t *targ, edict_t *inflictor, edict_t *attacker, vec3_t d
 
 					{
 						int rval;
-						rval = rand();
+						rval = rand() % 100;
 						
 						if (rval > 66)
 							gi.sound(targ, CHAN_VOICE, gi.soundindex("weapons/bullethit_armor1.wav"), 1, ATTN_NORM, 0);

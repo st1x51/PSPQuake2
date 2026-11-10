@@ -1080,8 +1080,7 @@ static void CL_AddVehicleTilt (entity_t *ent, int pm_type)
 			{
 				for (i=0 ; i<3 ; i++)
 				{
-					int r = rand();
-					vehicle_target[i] = ((r * (1.0/32768) + r * (1.0/32768)) - 1.0) * 1.5;
+					vehicle_target[i] = crand() * 1.5f;
 				}
 				vehicle_tilttime = cl.time;
 			}
