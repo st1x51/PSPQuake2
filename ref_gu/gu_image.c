@@ -1201,10 +1201,9 @@ void GL_UploadTexture (image_t *image, byte *pic, byte *pal, int width, int heig
 				if (!image->palette)
 					ri.Sys_Error (ERR_DROP, "GL_UploadTexture: %s out of memory for palette\n", image->name);
 
-				memcpy(image->palette, pal, 1024);
-
-				sceKernelDcacheWritebackRange (image->palette, 1024);
 			}
+			memcpy (image->palette, pal, 1024);
+			sceKernelDcacheWritebackRange (image->palette, 1024);
 		}
 		else
 		{
