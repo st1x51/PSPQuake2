@@ -439,17 +439,16 @@ typedef struct _TargaHeader {
 LoadTGA
 =============
 */
-void LoadTGA (char *name, byte **pic, int *width, int *height)
+static void LoadTGA (char *name, byte **pic, int *width, int *height)
 {
 	int		columns, rows, numPixels;
 	byte	*pixbuf;
 	int		row, column;
 	byte	*buf_p;
 	byte	*buffer;
-	int		length;
+	size_t	length;
 	TargaHeader		targa_header;
 	byte			*targa_rgba;
-	int		lowmark;
 	byte tmp[2];
 
 	*pic = NULL;
@@ -457,7 +456,6 @@ void LoadTGA (char *name, byte **pic, int *width, int *height)
 	//
 	// load the file
 	//
-	lowmark = ri.Hunk_LowMark();
 	buffer = ri.FS_LoadFile (name, &length, FS_PATH_ALL | FS_FLAG_MHUNK);
 	if (!buffer)
 	{
@@ -508,7 +506,7 @@ void LoadTGA (char *name, byte **pic, int *width, int *height)
 	if (height)
 		*height = rows;
 
-	targa_rgba = malloc (numPixels*4);
+	targa_rgba = ri.Hunk_AllocName (numPixels*4, "tga_decode");
 	if(!targa_rgba)
 		ri.Sys_Error (ERR_DROP, "LoadTGA: not enough space for %s", name);
 	*pic = targa_rgba;
@@ -624,7 +622,6 @@ void LoadTGA (char *name, byte **pic, int *width, int *height)
 		}
 	}
 
-	ri.Hunk_FreeToLowMark(lowmark);
 }
 
 
@@ -1160,6 +1157,17 @@ void GL_UploadTexture (image_t *image, byte *pic, byte *pal, int width, int heig
 	byte		*tempbuff;
 	int			i;
 	int			mark;
+	qboolean	rgba16 = false;
+
+#ifdef KINGPIN_ENGINE
+	if (!IMG_IS_LM(image) &&
+		(image->flags & IMG_FORMAT_MASK) == IMG_FORMAT_RGBA_8888 &&
+		!(image->flags & (IMG_FLAG_DYNAMIC | IMG_FLAG_EXTERNAL)))
+	{
+		rgba16 = true;
+		image->flags = (image->flags & ~IMG_FORMAT_MASK) | IMG_FORMAT_RGBA_4444;
+	}
+#endif
 
 	GL_SetTextureFormat (image);
 	GL_SetTextureDimensions (image, width, height);
@@ -1177,7 +1185,7 @@ void GL_UploadTexture (image_t *image, byte *pic, byte *pal, int width, int heig
 	{
 		swizzle = ((width_bytes % 16 == 0) && (image->uplheight % 8 == 0));
 
-		if (GL_TextureHasAplha (pic, width, height, image->bpp))
+		if (GL_TextureHasAplha (pic, width, height, rgba16 ? 4 : image->bpp))
 			image->flags |=	IMG_FLAG_HAS_ALPHA;
 	}
 
@@ -1226,7 +1234,22 @@ void GL_UploadTexture (image_t *image, byte *pic, byte *pal, int width, int heig
 	image->sl = 0;
 	image->tl = 0;
 
-	if ((image->uplwidth != width || image->uplheight != height) /*&& !IMG_IS_PIC(image)*/)
+	if (rgba16)
+	{
+		int scratchmark = ri.Hunk_LowMark ();
+		byte *rgba = pic;
+		if (image->uplwidth != width || image->uplheight != height)
+		{
+			rgba = ri.Hunk_Alloc (image->uplwidth * image->uplheight * 4);
+			GL_ResampleTexture32 (pic, width, height, rgba, image->uplwidth, image->uplheight);
+		}
+		GL_PixelConverter (tempbuff, rgba, image->uplwidth, image->uplheight,
+			GU_PSM_8888, GU_PSM_4444);
+		ri.Hunk_FreeToLowMark (scratchmark);
+		image->sh = image->uplwidth;
+		image->th = image->uplheight;
+	}
+	else if ((image->uplwidth != width || image->uplheight != height) /*&& !IMG_IS_PIC(image)*/)
 	{
 		if (image->bpp == 1)
 			GL_ResampleTexture8 (pic, width, height, tempbuff, image->uplwidth, image->uplheight);
@@ -1575,6 +1598,7 @@ image_t	*GL_FindImage (char *name, int flags)
 	byte	*pic, *palette;
 	int		width, height;
 	uint	hashkey;
+	int		lowmark = -1;
 
 	if (!name)
 		return NULL;	//	ri.Sys_Error (ERR_DROP, "GL_FindImage: NULL name");
@@ -1624,16 +1648,22 @@ image_t	*GL_FindImage (char *name, int flags)
 	}
 	else if (!strcmp(name+len-4, ".tga"))
 	{
+		lowmark = ri.Hunk_LowMark ();
 		LoadTGA (name, &pic, &width, &height);
 		if (!pic)
-			return NULL; // ri.Sys_Error (ERR_DROP, "GL_FindImage: can't load %s", name);
+		{
+			ri.Hunk_FreeToLowMark (lowmark);
+			return NULL;
+		}
 		image = GL_LoadPic (name, pic, width, height, flags | IMG_FORMAT_RGBA_8888);
 	}
 	else
 		return NULL;	//	ri.Sys_Error (ERR_DROP, "GL_FindImage: bad extension on: %s", name);
 
 
-	if (pic)
+	if (lowmark >= 0)
+		ri.Hunk_FreeToLowMark (lowmark);
+	else if (pic)
 		free(pic);
 	if (palette)
 		free(palette);
