@@ -855,7 +855,7 @@ WriteCastGroups
 void WriteCastGroups (file_t *f)
 {
 	// write the block
-	gi.FileWrite (f, g_cast_groups, sizeof(cast_memory_t) * MAX_CAST_GROUPS);
+	gi.FileWrite (f, g_cast_groups, sizeof(*g_cast_groups) * MAX_CAST_GROUPS);
 }
 
 /*
@@ -866,7 +866,9 @@ ReadCastGroups
 void ReadCastGroups (file_t *f)
 {
 	// read the block
-	gi.FileRead (f, g_cast_groups, sizeof(cast_group_t) * MAX_CAST_GROUPS);
+	if (gi.FileRead (f, g_cast_groups, sizeof(*g_cast_groups) * MAX_CAST_GROUPS)
+		!= sizeof(*g_cast_groups) * MAX_CAST_GROUPS)
+		gi.error ("ReadCastGroups: truncated savegame");
 }
 
 
@@ -947,12 +949,17 @@ void ReadCastMemories (file_t *f)
 
 	while (1)
 	{
-		gi.FileRead (f, &i, sizeof(i));
+		if (gi.FileRead (f, &i, sizeof(i)) != sizeof(i))
+			gi.error ("ReadCastMemories: truncated savegame index");
 
-		if (i < 0)
+		if (i == -1)
 			break;
+		if (i < 0 || i >= MAX_CHARACTERS * MAX_CHARACTERS)
+			gi.error ("ReadCastMemories: invalid savegame index %d", i);
 
-		gi.FileRead (f, &(g_cast_memory[i]), sizeof(cast_memory_t));
+		if (gi.FileRead (f, &(g_cast_memory[i]), sizeof(cast_memory_t))
+			!= sizeof(cast_memory_t))
+			gi.error ("ReadCastMemories: truncated savegame record");
 
 		for (field=castmemoryfields ; field->name ; field++)
 		{
