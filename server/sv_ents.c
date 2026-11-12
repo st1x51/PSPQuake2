@@ -122,7 +122,7 @@ SV_EmitPacketEntities
 Writes a delta update of an entity_state_t list to the message.
 =============
 */
-void SV_EmitPacketEntities (client_frame_t *from, client_frame_t *to, sizebuf_t *msg)
+void SV_EmitPacketEntities (client_frame_t *from, client_frame_t *to, sizebuf_t *msg, client_t *client)
 {
 	entity_state_t	*oldent, *newent;
 	int		oldindex, newindex;
@@ -170,7 +170,7 @@ void SV_EmitPacketEntities (client_frame_t *from, client_frame_t *to, sizebuf_t 
 			// and prevents warping
 #ifdef KINGPIN_ENGINE
 			MSG_WriteDeltaEntity (oldent, newent, msg, false, false,
-				net_origin_offset->value && (sv.framenum + newnum) % 20);
+				net_origin_offset->value && (sv.framenum + newnum) % 20, client->client_version);
 #else
 			MSG_WriteDeltaEntity (oldent, newent, msg, false, newent->number <= maxclients->value);
 #endif
@@ -182,7 +182,7 @@ void SV_EmitPacketEntities (client_frame_t *from, client_frame_t *to, sizebuf_t 
 		if (newnum < oldnum)
 		{	// this is a new entity, send it from the baseline
 #ifdef KINGPIN_ENGINE
-			MSG_WriteDeltaEntity (&sv.baselines[newnum], newent, msg, true, true, false);
+			MSG_WriteDeltaEntity (&sv.baselines[newnum], newent, msg, true, true, false, client->client_version);
 #else
 			MSG_WriteDeltaEntity (&sv.baselines[newnum], newent, msg, true, true);
 #endif
@@ -468,7 +468,7 @@ void SV_WriteFrameToClient (client_t *client, sizebuf_t *msg)
 	SV_WritePlayerstateToClient (oldframe, frame, msg);
 
 	// delta encode the entities
-	SV_EmitPacketEntities (oldframe, frame, msg);
+	SV_EmitPacketEntities (oldframe, frame, msg, client);
 }
 
 
@@ -735,7 +735,7 @@ void SV_RecordDemoMessage (void)
 			(ent->s.modelindex || ent->s.num_parts || ent->s.effects
 				|| ent->s.sound || ent->s.event) && 
 			!(ent->svflags & SVF_NOCLIENT))
-			MSG_WriteDeltaEntity (&nostate, &ent->s, &buf, false, true, false);
+			MSG_WriteDeltaEntity (&nostate, &ent->s, &buf, false, true, false, 100);
 #else
 		if (ent->inuse &&
 			ent->s.number && 

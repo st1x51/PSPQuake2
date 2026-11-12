@@ -1619,6 +1619,47 @@ void SCR_ExecuteLayoutString (char *s, int hud)
 			continue;
 		}
 
+		if (!strcmp(token, "ds"))
+		{	// 1.21 indexed scoreboard row; dmstr remains the legacy text path.
+			char playername[14], numbers[64], *separator;
+			int values[3];
+
+			token = COM_Parse (&s);
+			if (strlen(token) < 3)
+				Com_Error (ERR_DROP, "ds: invalid color");
+			for (i = 0; i < 3; i++)
+				color[i] = (token[i] - '0') * 0.1f;
+			token = COM_Parse (&s);
+			index = atoi(token);
+			playername[0] = 0;
+			if (index != 999)
+			{
+				if (index < 0 || index >= MAX_CLIENTS)
+					Com_Error (ERR_DROP, "ds: client >= MAX_CLIENTS");
+				separator = strchr (cl.configstrings[CS_PLAYERSKINS + index], '\\');
+				if (separator)
+				{
+					int length = separator - cl.configstrings[CS_PLAYERSKINS + index];
+					if (length > 13) length = 13;
+					memcpy (playername, cl.configstrings[CS_PLAYERSKINS + index], length);
+					playername[length] = 0;
+				}
+				else
+					strcpy (playername, "(unknown)");
+				while (strlen(playername) < 13)
+					strcat (playername, " ");
+			}
+			for (i = 0; i < 3; i++)
+			{
+				token = COM_Parse (&s);
+				values[i] = atoi(token);
+			}
+			Com_sprintf (numbers, sizeof(numbers), "%4i %4i %5i", values[0], values[1], values[2]);
+			Com_sprintf (string, sizeof(string), "%s%s", playername, numbers);
+			DrawBigString (x, y, string, color);
+			continue;
+		}
+
 		if (!strcmp(token, "dmstr"))
 		{	// "rgb" digits 1..9 give the color in tenths, then the text
 			token = COM_Parse (&s);

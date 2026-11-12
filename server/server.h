@@ -109,6 +109,9 @@ typedef struct client_s
 
 	int				message_size[RATE_MESSAGES];	// used to rate drop packets
 	int				rate;
+#ifdef KINGPIN_ENGINE
+	int client_version;			// userinfo ver; missing/old values mean 100
+#endif
 	int				surpressCount;		// number of messages rate supressed
 
 	edict_t			*edict;				// EDICT_NUM(clientnum+1)
@@ -125,6 +128,9 @@ typedef struct client_s
 	byte			*download;			// file being downloaded
 	int				downloadsize;		// total bytes (can't use EOF because of paks)
 	int				downloadcount;		// bytes sent
+#ifdef KINGPIN_ENGINE
+	int download_id;
+#endif
 
 	int				lastmessage;		// sv.framenum when packet was last received
 	int				lastconnect;

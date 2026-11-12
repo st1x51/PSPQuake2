@@ -733,6 +733,43 @@ void SV_Kick_f (void)
 }
 
 
+#ifdef KINGPIN_ENGINE
+// Kingpin 1.21: kick, then queue the game module's persistent IP ban.
+void SV_Kickban_f (void)
+{
+	char ip[MAX_INFO_STRING];
+	char *value;
+
+	if (!svs.initialized)
+	{
+		Com_Printf ("No server running.\n");
+		return;
+	}
+	if (Cmd_Argc() != 2)
+	{
+		Com_Printf ("Usage: kickban <userid>\n");
+		return;
+	}
+	if (!SV_SetPlayer ())
+		return;
+	value = Info_ValueForKey (sv_client->userinfo, "ip");
+	if (!value || !value[0])
+	{
+		Com_Printf ("Unknown ip for %s, kicking instead\n", sv_client->name);
+		SV_Kick_f ();
+		return;
+	}
+	// Keep the address across the game module's disconnect callback.
+	Com_sprintf (ip, sizeof(ip), "%s", value);
+	SV_BroadcastPrintf (PRINT_HIGH, "%s was kicked, and banned from returning\n", sv_client->name);
+	SV_ClientPrintf (sv_client, PRINT_HIGH, "You were kicked from the game\n");
+	SV_DropClient (sv_client);
+	Cbuf_AddText (va("sv addip %s\n", ip));
+	Cbuf_AddText ("sv writeip\n");
+	sv_client->lastmessage = svs.realtime;
+}
+#endif
+
 /*
 ================
 SV_Status_f
@@ -751,8 +788,13 @@ void SV_Status_f (void)
 	}
 	Com_Printf ("map              : %s\n", sv.name);
 
+#ifdef KINGPIN_ENGINE
+	Com_Printf ("num score ping name            lastmsg address               qport ver \n");
+	Com_Printf ("--- ----- ---- --------------- ------- --------------------- ----- ----\n");
+#else
 	Com_Printf ("num score ping name            lastmsg address               qport \n");
 	Com_Printf ("--- ----- ---- --------------- ------- --------------------- ------\n");
+#endif
 	for (i=0,cl=svs.clients ; i<maxclients->value; i++,cl++)
 	{
 		if (!cl->state)
@@ -784,6 +826,9 @@ void SV_Status_f (void)
 			Com_Printf (" ");
 
 		Com_Printf ("%5i", cl->netchan.qport);
+#ifdef KINGPIN_ENGINE
+		Com_Printf (" %1.2f", cl->client_version * 0.01);
+#endif
 
 		Com_Printf ("\n");
 	}
@@ -1028,6 +1073,9 @@ void SV_InitOperatorCommands (void)
 {
 	Cmd_AddCommand ("heartbeat", SV_Heartbeat_f);
 	Cmd_AddCommand ("kick", SV_Kick_f);
+#ifdef KINGPIN_ENGINE
+	Cmd_AddCommand ("kickban", SV_Kickban_f);
+#endif
 	Cmd_AddCommand ("status", SV_Status_f);
 	Cmd_AddCommand ("serverinfo", SV_Serverinfo_f);
 	Cmd_AddCommand ("dumpuser", SV_DumpUser_f);

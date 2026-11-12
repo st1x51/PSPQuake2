@@ -582,9 +582,13 @@ void SV_SendClientMessages (void)
 		}
 		else
 		{
-	// just update reliable	if needed
-			if (c->netchan.message.cursize	|| curtime - c->netchan.last_sent > 1000 )
-				Netchan_Transmit (&c->netchan, 0, NULL);
+			// 1.21 @004464de also flushes queued datagrams before spawning.
+			if (c->datagram.cursize || c->netchan.message.cursize
+				|| curtime - c->netchan.last_sent > 1000)
+			{
+				Netchan_Transmit (&c->netchan, c->datagram.cursize, c->datagram.data);
+				SZ_Clear (&c->datagram);
+			}
 		}
 	}
 }

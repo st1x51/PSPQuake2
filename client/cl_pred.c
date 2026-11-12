@@ -97,6 +97,10 @@ void CL_ClipMoveToEntities ( vec3_t start, vec3_t mins, vec3_t maxs, vec3_t end,
 			cmodel = cl.model_clip[ent->modelindex];
 			if (!cmodel)
 				continue;
+#ifdef KINGPIN_ENGINE
+			if (!CM_IsCurrentInlineModel (cmodel))
+				continue;
+#endif
 			headnode = cmodel->headnode;
 			angles = ent->angles;
 		}
@@ -205,6 +209,10 @@ int		CL_PMpointcontents (vec3_t point)
 		cmodel = cl.model_clip[ent->modelindex];
 		if (!cmodel)
 			continue;
+#ifdef KINGPIN_ENGINE
+		if (!CM_IsCurrentInlineModel (cmodel))
+			continue;
+#endif
 
 		contents |= CM_TransformedPointContents (point, cmodel->headnode, ent->origin, ent->angles);
 	}

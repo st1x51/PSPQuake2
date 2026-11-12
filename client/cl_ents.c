@@ -262,6 +262,8 @@ void CL_ParseDelta (entity_state_t *from, entity_state_t *to, int number, int bi
 		to->num_parts = MSG_ReadByte (&net_message);
 	if (bits & U_MODEL_PARTS)
 		MSG_ReadDeltaModelParts (&net_message, to->model_parts);
+	if (bits & U_PLAYER_GUN)
+		to->model_parts[PLAYER_GUN_PART].modelindex = MSG_ReadByte (&net_message);
 
 	if (bits & U_FRAME8)
 		to->frame = MSG_ReadByte (&net_message);
@@ -1251,7 +1253,7 @@ void CL_AddPacketEntities (frame_t *frame)
 			ent.frame = 2 + (autoanim & 1);
 		else if (effects & EF_ANIM_ALL)
 			ent.frame = autoanim;
-		else if (effects & EF_ANIM_ALLFAST)
+		else if (effects & (EF_ANIM_ALLFAST | EF_ANIM_ALLFAST_NEW))
 			ent.frame = cl.time / 100;
 		else
 			ent.frame = s1->frame;
@@ -1269,9 +1271,6 @@ void CL_AddPacketEntities (frame_t *frame)
 			effects |= EF_COLOR_SHELL;
 			renderfx |= RF_SHELL_BLUE;
 		}
-
-		if (effects & EF_REFL)
-			renderfx |= RF_REFL_MAP;
 
 		ent.oldframe = cent->prev.frame;
 		ent.backlerp = 1.0 - cl.lerpfrac;
@@ -1443,7 +1442,7 @@ void CL_AddPacketEntities (frame_t *frame)
 				ent.oldframe = 0;
 
 				AngleVectors (s1->angles, forward, right, up);
-				VectorScale (forward, -22, bagofs);
+				VectorScale (forward, -18, bagofs);
 				VectorMA (bagofs, 14, up, bagofs);
 				VectorMA (bagofs, -4, right, bagofs);
 

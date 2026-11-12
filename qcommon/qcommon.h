@@ -126,7 +126,7 @@ void MSG_WriteAngle (sizebuf_t *sb, float f);
 void MSG_WriteAngle16 (sizebuf_t *sb, float f);
 void MSG_WriteDeltaUsercmd (sizebuf_t *sb, struct usercmd_s *from, struct usercmd_s *cmd);
 #ifdef KINGPIN_ENGINE
-void MSG_WriteDeltaEntity (struct entity_state_s *from, struct entity_state_s *to, sizebuf_t *msg, qboolean force, qboolean newentity, qboolean originoffset);
+void MSG_WriteDeltaEntity (struct entity_state_s *from, struct entity_state_s *to, sizebuf_t *msg, qboolean force, qboolean newentity, qboolean originoffset, int client_version);
 void MSG_WriteDeltaModelParts (struct model_part_s *from, struct model_part_s *to, sizebuf_t *msg);
 #else
 void MSG_WriteDeltaEntity (struct entity_state_s *from, struct entity_state_s *to, sizebuf_t *msg, qboolean force, qboolean newentity);
@@ -267,7 +267,8 @@ enum svc_ops_e
 	svc_packetentities,			// [...]
 	svc_deltapacketentities,	// [...]
 	svc_frame,
-	svc_configstring_pointer	// [long] address of the listen server's configstrings
+	svc_configstring_pointer,	// [long] address of the listen server's configstrings
+	svc_download2			// 1.21: short length, long total/id/chunk, payload
 };
 #else
 enum svc_ops_e
@@ -414,6 +415,8 @@ enum clc_ops_e
 #define	U_RENDERFX16 (1<<18)	// 8 + 16 = 32
 #define	U_EFFECTS16	(1<<19)		// 8 + 16 = 32
 #define	U_SOUND16	(1<<20)		// sound is a short (MAX_SOUNDS > 256)
+#define U_PLAYER_GUN (1<<21)		// 1.21: player PART_GUN modelindex byte
+#define PLAYER_GUN_PART 3		// protocol slot, also PART_GUN in the game module
 #define	U_MOREBITS3	(1<<23)		// read one additional byte
 
 // fourth byte
@@ -424,7 +427,7 @@ enum clc_ops_e
 #define	U_NUM_PARTS	(1<<28)		// byte
 #define	U_MODEL_PARTS (1<<29)	// changed model_parts, see MSG_WriteDeltaEntity
 #define	U_LIGHTING	(1<<30)		// long: up to three 10 bit light indexes
-#define	U_SCALE		(1<<31)		// byte: (scale + 1) * 127
+#define	U_SCALE		(1u<<31)		// byte: (scale + 1) * 127
 
 // entity origins may be sent as U_ORIGIN_OFFSET bytes when closer than this
 #define	ORIGIN_OFFSET_RANGE	32
@@ -775,6 +778,7 @@ int			CM_NumTexInfo (void);
 mapsurface_t	*CM_MapSurfaces (void);
 int			CM_NumClusters (void);
 int			CM_NumInlineModels (void);
+qboolean	CM_IsCurrentInlineModel (const cmodel_t *model);
 char		*CM_EntityString (void);
 
 // creates a clipping hull for an arbitrary box

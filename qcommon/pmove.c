@@ -1236,7 +1236,10 @@ void PM_CheckJump (void)
 		{
 			pml.velocity[2] += 500 * pml.frametime;
 			if (pml.velocity[2] > 300)
+			{
 				pml.velocity[2] = 300;
+				return;
+			}
 			if (pml.velocity[2] > 0)
 				pm->groundentity = NULL;
 		}

@@ -66,19 +66,43 @@ int SV_FindIndex (char *name, int start, int max, qboolean create)
 }
 
 
+#ifdef KINGPIN_ENGINE
+// 1.21 @00442a39/00442a72/00442aae registers lowercase resource names.
+static int SV_FindLowercaseIndex (char *name, int start, int max)
+{
+	char lower[MAX_QPATH];
+
+	Com_sprintf (lower, sizeof(lower), "%s", name ? name : "");
+	kp_strlwr (lower);
+	return SV_FindIndex (lower, start, max, true);
+}
+#endif
+
 int SV_ModelIndex (char *name)
 {
+#ifdef KINGPIN_ENGINE
+	return SV_FindLowercaseIndex (name, CS_MODELS, MAX_MODELS);
+#else
 	return SV_FindIndex (name, CS_MODELS, MAX_MODELS, true);
+#endif
 }
 
 int SV_SoundIndex (char *name)
 {
+#ifdef KINGPIN_ENGINE
+	return SV_FindLowercaseIndex (name, CS_SOUNDS, MAX_SOUNDS);
+#else
 	return SV_FindIndex (name, CS_SOUNDS, MAX_SOUNDS, true);
+#endif
 }
 
 int SV_ImageIndex (char *name)
 {
+#ifdef KINGPIN_ENGINE
+	return SV_FindLowercaseIndex (name, CS_IMAGES, MAX_IMAGES);
+#else
 	return SV_FindIndex (name, CS_IMAGES, MAX_IMAGES, true);
+#endif
 }
 
 #ifdef KINGPIN_ENGINE
@@ -96,6 +120,12 @@ int SV_SkinIndex (int modelindex, char *name)
 {
 	int		len, total, ofs;
 	char	*skins;
+	char	lower[MAX_QPATH];
+
+	// 1.21 @00442aea normalizes skins too; keep the caller's string intact.
+	Com_sprintf (lower, sizeof(lower), "%s", name);
+	kp_strlwr (lower);
+	name = lower;
 
 	skins = sv.configstrings[CS_MODELSKINS + modelindex];
 	len = strlen (name);
@@ -143,11 +173,8 @@ void SV_CreateBaseline (void)
 		svent = EDICT_NUM(entnum);
 		if (!svent->inuse)
 			continue;
-		if (!svent->s.modelindex
-#ifdef KINGPIN_ENGINE
-			&& !svent->s.num_parts
-#endif
-			&& !svent->s.sound && !svent->s.effects)
+		// 1.21 @00442c66: parts alone do not select an entity for a baseline.
+		if (!svent->s.modelindex && !svent->s.sound && !svent->s.effects)
 			continue;
 		svent->s.number = entnum;
 
@@ -227,11 +254,13 @@ void SV_SpawnServer (char *server, char *spawnpoint, server_state_t serverstate,
 	if (sv.demofile)
 		FS_FClose (sv.demofile);
 
+#ifndef KINGPIN_ENGINE
 	// clear collision map data
 	CM_ClearMap();
 
 	// clear hunk
 	Com_HunkClear ();
+#endif
 
 	svs.spawncount++;		// any partially connected client will be
 							// restarted
@@ -246,6 +275,9 @@ void SV_SpawnServer (char *server, char *spawnpoint, server_state_t serverstate,
 
 	// save name for levels that don't set message
 	strcpy (sv.configstrings[CS_NAME], server);
+#ifdef KINGPIN_ENGINE
+	strcpy (sv.configstrings[CS_SERVER_VERSION], "121");
+#endif
 #ifndef KINGPIN_ENGINE
 	if (Cvar_VariableValue ("deathmatch"))
 	{
@@ -331,7 +363,9 @@ void SV_SpawnServer (char *server, char *spawnpoint, server_state_t serverstate,
 	// set serverinfo variable
 	Cvar_FullSet ("mapname", sv.name, CVAR_SERVERINFO | CVAR_NOSET);
 
+#ifndef KINGPIN_ENGINE
 	Com_HunkSetMark ();
+#endif
 
 	Com_Printf ("-------------------------------------\n");
 }

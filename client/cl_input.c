@@ -655,6 +655,10 @@ void CL_SendCmd (void)
 
 	if ( cls.state == ca_connected)
 	{
+#ifdef KINGPIN_ENGINE
+		if (CL_SendDownload2 ())
+			return;
+#endif
 		if (cls.netchan.message.cursize	|| curtime - cls.netchan.last_sent > 1000 )
 			Netchan_Transmit (&cls.netchan, 0, buf.data);	
 		return;

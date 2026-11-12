@@ -348,6 +348,7 @@ void CL_ParseMuzzleFlash (void)
 		CL_LogoutEffect (player->current.origin, weapon);
 		break;
 	case MZ_SSHOTGUN:
+		VectorSet (dl->color, 1.0f, 1.0f, 0.0f);
 		sound = "weapons/shotgun/sshotf1b.wav";
 		break;
 	case MZ_HYPERBLASTER:
@@ -404,7 +405,6 @@ CL_ParseMuzzleFlash2
 void CL_ParseMuzzleFlash2 (void)
 {
 	int ent, flash;
-	vec3_t forward, right;
 	cdlight_t *dl;
 	centity_t *cent;
 
@@ -412,21 +412,20 @@ void CL_ParseMuzzleFlash2 (void)
 	if (ent < 1 || ent >= MAX_EDICTS)
 		Com_Error (ERR_DROP, "CL_ParseMuzzleFlash2: bad entity");
 	flash = MSG_ReadByte (&net_message);
-	if (flash < 0 || flash >= monster_flash_offset_count)
+	// 1.21 consumes this byte without indexing the Quake II offset table.
+	if (flash < 0)
 		Com_Error (ERR_DROP, "CL_ParseMuzzleFlash2: bad flash");
 	cent = &cl_entities[ent];
-	AngleVectors (cent->current.angles, forward, right, NULL);
 	dl = CL_AllocDlight (ent);
-	VectorMA (cent->current.origin, monster_flash_offset[flash][0], forward, dl->origin);
-	VectorMA (dl->origin, monster_flash_offset[flash][1], right, dl->origin);
-	dl->origin[2] += monster_flash_offset[flash][2];
+	// Kingpin 1.21 @00407e80 reads flash but lights the entity origin.
+	VectorCopy (cent->current.origin, dl->origin);
 	dl->radius = 200 + (rand() & 31);
 	dl->minlight = 32;
 	dl->die = cl.time;
 	dl->color[0] = 1.0f - (float)rand() * (0.1f / RAND_MAX);
 	dl->color[1] = 0.4f + (float)rand() * (0.2f / RAND_MAX);
 	dl->color[2] = 0;
-	// Kingpin @00407ea0 does not play a sound or spawn smoke here.
+	// Kingpin 1.21 does not play a sound or spawn smoke here.
 }
 
 /*
@@ -813,7 +812,7 @@ void CL_BloodEffect (vec3_t org, vec3_t dir, int type, int count)
 			size = rand()%15;
 			vel[0] = rand()%150 - 75;
 			vel[1] = rand()%150 - 75;
-			vel[2] = rand()%(count*5) + 100;
+			vel[2] = rand()%150 - 50; // Kingpin 1.21: independent of sprite count
 			if (vel[2] > 100)
 				vel[2] = 100;
 			VectorScale (vel, 0.5, vel);
@@ -2760,12 +2759,13 @@ static void CL_AddFlameJunction (flamejunc_t **head, vec3_t origin,
 	}
 	else
 	{
-		scale = fraction * 0.7f + 0.3f;
+		/* Retail resets the sizing fraction to 1; the trace only gates spawning. */
+		scale = 1;
 		node->start_width = node->start_height =
-			(fraction + 1) * 0.5f * 16 * (random_scale + 1) * 0.5f;
+			16 * (random_scale + 1) * 0.5f;
 		node->end_width = scale * 300 * random_scale;
 		node->end_height = scale * 223 * random_scale;
-		node->lifetime = (fraction + 1) * 0.5f * 0.8f;
+		node->lifetime = 0.8f;
 		node->fadein_time = 0.1166667f;
 	}
 	node->start_alpha = 1.5f;
@@ -2855,13 +2855,13 @@ static void CL_FlameImpactLight (trace_t *tr)
 		 cl_playerflame_surflight_time <= cl.time))
 		return;
 	VectorMA (tr->endpos, 8, tr->plane.normal, origin);
-	intensity = strstr (tr->surface->name, "wood") ? -0.05f : -0.2f;
+	intensity = strstr (tr->surface->name, "wood") ? -0.2f : -0.05f;
 	V_AddSurfLight (origin, 48, intensity, 1, 1, 1);
 	cl_playerflame_surflight_time = cl.time;
 }
 
 static void CL_MoveFlameJunction (flamejunc_t *node, float amount,
-	qboolean initial, qboolean player)
+	qboolean initial)
 {
 	vec3_t oldorg, end, step;
 	trace_t tr;
@@ -2895,19 +2895,13 @@ static void CL_MoveFlameJunction (flamejunc_t *node, float amount,
 				break;
 		}
 		if (walked >= remaining || tr.fraction >= 1)
-		{
-			if (player)
-				CL_FlameImpactLight (&tr);
 			return;
-		}
 	}
-	if (player)
-		CL_FlameImpactLight (&tr);
 	CL_ClipFlameVelocity (node, &tr);
 }
 
 static void CL_UpdateFlameJunctions (flamejunc_t **head, float dt,
-	qboolean player)
+	qboolean player, trace_t *aim_trace)
 {
 	flamejunc_t *node, *next, *dead, *deadnext;
 	float phase, decay;
@@ -2921,14 +2915,18 @@ static void CL_UpdateFlameJunctions (flamejunc_t **head, float dt,
 		{
 			node->aged = node->fadein_time;
 			CL_MoveFlameJunction (node,
-				node->fadein_time * (player ? 1.0f : 0.5f), true, player);
+				node->fadein_time * (player ? 1.0f : 0.5f), true);
 			node->alpha = 0;
 		}
 		else if (node->alpha != 0)
 		{
 			node->aged += dt;
-			CL_MoveFlameJunction (node, dt, false, player);
+			CL_MoveFlameJunction (node, dt, false);
 		}
+
+		/* Retail uses the original 720-unit aim trace, even without a node hit. */
+		if (player && aim_trace)
+			CL_FlameImpactLight (aim_trace);
 
 		if (node->aged < node->lifetime)
 			node->alpha = (node->aged / node->lifetime) *
@@ -3004,7 +3002,9 @@ static void CL_DrawFlameJunctions (flamejunc_t *head, qboolean player,
 		facing = DotProduct (viewdir, delta);
 		if (facing < 0)
 			facing = -facing;
-		step = (facing*facing*facing*0.7f + 0.3f) * node->width * 1.2f;
+		width = node->width + (node->aged / node->lifetime) *
+			(older->width - node->width);
+		step = (facing*facing*facing*0.7f + 0.3f) * width * 1.2f;
 		if (!player)
 			step *= 0.5f;
 		else if (node->width < 64)
@@ -3127,7 +3127,7 @@ void CL_FlameEffects (entity_t *ent, entity_state_t *s1, int player)
 	}
 	else if (*head)
 		*broken = 1;
-	CL_UpdateFlameJunctions (head, dt, player != 0);
+	CL_UpdateFlameJunctions (head, dt, player != 0, &tr);
 	s1->flamejunc_head = *head;
 	CL_DrawFlameJunctions (*head, player != 0, forward);
 }
@@ -3172,7 +3172,7 @@ void CL_FlameShooter (entity_t *ent, entity_state_t *s1, vec3_t origin)
 	}
 	else if (*head)
 		s1->broken_flag = 1;
-	CL_UpdateFlameJunctions (head, dt, false);
+	CL_UpdateFlameJunctions (head, dt, false, NULL);
 	s1->flamejunc_head2 = *head;
 	CL_DrawFlameJunctions (*head, false, forward);
 }

@@ -97,6 +97,7 @@ cvar_t	*name;
 cvar_t	*skin;
 #ifdef KINGPIN_ENGINE
 cvar_t	*extras;
+cvar_t *cl_oldchat;
 #endif
 cvar_t	*rate;
 cvar_t	*fov;
@@ -288,7 +289,7 @@ void CL_Record_f (void)
 
 		MSG_WriteByte (&buf, svc_spawnbaseline);
 #ifdef KINGPIN_ENGINE
-		MSG_WriteDeltaEntity (&nullstate, &cl_entities[i].baseline, &buf, true, true, false);
+		MSG_WriteDeltaEntity (&nullstate, &cl_entities[i].baseline, &buf, true, true, false, 100);
 #else
 		MSG_WriteDeltaEntity (&nullstate, &cl_entities[i].baseline, &buf, true, true);
 #endif
@@ -637,6 +638,12 @@ void CL_ClearState (void)
 	if (re.ClearRegistered)
 		re.ClearRegistered ();
 
+#ifdef KINGPIN_ENGINE
+	/* Collision data belongs to CM, not to the renderer's level hunk. */
+	if (!Com_ServerState ())
+		CM_ClearMap ();
+	Com_HunkClear ();
+#else
 	if (!Com_ServerState ())
 	{
 		// clear collision map data
@@ -650,6 +657,7 @@ void CL_ClearState (void)
 		// clear hunk to server mark
 		Com_HunkClearToMark ();
 	}
+#endif
 
 // wipe the entire cl structure
 	memset (&cl, 0, sizeof(cl));
@@ -711,6 +719,9 @@ void CL_Disconnect (void)
 	CL_ClearState ();
 
 	// stop download
+#ifdef KINGPIN_ENGINE
+	CL_CancelDownload2 ();
+#endif
 	if (cls.download) {
 		FS_FClose (cls.download);
 		cls.download = NULL;
@@ -1181,7 +1192,11 @@ int precache_model_skin;
 
 byte *precache_model; // used for skin checking in alias models
 
+#ifdef KINGPIN_ENGINE
+#define PLAYER_MULT 14
+#else
 #define PLAYER_MULT 5
+#endif
 
 // ENV_CNT is map load, ENV_CNT+1 is first env map
 #define ENV_CNT (CS_PLAYERSKINS + MAX_CLIENTS * PLAYER_MULT)
@@ -1196,10 +1211,8 @@ void CL_RequestNextDownload (void)
 	char fn[MAX_OSPATH];
 
 	/*
-	 * kingpin.exe @0040e180.  Unlike Quake II, Kingpin configstrings
-	 * already contain complete model, sound and image paths.  MDX skins
-	 * are sent separately in CS_MODELSKINS and player resources are not
-	 * expanded into the old tris.md2/weapon.pcx download sequence.
+	 * Kingpin 1.21 @0040e130: configstrings contain complete paths.
+	 * Player resources use a separate fourteen-step resumable sequence.
 	 */
 	if (precache_check == CS_MODELS)
 	{
@@ -1244,15 +1257,57 @@ void CL_RequestNextDownload (void)
 				return;
 		}
 
-		/* A terminating empty image configstring enters the map stage. */
-		if (precache_check < CS_MODELSKINS)
-			goto kingpin_map;
+		precache_check = CS_PLAYERSKINS;
 	}
 
-	/* Preserve the retail resume range inherited from PLAYER_MULT. */
-	if (precache_check >= CS_PLAYERSKINS && precache_check <= ENV_CNT)
+	if (precache_check >= CS_PLAYERSKINS && precache_check < ENV_CNT)
 	{
-kingpin_map:
+		static const char *models[11] = {
+			"head.mdx", "legs.mdx", "body.mdx", "w_bazooka.mdx",
+			"w_flamethrower.mdx", "w_grenade launcher.mdx",
+			"w_heavy machinegun.mdx", "w_pipe.mdx", "w_pistol.mdx",
+			"w_shotgun.mdx", "w_tommygun.mdx"
+		};
+		while (precache_check < ENV_CNT)
+		{
+			char description[MAX_QPATH], modeldir[64], skins[12];
+			char head[64], body[64], legs[64], *model, *skin;
+			int player = (precache_check - CS_PLAYERSKINS) / PLAYER_MULT;
+			int step = (precache_check - CS_PLAYERSKINS) % PLAYER_MULT;
+
+			Com_sprintf (description, sizeof(description), "%s", cl.configstrings[CS_PLAYERSKINS + player]);
+			model = strchr (description, '\\');
+			model = model ? model + 1 : description;
+			skin = strpbrk (model, "/\\");
+			if (!skin || skin == model || strlen(skin + 1) < 11)
+			{
+				precache_check = CS_PLAYERSKINS + (player + 1) * PLAYER_MULT;
+				continue;
+			}
+			*skin++ = 0;
+			Com_sprintf (modeldir, sizeof(modeldir), "players/%s/", model);
+			memcpy (skins, skin, 11);
+			skins[11] = 0;
+			if (step < 11)
+				Com_sprintf (fn, sizeof(fn), "%s%s", modeldir, models[step]);
+			else
+			{
+				CL_GetPlayerSkinFolders (modeldir, head, body, legs);
+				if (step == 11)
+					Com_sprintf (fn, sizeof(fn), "%shead_%.3s.tga", head, skins);
+				else if (step == 12)
+					Com_sprintf (fn, sizeof(fn), "%sbody_%.3s.tga", body, skins + 4);
+				else
+					Com_sprintf (fn, sizeof(fn), "%slegs_%.3s.tga", legs, skins + 8);
+			}
+			precache_check++;
+			if (!CL_CheckOrDownloadFile (fn))
+				return;
+		}
+	}
+
+	if (precache_check == ENV_CNT)
+	{
 		precache_check = ENV_CNT + 1;
 		precache_tex = 0;
 		CM_LoadMap (cl.configstrings[CS_MODELS + 1], true, &map_checksum);
@@ -1612,8 +1667,8 @@ both subsystems use the resulting read-only cvar for their retail defaults.
 */
 static void CL_CheckSystemMemory (void)
 {
-#if 0 //def __psp__
-	int memory_mb = 24;
+#ifdef __psp__
+	int memory_mb = 64;
 #else
 	int memory_mb = 128;
 #endif
@@ -1635,7 +1690,11 @@ static void CL_CheckSystemMemory (void)
 	Cvar_Get ("cl_physical_memory", "0", CVAR_NOSET);
 	Cvar_ForceSet ("cl_physical_memory", value);
 
+#ifdef __psp__
+	if (memory_mb >= 64)
+#else
 	if (memory_mb >= 128)
+#endif
 		Cvar_Get ("gl_maxtexsize", "256", CVAR_ARCHIVE);
 	else
 	{
@@ -1722,6 +1781,17 @@ static void CL_CheckParentalPassword (void)
 CL_InitLocal
 =================
 */
+#ifdef KINGPIN_ENGINE
+static void CL_Time_f (void)
+{
+	time_t now = time(NULL);
+	struct tm *local = localtime(&now);
+	char text[16];
+	if (local && strftime(text, sizeof(text), "%H:%M:%S", local))
+		Com_Printf ("The current time is: %s\n", text);
+}
+#endif
+
 void CL_InitLocal (void)
 {
 	cls.state = ca_disconnected;
@@ -1825,11 +1895,14 @@ void CL_InitLocal (void)
 	info_spectator = Cvar_Get ("spectator", "0", CVAR_USERINFO);
 #endif
 	name = Cvar_Get ("name", "unnamed", CVAR_USERINFO | CVAR_ARCHIVE);
-	skin = Cvar_Get ("skin", "male/grunt", CVAR_USERINFO | CVAR_ARCHIVE);
 #ifdef KINGPIN_ENGINE
+	skin = Cvar_Get ("skin", "male_thug/001 001 001", CVAR_USERINFO | CVAR_ARCHIVE);
+	cl_oldchat = Cvar_Get ("cl_oldchat", "0", CVAR_ARCHIVE);
+	Cvar_FullSet ("ver", "121", CVAR_USERINFO);
 	extras = Cvar_Get ("extras", "0", CVAR_USERINFO | CVAR_ARCHIVE);
 	rate = Cvar_Get ("rate", "4000", CVAR_USERINFO | CVAR_ARCHIVE);
 #else
+	skin = Cvar_Get ("skin", "male/grunt", CVAR_USERINFO | CVAR_ARCHIVE);
 	rate = Cvar_Get ("rate", "25000", CVAR_USERINFO | CVAR_ARCHIVE);	// FIXME
 #endif
 	msg = Cvar_Get ("msg", "1", CVAR_USERINFO | CVAR_ARCHIVE);
@@ -1875,6 +1948,9 @@ void CL_InitLocal (void)
 	Cmd_AddCommand ("precache", CL_Precache_f);
 
 	Cmd_AddCommand ("download", CL_Download_f);
+#ifdef KINGPIN_ENGINE
+	Cmd_AddCommand ("time", CL_Time_f);
+#endif
 
 	//
 	// forward to server commands
@@ -2056,6 +2132,7 @@ void CL_Frame (int msec)
 {
 	static int	extratime;
 	static int  lasttimecalled;
+	int connect_interval = 100;
 
 	if (dedicated->value)
 		return;
@@ -2064,10 +2141,19 @@ void CL_Frame (int msec)
 
 	if (!cl_timedemo->value)
 	{
-		if (cls.state == ca_connected && extratime < 100)
-			return;			// don't flood packets out while connecting
+#ifdef KINGPIN_ENGINE
+		if (cls.download2 && rate->value > 0)
+			connect_interval = (int)(1000 / (rate->value * 0.005));
+#endif
+		if (cls.state == ca_connected && extratime < connect_interval)
+			return;		// don't flood packets out while connecting
 		if (extratime < 1000/cl_maxfps->value)
 			return;			// framerate is too high
+#ifdef KINGPIN_ENGINE
+		if (!Com_ServerState() && rate->value > 0 && rate->value < 15000 &&
+			extratime < (int)(1000 / (20 + rate->value * 0.004)))
+			return;
+#endif
 	}
 
 	// let the mouse activate or deactivate

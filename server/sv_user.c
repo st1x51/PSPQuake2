@@ -219,15 +219,13 @@ void SV_Baselines_f (void)
 		&& start < MAX_EDICTS)
 	{
 		base = &sv.baselines[start];
-		if (base->modelindex
-#ifdef KINGPIN_ENGINE
-			|| base->num_parts
-#endif
-			|| base->sound || base->effects)
+		// 1.21 @004469be uses modelindex, sound and effects here as well.
+		if (base->modelindex || base->sound || base->effects)
 		{
 			MSG_WriteByte (&sv_client->netchan.message, svc_spawnbaseline);
 #ifdef KINGPIN_ENGINE
-			MSG_WriteDeltaEntity (&nullstate, base, &sv_client->netchan.message, true, true, false);
+			// 1.21 @004469be always sends complete baselines, even to new clients.
+			MSG_WriteDeltaEntity (&nullstate, base, &sv_client->netchan.message, true, true, false, 100);
 #else
 			MSG_WriteDeltaEntity (&nullstate, base, &sv_client->netchan.message, true, true);
 #endif
@@ -340,11 +338,13 @@ void SV_BeginDownload_f(void)
 
 	// hacked by zoid to allow more conrol over download
 	// first off, no .. or global allow check
-	if (strstr (name, "..") || !allow_download->value
+	if (!*name || strstr (name, "..") || !allow_download->value
 		// leading dot is no good
 		|| *name == '.' 
 		// leading slash bad as well, must be in subdir
 		|| *name == '/'
+		// 1.21 @004472ad rejects directory requests before opening a file.
+		|| name[strlen(name)-1] == '/'
 		// next up, skin check
 		|| (strncmp(name, "players/", 6) == 0 && !allow_download_players->value)
 		// now models
@@ -490,6 +490,90 @@ typedef struct
 	void	(*func) (void);
 } ucmd_t;
 
+#ifdef KINGPIN_ENGINE
+// Kingpin 1.21 @00446bf1: first block reliable, nextdl2 replies immediate.
+static void SV_SendDownload2 (int chunk, qboolean reliable)
+{
+	byte data[1040];
+	sizebuf_t packet, *msg;
+	int offset, size;
+	if (!sv_client->download || chunk < 0 ||
+		chunk > (sv_client->downloadsize-1)/1024)
+		return;
+	offset = chunk * 1024;
+	size = sv_client->downloadsize - offset;
+	if (size > 1024) size = 1024;
+	SZ_Init (&packet, data, sizeof(data));
+	msg = reliable ? &sv_client->netchan.message : &packet;
+	MSG_WriteByte (msg, svc_download2);
+	MSG_WriteShort (msg, size);
+	MSG_WriteLong (msg, sv_client->downloadsize);
+	MSG_WriteLong (msg, sv_client->download_id);
+	MSG_WriteLong (msg, chunk);
+	SZ_Write (msg, sv_client->download + offset, size);
+	if (!reliable)
+		Netchan_Transmit (&sv_client->netchan, msg->cursize, msg->data);
+	// Keep data for retransmission of the last block; freed on new request/drop.
+}
+
+void SV_NextDownload2_f (void)
+{
+	if (Cmd_Argc() == 2)
+		SV_SendDownload2 (atoi(Cmd_Argv(1)), false);
+}
+
+void SV_BeginDownload2_f (void)
+{
+	char *name = Cmd_Argv(1);
+	file_t *file;
+	int start = Cmd_Argc() > 3 ? atoi(Cmd_Argv(3)) : 0;
+	extern cvar_t *allow_download, *allow_download_players;
+	extern cvar_t *allow_download_models, *allow_download_sounds, *allow_download_maps;
+	if (sv_client->download)
+	{
+		Z_Free (sv_client->download);
+		sv_client->download = NULL;
+	}
+	if (Cmd_Argc() < 3 || !*name || strstr(name, "..") ||
+		*name == '.' || *name == '/' || strchr(name, '\\') || strchr(name, ':') ||
+		name[strlen(name)-1] == '/' || !strchr(name, '/') ||
+		!allow_download->value ||
+		(!strncmp(name,"players/",8) && !allow_download_players->value) ||
+		(!strncmp(name,"models/",7) && !allow_download_models->value) ||
+		(!strncmp(name,"sound/",6) && !allow_download_sounds->value) ||
+		(!strncmp(name,"maps/",5) && !allow_download_maps->value))
+		goto refused;
+	file = FS_FOpen (name, FS_MODE_READ);
+	if (!file)
+		goto refused;
+	sv_client->downloadsize = FS_FLength(file);
+	if (sv_client->downloadsize <= 0 || sv_client->downloadsize > 0x7ffffbff ||
+		start < 0 || start > (sv_client->downloadsize-1)/1024 ||
+		(!strncmp(name,"maps/",5) && FS_FCheckFlags(file, FS_TYPE_PAK)))
+	{
+		FS_FClose (file);
+		goto refused;
+	}
+	sv_client->download = Z_Malloc (sv_client->downloadsize);
+	if (FS_FRead(file, sv_client->download, sv_client->downloadsize) != sv_client->downloadsize)
+	{
+		FS_FClose (file);
+		Z_Free (sv_client->download);
+		sv_client->download = NULL;
+		goto refused;
+	}
+	FS_FClose (file);
+	sv_client->download_id = atoi(Cmd_Argv(2));
+	sv_client->downloadcount = start * 1024;
+	SV_SendDownload2 (start, true);
+	return;
+refused:
+	MSG_WriteByte (&sv_client->netchan.message, svc_download2);
+	MSG_WriteShort (&sv_client->netchan.message, -1);
+	MSG_WriteByte (&sv_client->netchan.message, 0);
+}
+#endif
+
 ucmd_t ucmds[] =
 {
 	// auto issued
@@ -507,6 +591,10 @@ ucmd_t ucmds[] =
 
 	{"download", SV_BeginDownload_f},
 	{"nextdl", SV_NextDownload_f},
+#ifdef KINGPIN_ENGINE
+	{"download5", SV_BeginDownload2_f},
+	{"nextdl2", SV_NextDownload2_f},
+#endif
 
 	{NULL, NULL}
 };

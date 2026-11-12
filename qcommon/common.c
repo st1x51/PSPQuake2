@@ -549,7 +549,7 @@ If originoffset is set, small moves are sent as byte offsets
 from the previous origin (U_ORIGIN_OFFSET).
 ==================
 */
-void MSG_WriteDeltaEntity (entity_state_t *from, entity_state_t *to, sizebuf_t *msg, qboolean force, qboolean newentity, qboolean originoffset)
+void MSG_WriteDeltaEntity (entity_state_t *from, entity_state_t *to, sizebuf_t *msg, qboolean force, qboolean newentity, qboolean originoffset, int client_version)
 {
 	int		bits;
 	int		i, lights;
@@ -646,10 +646,21 @@ void MSG_WriteDeltaEntity (entity_state_t *from, entity_state_t *to, sizebuf_t *
 	if ( to->modelindex != from->modelindex )
 		bits |= U_MODEL;
 
-	if ( to->num_parts != from->num_parts )
-		bits |= U_NUM_PARTS;
-	if ( memcmp (to->model_parts, from->model_parts, sizeof(to->model_parts)) )
-		bits |= U_MODEL_PARTS;
+	// Kingpin 1.21 @00420dcc: newer clients reconstruct player model parts.
+	if (to->modelindex == 255 && client_version > 113)
+	{
+		if (to->model_parts[PLAYER_GUN_PART].modelindex == 255 ||
+			(from->model_parts[PLAYER_GUN_PART].modelindex == 255 &&
+			 to->model_parts[PLAYER_GUN_PART].modelindex != from->model_parts[PLAYER_GUN_PART].modelindex))
+			bits |= U_PLAYER_GUN;
+	}
+	else
+	{
+		if (to->num_parts != from->num_parts)
+			bits |= U_NUM_PARTS;
+		if (memcmp(to->model_parts, from->model_parts, sizeof(to->model_parts)))
+			bits |= U_MODEL_PARTS;
+	}
 
 	if ( to->sound != from->sound )
 	{
@@ -714,6 +725,8 @@ void MSG_WriteDeltaEntity (entity_state_t *from, entity_state_t *to, sizebuf_t *
 		MSG_WriteByte (msg,	to->num_parts);
 	if (bits & U_MODEL_PARTS)
 		MSG_WriteDeltaModelParts (from->model_parts, to->model_parts, msg);
+	if (bits & U_PLAYER_GUN)
+		MSG_WriteByte (msg, to->model_parts[PLAYER_GUN_PART].modelindex);
 
 	if (bits & U_FRAME8)
 		MSG_WriteByte (msg, to->frame);

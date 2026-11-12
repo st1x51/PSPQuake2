@@ -235,14 +235,15 @@ static qboolean V_FlareVisible (vec3_t target, vec3_t dir)
 	int passes;
 
 	VectorCopy (cl.refdef.vieworg, start);
-	for (passes=0 ; ; passes++)
+	tr = CL_PMTrace (start, vec3_origin, vec3_origin, target);
+	for (passes=0 ; tr.contents & (CONTENTS_ALPHA | CONTENTS_PLAYERCLIP | CONTENTS_LADDER) ; passes++)
 	{
-		tr = CL_PMTrace (start, vec3_origin, vec3_origin, target);
-		if (!(tr.contents & (CONTENTS_ALPHA | CONTENTS_PLAYERCLIP | CONTENTS_LADDER)))
-			break;
 		if (passes == 63)
 			return false;
 		VectorMA (tr.endpos, 6, dir, start);
+		tr = CL_PMTrace (start, vec3_origin, vec3_origin, target);
+		if (tr.contents & CONTENTS_SOLID)
+			break;
 	}
 
 	return tr.fraction >= 1 && !tr.startsolid;
@@ -256,6 +257,8 @@ static float V_SunVisibility (vec3_t target)
 	trace_t tr;
 	float x, y;
 	int hits, samples, passes;
+	static vec3_t mins = {-8, -8, -8};
+	static vec3_t maxs = {8, 8, 8};
 
 	VectorSubtract (target, cl.refdef.vieworg, dir);
 	VectorNormalize (dir);
@@ -264,7 +267,7 @@ static float V_SunVisibility (vec3_t target)
 	/* Alpha-tested fences are stepped through in 12-unit increments. */
 	for (passes=0 ; ; passes++)
 	{
-		tr = CL_PMTrace (start, vec3_origin, vec3_origin, target);
+		tr = CL_PMTrace (start, mins, maxs, target);
 		if (!(tr.contents & CONTENTS_ALPHA))
 			break;
 		if (passes == 63)
@@ -323,7 +326,8 @@ void V_AddFlares (void)
 	int j;
 
 	r_numflares = 0;
-	if (!Cvar_VariableValue ("r_lightflares"))
+	if (!Cvar_VariableValue ("r_lightflares") ||
+		Cvar_VariableValue ("r_sfx_pause") || cl_paused->value)
 		return;
 	AngleVectors (cl.refdef.viewangles, viewforward, NULL, NULL);
 
@@ -363,7 +367,13 @@ void V_AddFlares (void)
 				VectorSet (fl->color, 1, 1, 1);
 				fl->intensity = 64;
 			}
-			visible = in_pvs && V_FlareVisible (target, dir);
+			dot = DotProduct (dir, viewforward);
+			if (dot < 0.1f || !in_pvs)
+			{
+				flare->lightstyle = 1;
+				continue;
+			}
+			visible = V_FlareVisible (target, dir);
 		}
 
 		if (flare->type == FLARE_SUN)
@@ -371,6 +381,10 @@ void V_AddFlares (void)
 			vec3_t near, lens;
 			static const float sun_alpha[4] = {0.3f, 0.2f, 0.1f, 2.0f};
 			static const float sun_size[4] = {0.2f, 0.2f, 0.4f, 1.0f};
+			static const vec3_t sun_color[4] = {
+				{0.3f, 1, 0.6f}, {0.6f, 0.8f, 1},
+				{0.8f, 1, 0.5f}, {1, 1, 1}
+			};
 
 			alpha = 1.2f - dot;
 			if (alpha > 1) alpha = 1;
@@ -383,7 +397,7 @@ void V_AddFlares (void)
 			{
 				vec3_t pos, color;
 				VectorMA (near, sun_offset[j], lens, pos);
-				VectorSet (color, 1, 0.8f, 0.6f);
+				VectorCopy (sun_color[j], color);
 				re.AddSFX (sun_sprite[j], SFX_FLAG_LIGHTFLARE | SFX_FLAG_NO_FLIP,
 					pos, color, 0, 0.01f, alpha * sun_alpha[j],
 					alpha * sun_alpha[j], 0, size * sun_size[j],
@@ -412,7 +426,7 @@ void V_AddFlares (void)
 			else
 			{
 				size = (2 - dot) * 0.5f * flare->size;
-				if (distance >= 64)
+				if (distance > 64)
 					size *= distance * (1.0f/384.0f);
 			}
 
@@ -979,6 +993,10 @@ void V_RenderView( float stereo_separation )
 #endif
 
 		cl.refdef.rdflags = cl.frame.playerstate.rdflags;
+#ifdef KINGPIN_ENGINE
+		if (cl_paused->value)
+			cl.refdef.rdflags |= RDF_PAUSED;
+#endif
 
 		// sort entities for better cache locality
         qsort( cl.refdef.entities, cl.refdef.num_entities, sizeof( cl.refdef.entities[0] ), (int (*)(const void *, const void *))entitycmpfnc );
@@ -1032,6 +1050,8 @@ void V_RenderView( float stereo_separation )
 			cl.refdef.num_flares = r_numflares;
 			cl.refdef.flares = r_flares;
 			cl.refdef.rdflags = cl.frame.playerstate.rdflags;
+			if (cl_paused->value)
+				cl.refdef.rdflags |= RDF_PAUSED;
 		}
 
 		re.RenderFrame (&cl.refdef);

@@ -538,6 +538,83 @@ Con_DrawNotify
 Draws the last few lines of output transparently over the game top
 ================
 */
+#ifdef KINGPIN_ENGINE
+// 1.21 @00423e80: separate wrapped chat history, twice notify duration,
+// eight rows above a 180/640 screen-width baseline, fading during second half.
+static int Con_ChatRows (char *text, int soft, int hard)
+{
+	int x = 0, rows = 1, i;
+	for (i=0; i<con.linewidth; i++)
+	{
+		x++;
+		if (i < con.linewidth-1 && (text[i+1]&127) != ' ' &&
+			(x > hard || (x > soft && (text[i]&127) == ' ')))
+		{
+			rows++;
+			x = 1;
+		}
+	}
+	return rows;
+}
+
+static void Con_DrawChat (void)
+{
+	float scale = viddef.width / 640.0f, duration = con_notifytime->value * 1000;
+	float color[3], alpha;
+	int first = con.current, rows = 0, i, n, x, y, step, soft, hard, age;
+	char *text;
+	if (duration <= 0 || scale <= 0)
+		return;
+	soft = (int)(24 * scale); if (soft < 1) soft = 1;
+	hard = (int)(30 * scale); if (hard < soft) hard = soft;
+	step = (int)(9 * scale); if (step < 1) step = 1;
+	for (i=con.current; i>=0 && i>con.current-NUM_CON_TIMES && rows<8; i--)
+	{
+		age = cls.realtime - con.times[i % NUM_CON_TIMES];
+		text = con.text + (i % con.totallines) * con.linewidth;
+		if (con.times[i % NUM_CON_TIMES] && age <= 2 * duration && (byte)text[0] >= 128)
+		{
+			rows += Con_ChatRows (text, soft, hard);
+			first = i;
+		}
+	}
+	y = (int)(180 * scale) - rows * step;
+	for (i=first; rows && i<=con.current; i++)
+	{
+		age = cls.realtime - con.times[i % NUM_CON_TIMES];
+		text = con.text + (i % con.totallines) * con.linewidth;
+		if (!con.times[i % NUM_CON_TIMES] || age > 2*duration || (byte)text[0] < 128)
+			continue;
+		VectorSet (color, 1, 1, 1);
+		alpha = 0.5f;
+		if ((text[0]&127) == '>') {color[2] = 0.5f; alpha = 1;}
+		if (age > duration) alpha *= 2 - age / duration;
+		x = 0;
+		for (n=0; n<con.linewidth; n++)
+		{
+			x++;
+			if (n < con.linewidth-1 && (text[n+1]&127) != ' ' &&
+				(x > hard || (x > soft && (text[n]&127) == ' ')))
+			{
+				y += step;
+				x = 1;
+			}
+			if (!n && (text[n]&127) == ':') {x--; continue;}
+			if (re.DrawChatChar)
+				re.DrawChatChar (x*step, y, (byte)text[n], color, scale, alpha);
+			else if (alpha > 0)
+				re.DrawChar (x*step, y, (byte)text[n]);
+		}
+		y += step;
+	}
+	if (rows)
+	{
+		SCR_AddDirtyPoint (0, 0);
+		SCR_AddDirtyPoint (viddef.width-1, (int)(191*scale));
+	}
+}
+#endif
+
 void Con_DrawNotify (void)
 {
 	int		x, v;
@@ -548,7 +625,7 @@ void Con_DrawNotify (void)
 	int		skip;
 
 	v = 0;
-	for (i= con.current-NUM_CON_TIMES+1 ; i<=con.current ; i++)
+	for (i= con.current-3 ; i<=con.current ; i++)
 	{
 		if (i < 0)
 			continue;
@@ -559,6 +636,10 @@ void Con_DrawNotify (void)
 		if (time > con_notifytime->value*1000)
 			continue;
 		text = con.text + (i % con.totallines)*con.linewidth;
+#ifdef KINGPIN_ENGINE
+		if (!cl_oldchat->value && (byte)text[0] >= 128)
+			continue;
+#endif
 		
 		for (x = 0 ; x < con.linewidth ; x++)
 			re.DrawChar ( (x+1)<<3, v, text[x]);
@@ -567,8 +648,38 @@ void Con_DrawNotify (void)
 	}
 
 
+#ifdef KINGPIN_ENGINE
+	if (!cl_oldchat->value)
+		Con_DrawChat ();
+#endif
 	if (cls.key_dest == key_message)
 	{
+#ifdef KINGPIN_ENGINE
+		float color[3] = {1, 1, 1};
+		char *prompt = chat_team ? "say_team:" : "say:";
+		int visible;
+		skip = chat_team ? 9 : 5;
+		for (x=0; prompt[x]; x++)
+		{
+			if (re.DrawChatChar)
+				re.DrawChatChar (8+x*12, v, prompt[x], color, 1, 1);
+			else
+				re.DrawChar (8+x*12, v, prompt[x]);
+		}
+		visible = viddef.width/12 - skip - 1;
+		if (visible < 0) visible = 0;
+		s = chat_buffer;
+		if (chat_bufferlen > visible) s += chat_bufferlen-visible;
+		for (x=0; s[x]; x++)
+		{
+			if (re.DrawChatChar)
+				re.DrawChatChar ((x+skip)*12, v, (byte)s[x], color, 1, 1);
+			else
+				re.DrawChar ((x+skip)*12, v, (byte)s[x]);
+		}
+		re.DrawChar ((x+skip)*12, v, 10+((cls.realtime>>8)&1));
+		v += 18;
+#else
 		if (chat_team)
 		{
 			DrawString (8, v, "say_team:");
@@ -591,6 +702,7 @@ void Con_DrawNotify (void)
 		}
 		re.DrawChar ( (x+skip)<<3, v, 10+((cls.realtime>>8)&1));
 		v += 8;
+#endif
 	}
 	
 	if (v)

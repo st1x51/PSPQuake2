@@ -256,7 +256,14 @@ void SVC_GetChallenge (void)
 	if (i == MAX_CHALLENGES)
 	{
 		// overwrite the oldest
+#ifdef KINGPIN_ENGINE
+		// 1.21 @00443b3d combines two CRT random values into a positive 31-bit challenge.
+		unsigned challenge = (unsigned)rand() << 16;
+		challenge ^= (unsigned)rand();
+		svs.challenges[oldest].challenge = challenge & 0x7fffffff;
+#else
 		svs.challenges[oldest].challenge = rand() & 0x7fff;
+#endif
 		svs.challenges[oldest].adr = net_from;
 		svs.challenges[oldest].time = curtime;
 		i = oldest;
@@ -940,6 +947,14 @@ void SV_UserinfoChanged (client_t *cl)
 	else
 		cl->rate = 5000;
 
+#ifdef KINGPIN_ENGINE
+	// Kingpin 1.21 @00444d6e selects entity encoding by the client's version.
+	val = Info_ValueForKey (cl->userinfo, "ver");
+	cl->client_version = atoi(val);
+	if (cl->client_version < 100)
+		cl->client_version = 100;
+#endif
+
 	// msg command
 	val = Info_ValueForKey (cl->userinfo, "msg");
 	if (strlen(val))
@@ -1005,7 +1020,7 @@ void SV_Init (void)
 	net_origin_offset = Cvar_Get ("net_origin_offset", "1", 0);
 	voice_test = Cvar_Get ("voice_test", "1.0", 0);
 
-	public_server = Cvar_Get ("public", "1", 0);
+	public_server = Cvar_Get ("public", dedicated->value ? "1" : "0", 0);
 #else
 	sv_airaccelerate = Cvar_Get("sv_airaccelerate", "0", CVAR_LATCH);
 	

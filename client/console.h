@@ -22,7 +22,11 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 // console
 //
 
-#define	NUM_CON_TIMES 4
+#ifdef KINGPIN_ENGINE
+#define NUM_CON_TIMES 64
+#else
+#define NUM_CON_TIMES 4
+#endif
 
 #define		CON_TEXTSIZE	32768
 typedef struct

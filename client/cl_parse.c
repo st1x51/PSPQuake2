@@ -49,7 +49,8 @@ char *svc_strings[256] =
 	"svc_packetentities",
 	"svc_deltapacketentities",
 	"svc_frame",
-	"svc_configstring_pointer"
+	"svc_configstring_pointer",
+	"svc_download2"
 };
 #else
 char *svc_strings[256] =
@@ -92,6 +93,229 @@ int CL_DownloadFileName(char *dest, int destlen, char *fn)
 	return FS_PATH_GAMEDIR;
 }
 
+#ifdef KINGPIN_ENGINE
+// Same 1024-byte wire chunks as 1.21, with a bounded PSP receive window.
+// Only contiguous data is committed, so interrupted .tm2 files resume safely.
+#define DOWNLOAD2_WINDOW 32
+typedef struct {
+	int chunk, requested, size;
+	qboolean received;
+	byte data[1024];
+} download2_chunk_t;
+static struct {
+	int id, total, next_write, next_request;
+	download2_chunk_t chunks[DOWNLOAD2_WINDOW];
+} download2;
+
+void CL_CancelDownload2 (void)
+{
+	memset (&download2, 0, sizeof(download2));
+	download2.total = -1;
+	cls.download2 = false;
+}
+
+static void CL_FinishDownload2 (qboolean complete)
+{
+	char oldname[MAX_OSPATH], newname[MAX_OSPATH];
+	int flags;
+	if (cls.download)
+		FS_FClose (cls.download);
+	cls.download = NULL;
+	if (complete)
+	{
+		CL_DownloadFileName (oldname, sizeof(oldname), cls.downloadtempname);
+		flags = CL_DownloadFileName (newname, sizeof(newname), cls.downloadname);
+		if (!FS_FileRename(oldname, newname, flags))
+			Com_Printf ("Failed to rename %s\n", oldname);
+	}
+	CL_CancelDownload2 ();
+	cls.downloadpercent = 0;
+	CL_RequestNextDownload ();
+}
+
+static qboolean CL_StartDownload2 (char *filename)
+{
+	char name[MAX_OSPATH];
+	int flags, i, start = 0;
+	static int last_id;
+	CL_CancelDownload2 ();
+	if (cls.download)
+		FS_FClose (cls.download);
+	cls.download = NULL;
+	Com_sprintf (cls.downloadname, sizeof(cls.downloadname), "%s", filename);
+	COM_StripExtension (cls.downloadname, cls.downloadtempname);
+	strcat (cls.downloadtempname, ".tm2");
+	flags = CL_DownloadFileName (name, sizeof(name), cls.downloadtempname);
+	cls.download = FS_FOpen (name, FS_MODE_RW | flags);
+	if (cls.download)
+	{
+		// Re-read a final complete block too: a previous run may have closed
+		// the data file immediately before renaming it.
+		int length = FS_FLength(cls.download);
+		start = length > 0 ? (length-1) / 1024 : 0;
+	}
+	else
+		cls.download = FS_FOpen (name, FS_MODE_WRITE | flags);
+	if (!cls.download || FS_FSeek(cls.download, start * 1024, FS_SEEK_SET))
+	{
+		if (cls.download) FS_FClose(cls.download);
+		cls.download = NULL;
+		Com_Printf ("Failed to open %s\n", name);
+		return true;
+	}
+	cls.download2 = true;
+	if (cls.realtime > last_id) last_id = cls.realtime;
+	else if (last_id < 0x7fffffff) last_id++;
+	else last_id = 1;
+	download2.id = last_id;
+	download2.next_write = start;
+	download2.next_request = start + 1;
+	for (i=0; i<DOWNLOAD2_WINDOW; i++)
+		download2.chunks[i].chunk = -1;
+	download2.chunks[start % DOWNLOAD2_WINDOW].chunk = start;
+	download2.chunks[start % DOWNLOAD2_WINDOW].requested = cls.realtime;
+	MSG_WriteByte (&cls.netchan.message, clc_stringcmd);
+	MSG_WriteString (&cls.netchan.message,
+		va(strchr(filename, ' ') ? "download5 \"%s\" %i %i" : "download5 %s %i %i",
+			filename, download2.id, start));
+	Com_Printf ("Requesting Download: %s\n", filename);
+	cls.downloadnumber++;
+	return false;
+}
+
+qboolean CL_SendDownload2 (void)
+{
+	byte data[64];
+	sizebuf_t msg;
+	int i, chunk = -1, count, active = 0, window;
+	download2_chunk_t *slot;
+	if (!cls.download2 || !cls.download)
+		return false;
+	// Initial response supplies the file length. Retrying this block is safe.
+	count = download2.total < 0 ? download2.next_write + 1 :
+		(download2.total + 1023) / 1024;
+	window = (int)(rate->value * 0.00125f) + 2;
+	if (window < 1) window = 1;
+	if (window > DOWNLOAD2_WINDOW) window = DOWNLOAD2_WINDOW;
+	for (i=0; i<DOWNLOAD2_WINDOW; i++)
+	{
+		slot = &download2.chunks[i];
+		if (slot->chunk < download2.next_write || slot->received)
+			continue;
+		if (cls.realtime - slot->requested >= 3000)
+			chunk = slot->chunk;
+		else
+			active++;
+	}
+	if (chunk < 0 && active < window && download2.next_request < count &&
+		download2.next_request < download2.next_write + DOWNLOAD2_WINDOW &&
+		(download2.next_request != count-1 || download2.next_write == count-1))
+		chunk = download2.next_request++;
+	if (chunk < 0)
+		return false;
+	slot = &download2.chunks[chunk % DOWNLOAD2_WINDOW];
+	slot->chunk = chunk;
+	slot->received = false;
+	slot->requested = cls.realtime;
+	SZ_Init (&msg, data, sizeof(data));
+	MSG_WriteByte (&msg, clc_stringcmd);
+	MSG_WriteString (&msg, va("nextdl2 %i", chunk));
+	MSG_WriteByte (&msg, 255);
+	Netchan_Transmit (&cls.netchan, msg.cursize, msg.data);
+	return true;
+}
+
+void CL_ParseDownload2 (void)
+{
+	int size = MSG_ReadShort(&net_message), total, id, chunk, expected;
+	download2_chunk_t *slot;
+	if (size == -1)
+	{
+		MSG_ReadByte (&net_message);
+		if (cls.download2)
+		{
+			Com_Printf ("Server does not have this file.\n");
+			CL_FinishDownload2 (false);
+		}
+		return;
+	}
+	if (!size)
+	{
+		chunk = MSG_ReadLong (&net_message);
+		if (cls.download2 && chunk >= download2.next_write &&
+			chunk < download2.next_request)
+		{
+			slot = &download2.chunks[chunk % DOWNLOAD2_WINDOW];
+			if (slot->chunk == chunk) slot->requested = cls.realtime - 3000;
+		}
+		return;
+	}
+	total = MSG_ReadLong (&net_message);
+	id = MSG_ReadLong (&net_message);
+	chunk = MSG_ReadLong (&net_message);
+	if (size < 0 || size > 1024 || total <= 0 || total > 0x7ffffbff ||
+		chunk < 0 || chunk > (total-1)/1024 ||
+		net_message.readcount > net_message.cursize - size)
+		Com_Error (ERR_DROP, "Invalid download2 block");
+	expected = total - chunk * 1024;
+	if (expected > 1024) expected = 1024;
+	if (size != expected)
+		Com_Error (ERR_DROP, "Invalid download2 block length");
+	// Consume late/stale packets without allowing them to affect a new transfer.
+	slot = &download2.chunks[chunk % DOWNLOAD2_WINDOW];
+	if (!cls.download2 || id != download2.id || chunk < download2.next_write ||
+		chunk >= download2.next_request || slot->chunk != chunk || slot->received)
+	{
+		net_message.readcount += size;
+		return;
+	}
+	if (download2.total != -1 && total != download2.total)
+		Com_Error (ERR_DROP, "Download2 file size changed");
+	if (download2.total == -1 && FS_FLength(cls.download) > total)
+	{
+		// The server replaced the file with a shorter one since our last run.
+		// Reopen with truncation; otherwise a stale tail would be renamed too.
+		char filename[MAX_OSPATH], name[MAX_OSPATH];
+		int flags = CL_DownloadFileName(name, sizeof(name), cls.downloadtempname);
+		Com_sprintf (filename, sizeof(filename), "%s", cls.downloadname);
+		net_message.readcount += size;
+		FS_FClose (cls.download);
+		cls.download = FS_FOpen (name, FS_MODE_WRITE | flags);
+		if (!cls.download)
+		{
+			CL_FinishDownload2 (false);
+			return;
+		}
+		FS_FClose (cls.download);
+		cls.download = NULL;
+		if (CL_StartDownload2(filename))
+			CL_RequestNextDownload ();
+		return;
+	}
+	download2.total = total;
+	memcpy (slot->data, net_message.data + net_message.readcount, size);
+	net_message.readcount += size;
+	slot->size = size;
+	slot->received = true;
+	while ((slot = &download2.chunks[download2.next_write % DOWNLOAD2_WINDOW]),
+		slot->chunk == download2.next_write && slot->received)
+	{
+		if (FS_FWrite(cls.download, slot->data, slot->size) != slot->size)
+		{
+			Com_Printf ("Failed to write download\n");
+			CL_FinishDownload2 (false);
+			return;
+		}
+		slot->chunk = -1;
+		slot->received = false;
+		download2.next_write++;
+	}
+	cls.downloadpercent = (int)((double)download2.next_write * 1024 * 100 / total);
+	if (download2.next_write >= (total+1023)/1024)
+		CL_FinishDownload2 (true);
+}
+#endif
+
 /*
 ===============
 CL_CheckOrDownloadFile
@@ -115,6 +339,10 @@ qboolean	CL_CheckOrDownloadFile (char *filename)
 	// which are already available through pak0.pak.
 	if (!Cvar_VariableValue ("cl_allow_downloads") || Com_ServerState ())
 		return true;
+	if (!Cvar_VariableValue ("allow_download_players") &&
+		(strstr(filename, "players/") ||
+		 (strstr(filename, "actors/") && strstr(filename, ".tga"))))
+		return true;
 #endif
 
 	if (strstr (filename, ".."))
@@ -127,6 +355,11 @@ qboolean	CL_CheckOrDownloadFile (char *filename)
 	{	// it exists, no need to download
 		return true;
 	}
+
+#ifdef KINGPIN_ENGINE
+	if (atoi(cl.configstrings[CS_SERVER_VERSION]) >= 120)
+		return CL_StartDownload2 (filename);
+#endif
 
 	strcpy (cls.downloadname, filename);
 
@@ -151,12 +384,13 @@ qboolean	CL_CheckOrDownloadFile (char *filename)
 		Com_Printf ("Resuming %s\n", cls.downloadname);
 		MSG_WriteByte (&cls.netchan.message, clc_stringcmd);
 		MSG_WriteString (&cls.netchan.message,
-			va("download %s %i", cls.downloadname, len));
+			va(strchr(cls.downloadname, ' ') ? "download \"%s\" %i" : "download %s %i",
+				cls.downloadname, len));
 	} else {
 		Com_Printf ("Downloading %s\n", cls.downloadname);
 		MSG_WriteByte (&cls.netchan.message, clc_stringcmd);
 		MSG_WriteString (&cls.netchan.message,
-			va("download %s", cls.downloadname));
+			va(strchr(cls.downloadname, ' ') ? "download \"%s\"" : "download %s", cls.downloadname));
 	}
 
 	cls.downloadnumber++;
@@ -193,6 +427,12 @@ void	CL_Download_f (void)
 		Com_Printf("File already exists.\n");
 		return;
 	}
+
+#ifdef KINGPIN_ENGINE
+	CL_CancelDownload2 ();
+	if (cls.download) FS_FClose(cls.download);
+	cls.download = NULL;
+#endif
 
 	strcpy (cls.downloadname, filename);
 	Com_Printf ("Downloading %s\n", cls.downloadname);
@@ -249,6 +489,15 @@ void CL_ParseDownload (void)
 	// read the data
 	size = MSG_ReadShort (&net_message);
 	percent = MSG_ReadByte (&net_message);
+#ifdef KINGPIN_ENGINE
+	if (size < -1 || (size >= 0 && net_message.readcount > net_message.cursize - size))
+		Com_Error (ERR_DROP, "Invalid download block");
+	if (cls.download2)
+	{
+		if (size > 0) net_message.readcount += size;
+		return;
+	}
+#endif
 	if (size == -1)
 	{
 		Com_Printf ("Server does not have this file.\n");
@@ -537,7 +786,7 @@ static void CL_LoadModelParts (clientinfo_t *ci, char *modeldir, char *extras)
 
 /*
 ================
-CL_LoadPartSkins
+CL_GetPlayerSkinFolders / CL_LoadPartSkins
 
 skins is "HHH BBB LLL": head_HHH.tga, body_BBB.tga and legs_LLL.tga,
 looked up in the folders named by skinfolder.txt (either one folder for
@@ -545,18 +794,16 @@ all parts, or "head:", "body:", "legs:" lines). Heads 5xx and up use
 head1.mdx, head2.mdx... (kingpin.exe @00410190)
 ================
 */
-static void CL_LoadPartSkins (clientinfo_t *ci, char *skins, char *modeldir)
+void CL_GetPlayerSkinFolders (char *modeldir, char headdir[64], char bodydir[64], char legsdir[64])
 {
 	char	lines[3][64];
-	char	headdir[64], bodydir[64], legsdir[64];
-	char	name[MAX_QPATH];
-	char	*dir;
+	char	*dirs[3];
 	int		i;
 	file_t	*f;
 
-	Com_sprintf (headdir, sizeof(headdir), "%s", modeldir);
-	Com_sprintf (bodydir, sizeof(bodydir), "%s", modeldir);
-	Com_sprintf (legsdir, sizeof(legsdir), "%s", modeldir);
+	Com_sprintf (headdir, 64, "%s", modeldir);
+	Com_sprintf (bodydir, 64, "%s", modeldir);
+	Com_sprintf (legsdir, 64, "%s", modeldir);
 
 	f = CL_OpenPlayerFile (modeldir, "skinfolder.txt");
 	if (f)
@@ -574,28 +821,44 @@ static void CL_LoadPartSkins (clientinfo_t *ci, char *skins, char *modeldir)
 		{
 			if (!strstr (lines[0], "body:") && !strstr (lines[0], "legs:") && !strstr (lines[0], "head:"))
 			{	// one folder for everything
-				Com_sprintf (headdir, sizeof(headdir), "%s", lines[0]);
-				Com_sprintf (bodydir, sizeof(bodydir), "%s", lines[0]);
-				Com_sprintf (legsdir, sizeof(legsdir), "%s", lines[0]);
+				Com_sprintf (headdir, 64, "%s", lines[0]);
+				Com_sprintf (bodydir, 64, "%s", lines[0]);
+				Com_sprintf (legsdir, 64, "%s", lines[0]);
 			}
 			else
 			{
 				for (i=0 ; i<3 ; i++)
 				{
 					if (strstr (lines[i], "body:"))
-						Com_sprintf (bodydir, sizeof(bodydir), "%s", lines[i]+5);
+						Com_sprintf (bodydir, 64, "%s", lines[i]+5);
 					else if (strstr (lines[i], "head:"))
-						Com_sprintf (headdir, sizeof(headdir), "%s", lines[i]+5);
+						Com_sprintf (headdir, 64, "%s", lines[i]+5);
 					else if (strstr (lines[i], "legs:"))
-						Com_sprintf (legsdir, sizeof(legsdir), "%s", lines[i]+5);
+						Com_sprintf (legsdir, 64, "%s", lines[i]+5);
 				}
 			}
 		}
 
-		for (dir = headdir ; dir ; dir = (dir == headdir) ? bodydir : (dir == bodydir) ? legsdir : NULL)
-			if (dir[0] && dir[strlen(dir)-1] != '/')
-				strcat (dir, "/");
+		dirs[0] = headdir; dirs[1] = bodydir; dirs[2] = legsdir;
+		for (i = 0; i < 3; i++)
+		{
+			int length = strlen(dirs[i]);
+			if (length && dirs[i][length-1] != '/')
+			{
+				if (length == 63) length--;
+				dirs[i][length] = '/';
+				dirs[i][length+1] = 0;
+			}
+		}
 	}
+}
+
+static void CL_LoadPartSkins (clientinfo_t *ci, char *skins, char *modeldir)
+{
+	char headdir[64], bodydir[64], legsdir[64];
+	char name[MAX_QPATH];
+
+	CL_GetPlayerSkinFolders (modeldir, headdir, bodydir, legsdir);
 
 	// split "HHH BBB LLL"
 	skins[3] = 0;
@@ -603,7 +866,7 @@ static void CL_LoadPartSkins (clientinfo_t *ci, char *skins, char *modeldir)
 
 	Com_sprintf (name, sizeof(name), "%shead_%s.tga", headdir, skins);
 	ci->skin[0] = re.RegisterSkin (name);
-	if (ci->skin[0] && skins[0] > '4')
+	if (ci->skin[0] && skins[0] > '4' && skins[0] < ':')
 	{	// alternate head model
 		Com_sprintf (name, sizeof(name), "%shead%i.mdx", modeldir, skins[0] - '4');
 		if (re.RegisterModel (name))
@@ -624,14 +887,14 @@ static void CL_LoadPartSkins (clientinfo_t *ci, char *skins, char *modeldir)
 ================
 CL_LoadDefaultClientinfo
 
-male_thug with the 001 skins
+Kingpin 1.21 @004115b0: male_thug with the 018/016/010 skins.
 ================
 */
 static void CL_LoadDefaultClientinfo (clientinfo_t *ci, char *iconname)
 {
 	char	skins[16];
 
-	strcpy (skins, "001 001 001");
+	strcpy (skins, "018 016 010");
 	Com_sprintf (ci->iconname, sizeof(ci->iconname), "%s", iconname);
 	CL_LoadModelParts (ci, "players/male_thug/", "0");
 	memset (ci->weaponmodel, 0, sizeof(ci->weaponmodel));
@@ -643,12 +906,13 @@ static void CL_LoadDefaultClientinfo (clientinfo_t *ci, char *iconname)
 ================
 CL_LoadClientinfo
 
-s is "name\model/HHH BBB LLL[ extras]" (kingpin.exe @00410830)
+s is "name\model/HHH BBB LLL[ extras]" (Kingpin 1.21 @004115b0)
 ================
 */
 void CL_LoadClientinfo (clientinfo_t *ci, char *s)
 {
 	int		i;
+	qboolean missing_skin;
 	char	*t;
 	char	model_name[MAX_QPATH];
 	char	skin_name[MAX_QPATH];
@@ -661,7 +925,8 @@ void CL_LoadClientinfo (clientinfo_t *ci, char *s)
 	t = strstr (s, "\\");
 	if (t)
 	{
-		ci->name[t-s] = 0;
+		if (t-s < sizeof(ci->name))
+			ci->name[t-s] = 0;
 		s = t+1;
 	}
 
@@ -682,7 +947,7 @@ void CL_LoadClientinfo (clientinfo_t *ci, char *s)
 	*t = 0;
 
 	// isolate the skin name
-	Com_sprintf (skin_name, sizeof(skin_name), "%s", s + strlen(model_name) + 1);
+	Com_sprintf (skin_name, sizeof(skin_name), "%s", t == model_name ? "" : s + strlen(model_name) + 1);
 
 	// "HHH BBB LLL" is 11 characters, extras follow after a blank
 	if (strlen (skin_name) < 12)
@@ -692,22 +957,56 @@ void CL_LoadClientinfo (clientinfo_t *ci, char *s)
 		extras = skin_name + 12;
 		skin_name[11] = 0;
 	}
+	if (strlen(model_name) < 4 || strlen(skin_name) < 11)
+	{
+		strcpy (model_name, "male_thug");
+		strcpy (skin_name, "018 016 010");
+		extras = "0";
+	}
 
 	Com_sprintf (modeldir, sizeof(modeldir), "players/%s/", model_name);
 	CL_LoadModelParts (ci, modeldir, extras);
 	if (!ci->model[0] || !ci->model[1] || !ci->model[2])
 	{
-		strcpy (model_name, "male_thug");
-		Com_sprintf (modeldir, sizeof(modeldir), "players/male_thug/");
+		// 1.21 keeps the female family when the requested models are absent.
+		strcpy (model_name, strstr(model_name, "female") ? "female_chick" : "male_thug");
+		Com_sprintf (modeldir, sizeof(modeldir), "players/%s/", model_name);
 		CL_LoadModelParts (ci, modeldir, "0");
 	}
 
 	Com_sprintf (skins, sizeof(skins), "%s", skin_name);
 	CL_LoadPartSkins (ci, skins, modeldir);
 
-	// if we don't have the skins, use male_thug
-	if (!ci->skin[0] || !ci->skin[1] || (!ci->skin[2] && strcmp (model_name, "male_thug")))
-		CL_LoadDefaultClientinfo (ci, "players/male_thug/head_001.tga");
+	// Kingpin 1.21 retries only the missing skins as 001 before changing models.
+	missing_skin = false;
+	for (i=0 ; i<3 ; i++)
+	{
+		// Keep the reference's consecutive four-character skin slots.
+		int offset = i * 4;
+		if (!ci->skin[i])
+		{
+			memcpy (skins + offset, "001", 3);
+			missing_skin = true;
+		}
+	}
+	if (missing_skin)
+		CL_LoadPartSkins (ci, skins, modeldir);
+	if (!ci->skin[0] || !ci->skin[1] || !ci->skin[2])
+	{
+		strcpy (model_name, strstr(model_name, "female") ? "female_chick" : "male_thug");
+		Com_sprintf (modeldir, sizeof(modeldir), "players/%s/", model_name);
+		CL_LoadModelParts (ci, modeldir, "0");
+		memset (ci->weaponmodel, 0, sizeof(ci->weaponmodel));
+		Com_sprintf (weapon_filename, sizeof(weapon_filename), "%sgun.mdx", modeldir);
+		ci->weaponmodel[0] = re.RegisterModel (weapon_filename);
+		strcpy (skins, "001 001 001");
+		CL_LoadPartSkins (ci, skins, modeldir);
+	}
+
+	// 1.21 skips extra player weapons for a local non-deathmatch server,
+	// except demo playback (server state 4).
+	if (!Cvar_VariableValue ("deathmatch") && Com_ServerState () && Com_ServerState () != 4)
+		return;
 
 	// weapon file
 	for (i=0 ; i<num_cl_weaponmodels ; i++)
@@ -1196,6 +1495,9 @@ void CL_ParseServerMessage (void)
 
 		case svc_reconnect:
 			Com_Printf ("Server disconnected, reconnecting\n");
+#ifdef KINGPIN_ENGINE
+			CL_CancelDownload2 ();
+#endif
 			if (cls.download) {
 				//ZOID, close download
 				FS_FClose (cls.download);
@@ -1266,6 +1568,9 @@ void CL_ParseServerMessage (void)
 
 		case svc_configstring_pointer:
 			CL_ParseConfigStringPointer ();
+			break;
+		case svc_download2:
+			CL_ParseDownload2 ();
 			break;
 #endif
 
