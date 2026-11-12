@@ -187,12 +187,20 @@ void R_MarkLights (dlight_t *light, int bit, mnode_t *node)
 		splitplane = node->plane;
 		dist = DotProduct (light->origin, splitplane->normal) - splitplane->dist;
 
+#ifdef KINGPIN_ENGINE
+		if (dist > light->intensity)
+#else
 		if (dist > light->intensity-DLIGHT_CUTOFF)
+#endif
 		{
 			node = node->children[0];
 			continue;
 		}
+#ifdef KINGPIN_ENGINE
+		if (dist < -light->intensity)
+#else
 		if (dist < -light->intensity+DLIGHT_CUTOFF)
+#endif
 		{
 			node = node->children[1];
 			continue;
@@ -533,7 +541,10 @@ int RecursiveLightPoint (mnode_t *node, vec3_t start, vec3_t end)
 			continue;
 
 		if (!surf->samples)
+		{
+			VectorClear (pointcolor);
 			return 0;
+		}
 
 		ds >>= 4;
 		dt >>= 4;
@@ -611,7 +622,7 @@ void R_LightPoint (vec3_t p, vec3_t color)
 	dl = r_newrefdef.dlights;
 	for (lnum=0 ; lnum<r_newrefdef.num_dlights ; lnum++, dl++)
 	{
-		VectorSubtract (currententity->origin,
+		VectorSubtract (p,
 						dl->origin,
 						dist);
 		add = dl->intensity - VectorLength(dist);
@@ -731,6 +742,181 @@ R_AddDynamicLights
 */
 void R_AddDynamicLights (msurface_t *surf)
 {
+#ifdef KINGPIN_ENGINE
+	int			lnum, s, t, c;
+	int			smax, tmax;
+	mtexinfo_t	*tex;
+	dlight_t	*dl;
+	float		*fBL, *pfBL;
+	int			dlightbits;
+
+	/* Retail 1.21 @100058a0: normalized squared falloff, not Q2's
+	 * linear energy and 64-unit cutoff. Keep our four-float texel stride. */
+	if (gl_specular->value && (surf->texinfo->flags & SURF_SPECULAR))
+		return;
+
+	smax = (surf->extents[0] >> 4) + 1;
+	tmax = (surf->extents[1] >> 4) + 1;
+	tex = surf->texinfo;
+	dlightbits = surf->dlightbits;
+
+	fBL = s_blocklights;
+
+	__asm__ volatile (
+		".set		push\n"							// save assembler option
+		".set		noreorder\n"					// suppress reordering
+		"ulv.q		C000,  0(%[vecs])\n"			// C000 = tex->vecs[0]
+		"ulv.q		C010, 16(%[vecs])\n"			// C010 = tex->vecs[1]
+		"lh			$8,    0(%[texturemins])\n"		// $8 = surf->texturemins[0]
+		"lh			$9,    2(%[texturemins])\n"		// $9 = surf->texturemins[1]
+		"viim.s		S030, 255\n"					// S030 = 255.0f (clamp ceiling)
+		"mtv		$8,   S100\n"					// S100 = raw(surf->texturemins[0])
+		"mtv		$9,   S101\n"					// S101 = raw(surf->texturemins[1])
+		"vfim.s		S031, 16.0\n"					// S031 = 16.0
+		"vi2f.p		C100, C100, 0\n"				// C100 = float(surf->texturemins)
+		"ulv.q		C020,  0(%[normal])\n"			// C020 = normal & dist
+		"vsub.p		R003, R003, C100\n"				// S003 = tex->vecs[0][3] - surf->texturemins[0], S013 = tex->vecs[1][3] - surf->texturemins[1]
+		"vneg.s		S023, S023\n"					// S023 = -surf->plane->dist
+		".set		pop\n"							// restore assembler option
+		::	[vecs] "r" (tex->vecs),
+			[texturemins] "r"(surf->texturemins),
+			[normal] "r" (surf->plane->normal)
+		:	"memory", "$8", "$9"
+	);
+
+	for (lnum = 0; lnum < r_newrefdef.num_dlights; lnum++)
+	{
+		if (!(dlightbits & (1U << lnum)))
+			continue;		// not lit by this light
+
+		dl = &r_newrefdef.dlights[lnum];
+
+		/* Subtractive lights (shadow lights) are rare in Kingpin; handle via float C path */
+		if (dl->color[0] < 0.0f || dl->color[1] < 0.0f || dl->color[2] < 0.0f)
+		{
+			float plane_dist = DotProduct (dl->origin, surf->plane->normal) - surf->plane->dist;
+			float radius = dl->intensity - fabsf (plane_dist);
+			if (radius <= 0.0f)
+				continue;
+			vec3_t impact;
+			VectorMA (dl->origin, -plane_dist, surf->plane->normal, impact);
+			float local_s = DotProduct (impact, tex->vecs[0]) + tex->vecs[0][3] - surf->texturemins[0];
+			float local_t = DotProduct (impact, tex->vecs[1]) + tex->vecs[1][3] - surf->texturemins[1];
+			float inv_radius = 1.0f / radius;
+			float *block = fBL;
+
+			for (t = 0; t < tmax; t++)
+			{
+				float ft = local_t - t * 16.0f;
+				int td = abs ((int)ft);
+				if (td >= radius)
+				{
+					block += smax * 4;
+					continue;
+				}
+				for (s = 0; s < smax; s++, block += 4)
+				{
+					float fs = local_s - s * 16.0f;
+					int sd = abs ((int)(fs + (fs >= 0.0f ? 0.5f : -0.5f)));
+					int distance = sd > td ? sd + (td >> 1) : td + (sd >> 1);
+					if (distance >= radius)
+						continue;
+					float norm = (radius - distance) * inv_radius;
+					float weight = norm * norm;
+					for (c = 0; c < 3; c++)
+					{
+						block[c] -= (int)(-weight * dl->color[c] * block[c]) & 255;
+						if (block[c] < 0.0f)
+							block[c] = 0.0f;
+					}
+				}
+			}
+			continue;
+		}
+
+		/* Normal (additive) dynamic light - VFPU accelerated quadratic falloff */
+		__asm__ volatile goto (
+			".set		push\n"						// save assembler option
+			".set		noreorder\n"				// suppress reordering
+			"ulv.q		C100, 0(%[origin])\n"		// C100 = dl->origin
+			"ulv.q		C110, 0(%[color])\n"		// C110 = dl->color & intensity
+			"vhdp.q		S103, C100, C020\n"			// S103(fdist) = DotProduct (dl->origin, normal) - dist
+			"vsub.s		S120, S113, S103[|X|]\n"	// S120(radius) = dl->intensity - fabs(fdist)
+			"vzero.s	S121\n"						// S121 = 0.0f
+			"vcmp.s		LE, S120, S121\n"			// if (radius <= 0.0f)
+			"bvt		0, %l[kp_skip_light]\n"		// goto kp_skip_light
+			"vrcp.s		S121, S120\n"				// S121(inv_radius) = 1.0f / radius (in delay slot)
+			"vscl.t		C200, C020, S103\n"			// C200(impact) = normal * fdist
+			"vsub.t		C200, C100, C200\n"			// C200(impact) = origin - normal * fdist
+			"vhdp.q		S122, C200, C000\n"			// S122(local_s)
+			"vhdp.q		S123, C200, C010\n"			// S123(local_t)
+			"vscl.t		C110, C110, S030\n"			// C110 = dl->color * 255.0f
+			"vzero.s	S033\n"						// S033(ftacc) = 0.0f
+			".set		pop\n"						// restore assembler option
+			::	[origin] "r" (dl->origin),
+				[color] "r" (dl->color)
+			:	"cc", "memory"
+			:	kp_skip_light
+		);
+
+		pfBL = fBL;
+		for (t = 0; t < tmax; t++)
+		{
+			__asm__ volatile goto (
+				".set		push\n"					// save assembler option
+				".set		noreorder\n"			// suppress reordering
+				"vsub.s		S130, S123, S033\n"		// S130(td) = local_t - ftacc
+				"vadd.s		S033, S033, S031\n"		// S033(ftacc) += 16.0f
+				"vabs.s		S130, S130\n"			// S130(td) = abs(td)
+				"vcmp.s		GE, S130, S120\n"		// if (td >= radius)
+				"bvt		0, %l[kp_skip_t_row]\n"	// skip entire row of texels
+				"vzero.s	S032\n"					// S032(fsacc) = 0.0f (in delay slot)
+				".set		pop\n"					// restore assembler option
+				::: "cc"
+				:	kp_skip_t_row
+			);
+
+			for (s = 0; s < smax; s++, pfBL += 4)
+			{
+				__asm__ volatile (
+					".set		push\n"					// save assembler option
+					".set		noreorder\n"			// suppress reordering
+					"vsub.s		S131, S122, S032\n"		// S131(sd) = local_s - fsacc
+					"vabs.s		S131, S131\n"			// S131(sd) = abs(sd)
+					"vmin.s		S100, S130, S131\n"		// S100 = min(td, sd)
+					"vmax.s		S101, S130, S131\n" 	// S101 = max(td, sd)
+					"vmul.s		S100, S100, S100[1/2]\n"// S100 = min * 0.5f
+					"vadd.s		S032, S032, S031\n"		// S032(fsacc) += 16.0f
+					"vadd.s		S101, S100, S101\n"		// S101(distance) = max + min/2
+					"vcmp.s		LT, S101, S120\n"		// if (distance < radius)
+					"bvf		0, 0f\n"				// if !(distance < radius) skip pixel
+					"vsub.s		S102, S120, S101\n"		// S102(delta) = radius - distance (in delay slot)
+					"vmul.s		S102, S102, S121\n"		// S102(norm) = delta * inv_radius
+					"lv.q		C200, 0(%[pfBL])\n"		// load pfBL texel [r, g, b, a]
+					"vmul.s		S102, S102, S102\n"		// S102(weight) = norm * norm
+					"vscl.t		C210, C110, S102\n"		// C210 = (dl->color * 255.0f) * weight
+					"vadd.t		C200, C200, C210\n"		// C200 = pfBL + color * weight
+					"vmin.s		S200, S200, S030\n"		// clamp R to 255.0f
+					"vmin.s		S201, S201, S030\n"		// clamp G to 255.0f
+					"vmin.s		S202, S202, S030\n"		// clamp B to 255.0f
+					"sv.q		C200, 0(%[pfBL])\n"		// store back to s_blocklights
+				"0:"									// skip_pix label
+					".set		pop\n"					// restore assembler option
+					::	[pfBL] "r" (pfBL)
+					:	"memory"
+				);
+			}
+			continue;
+
+kp_skip_t_row:
+			pfBL += (smax << 2);
+			continue;
+		}
+
+kp_skip_light:
+		continue;
+	}
+#else
 	int			lnum;
 	int			s, t;
 	int			smax, tmax;
@@ -846,6 +1032,7 @@ void R_AddDynamicLights (msurface_t *surf)
 skip_light:
 		continue;
 	}
+#endif
 }
 
 

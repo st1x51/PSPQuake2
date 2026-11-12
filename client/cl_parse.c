@@ -310,7 +310,7 @@ void CL_ParseDownload2 (void)
 		slot->received = false;
 		download2.next_write++;
 	}
-	cls.downloadpercent = (int)((double)download2.next_write * 1024 * 100 / total);
+	cls.downloadpercent = (int)((long long)download2.next_write * 1024 * 100 / total);
 	if (download2.next_write >= (total+1023)/1024)
 		CL_FinishDownload2 (true);
 }

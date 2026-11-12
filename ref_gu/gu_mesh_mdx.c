@@ -406,7 +406,7 @@ static void Mdx_ProcessSFX (dmdx_t *header, const dtrivertx_t *frameverts)
 	entries = (const dmdx_sfxentry_t *)((const byte *)header + header->ofs_sfxentries);
 	triangles = (const dtriangle_t *)((const byte *)header + header->ofs_tris);
 	vertexinfo = (const int *)((const byte *)header + header->ofs_vertexinfo);
-	AngleVectors (angles, axis1, axis0, NULL);
+	AngleVectors (angles, NULL, axis1, axis0);
 	interval_mask = Mdx_SFXIntervalMask ();
 
 	for (i = 0; i < header->num_sfxentries; i++)
@@ -968,15 +968,31 @@ static qboolean R_CullMDXModel (dmdx_t *pmdxhdr, vec3_t mins, vec3_t maxs, entit
 
 	if ((e->frame >= pmdxhdr->num_frames) || (e->frame < 0))
 	{
-		ri.Con_Printf (PRINT_ALL, "R_CullMDXModel %s: no such frame %d\n",
-			currentmodel->name, e->frame);
-		e->frame = 0;
+		if ((e->flags2 & RF2_MODULUS_FRAME) &&
+			e->frame >= 0 && pmdxhdr->num_frames > 0)
+		{
+			e->frame %= pmdxhdr->num_frames;
+		}
+		else
+		{
+			ri.Con_Printf (PRINT_ALL, "R_CullMDXModel %s: no such frame %d\n",
+				currentmodel->name, e->frame);
+			e->frame = 0;
+		}
 	}
 	if ((e->oldframe >= pmdxhdr->num_frames) || (e->oldframe < 0))
 	{
-		ri.Con_Printf (PRINT_ALL, "R_CullMDXModel %s: no such oldframe %d\n",
-			currentmodel->name, e->oldframe);
-		e->oldframe = 0;
+		if ((e->flags2 & RF2_MODULUS_FRAME) &&
+			e->oldframe >= 0 && pmdxhdr->num_frames > 0)
+		{
+			e->oldframe %= pmdxhdr->num_frames;
+		}
+		else
+		{
+			ri.Con_Printf (PRINT_ALL, "R_CullMDXModel %s: no such oldframe %d\n",
+				currentmodel->name, e->oldframe);
+			e->oldframe = 0;
+		}
 	}
 
 	pframe = (daliasframe_t *)((byte *)pmdxhdr + pmdxhdr->ofs_frames +
@@ -1294,18 +1310,34 @@ void R_DrawMDXModel (entity_t *e, int mapmode)
 
 	if ((currententity->frame >= pmdxhdr->num_frames) || (currententity->frame < 0))
 	{
-		ri.Con_Printf (PRINT_ALL, "R_DrawMDXModel %s: no such frame %d\n",
-			currentmodel->name, currententity->frame);
-		currententity->frame = 0;
-		currententity->oldframe = 0;
+		if ((currententity->flags2 & RF2_MODULUS_FRAME) &&
+			currententity->frame >= 0 && pmdxhdr->num_frames > 0)
+		{
+			currententity->frame %= pmdxhdr->num_frames;
+		}
+		else
+		{
+			ri.Con_Printf (PRINT_ALL, "R_DrawMDXModel %s: no such frame %d\n",
+				currentmodel->name, currententity->frame);
+			currententity->frame = 0;
+			currententity->oldframe = 0;
+		}
 	}
 
 	if ((currententity->oldframe >= pmdxhdr->num_frames) || (currententity->oldframe < 0))
 	{
-		ri.Con_Printf (PRINT_ALL, "R_DrawMDXModel %s: no such oldframe %d\n",
-			currentmodel->name, currententity->oldframe);
-		currententity->frame = 0;
-		currententity->oldframe = 0;
+		if ((currententity->flags2 & RF2_MODULUS_FRAME) &&
+			currententity->oldframe >= 0 && pmdxhdr->num_frames > 0)
+		{
+			currententity->oldframe %= pmdxhdr->num_frames;
+		}
+		else
+		{
+			ri.Con_Printf (PRINT_ALL, "R_DrawMDXModel %s: no such oldframe %d\n",
+				currentmodel->name, currententity->oldframe);
+			currententity->frame = 0;
+			currententity->oldframe = 0;
+		}
 	}
 
 	if (!r_lerpmodels->value)

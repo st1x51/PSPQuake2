@@ -305,6 +305,10 @@ as yet to be determined.
 */
 void GU_EndFrame (void)
 {
+#ifdef KINGPIN_ENGINE
+	if (burn_enabled->value)
+		Draw_FillRGBA (10, 10, 50, 50, burn_r->value, burn_g->value, burn_b->value, 1.0f);
+#endif
 	// finish rendering.
 	sceGuFinish ();
 }

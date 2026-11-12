@@ -20,6 +20,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 
 #include "../client/client.h"
 #include "../client/qmenu.h"
+#include "../client/menu_ru.h"
 
 extern cvar_t *vid_gamma;
 extern cvar_t *scr_viewsize;
@@ -68,7 +69,7 @@ static void StippleAlphaCallback (void *unused)
 */
 void VID_MenuInit (void)
 {
-	static const char *yesno_names[] = {"no", "yes", 0};
+	static const char *yesno_names[] = {M_RUS("no", "HET"), M_RUS("yes", "DA"), 0};
 
 	if (!scr_viewsize)
 		scr_viewsize = Cvar_Get ("viewsize", "100", CVAR_ARCHIVE);
@@ -85,7 +86,7 @@ void VID_MenuInit (void)
 	s_screensize_slider.generic.type     = MTYPE_SLIDER;
 	s_screensize_slider.generic.x        = 0;
 	s_screensize_slider.generic.y        = 20;
-	s_screensize_slider.generic.name     = "Screen size";
+	s_screensize_slider.generic.name     = M_RUS("Screen size", "PA3MEP {KPAHA");
 	s_screensize_slider.generic.callback = ScreenSizeCallback;
 	s_screensize_slider.minvalue         = 3;
 	s_screensize_slider.maxvalue         = 12;
@@ -94,7 +95,7 @@ void VID_MenuInit (void)
 	s_brightness_slider.generic.type     = MTYPE_SLIDER;
 	s_brightness_slider.generic.x        = 0;
 	s_brightness_slider.generic.y        = 30;
-	s_brightness_slider.generic.name     = "Brightness";
+	s_brightness_slider.generic.name     = M_RUS("Brightness", "RPKOCT|");
 	s_brightness_slider.generic.callback = BrightnessCallback;
 	s_brightness_slider.minvalue         = 5;
 	s_brightness_slider.maxvalue         = 13;
@@ -105,7 +106,7 @@ void VID_MenuInit (void)
 	s_drawfps_list.generic.type     = MTYPE_SPINCONTROL;
 	s_drawfps_list.generic.x        = 0;
 	s_drawfps_list.generic.y        = 50;
-	s_drawfps_list.generic.name     = "Draw FPS";
+	s_drawfps_list.generic.name     = M_RUS("Draw FPS", "4ACTOTA KADPOB");
 	s_drawfps_list.generic.callback = DrawFpsCallback;
 	s_drawfps_list.itemnames        = yesno_names;
 	s_drawfps_list.curvalue         = scr_drawfps->value;
@@ -113,7 +114,7 @@ void VID_MenuInit (void)
 	s_stipple_list.generic.type     = MTYPE_SPINCONTROL;
 	s_stipple_list.generic.x        = 0;
 	s_stipple_list.generic.y        = 60;
-	s_stipple_list.generic.name     = "Stipple alpha";
+	s_stipple_list.generic.name     = M_RUS("Stipple alpha", "IPO3PA4HOCT|");
 	s_stipple_list.generic.callback = StippleAlphaCallback;
 	s_stipple_list.itemnames        = yesno_names;
 	s_stipple_list.curvalue         = Cvar_VariableValue ("sw_stipplealpha");

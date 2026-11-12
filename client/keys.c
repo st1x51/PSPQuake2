@@ -897,7 +897,7 @@ void Key_Event (int key, qboolean down, unsigned time)
 		shift_down = down;
 
 	// console key is hardcoded, so the user can never unbind it
-	if (key == '`' || key == '~' || key == K_MODE_BUTTON)
+	if (key == '`' || key == '~')
 	{
 		if (!down)
 			return;
@@ -905,6 +905,29 @@ void Key_Event (int key, qboolean down, unsigned time)
 		OSK_SetActive(false);
 		Con_ToggleConsole_f ();
 		return;
+	}
+
+	if (key == K_MODE_BUTTON)
+	{
+		if (cls.key_dest == key_console)
+		{
+			if (!down)
+				return;
+
+			OSK_SetActive(false);
+			Con_ToggleConsole_f ();
+			return;
+		}
+
+		if (!keybindings[key] || !keybindings[key][0])
+		{
+			if (!down)
+				return;
+
+			OSK_SetActive(false);
+			Con_ToggleConsole_f ();
+			return;
+		}
 	}
 
 #ifdef KINGPIN_ENGINE

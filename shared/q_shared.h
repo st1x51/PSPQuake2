@@ -169,7 +169,22 @@ typedef	int	fixed4_t;
 typedef	int	fixed8_t;
 typedef	int	fixed16_t;
 
-#ifndef M_PI
+#if __psp__
+#undef M_PI
+#define M_PI		3.14159265358979323846f
+#define sqrt(x)		sqrtf(x)
+#define sin(x)		sinf(x)
+#define cos(x)		cosf(x)
+#define tan(x)		tanf(x)
+#define acos(x)		acosf(x)
+#define atan(x)		atanf(x)
+#define atan2(y,x)	atan2f(y,x)
+#define fmod(x,y)	fmodf(x,y)
+#define pow(x,y)	powf(x,y)
+#define floor(x)	floorf(x)
+#define ceil(x)		ceilf(x)
+#define fabs(x)		fabsf(x)
+#elif !defined(M_PI)
 #define M_PI		3.14159265358979323846	// matches value in gcc v2 math.h
 #endif
 
@@ -572,6 +587,8 @@ COLLISION DETECTION
 
 // JOSEPH 26-JAN-99-C
 #define SURF_ALPHA		0x1000	// wire fence effect flag
+#define	SURF_REFLECT_WEAK	0x4000		// reflection-map overlay, alpha 0.1
+#define	SURF_REFLECT_STRONG	0x8000		// reflection-map overlay, alpha 0.3
 #define SURF_WATER      0x80000
 #define SURF_CONCRETE	0x100000
 #define SURF_FABRIC		0x200000

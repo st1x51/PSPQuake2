@@ -20,6 +20,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 // cmodel.c -- model loading
 
 #include "qcommon.h"
+#include <stdint.h>
 
 typedef struct
 {
@@ -117,7 +118,38 @@ cvar_t			*map_noareas;
 void	CM_InitBoxHull (void);
 void	FloodAreaConnections (void);
 
-static clipMap_t	cm;
+#ifdef KINGPIN_ENGINE
+static cmodel_t cm_cmodels[MAX_MAP_MODELS];
+static clipMap_t cm = { .cmodels = cm_cmodels };
+#else
+static clipMap_t cm;
+#endif
+
+static void *CM_Alloc (int size)
+{
+#ifdef KINGPIN_ENGINE
+	void *data = Z_TagMalloc (size, TAG_CMODEL);
+	memset (data, 0, size);
+	return data;
+#else
+	return Hunk_AllocName (size, cm.name);
+#endif
+}
+
+/* Do not use isfinite here: release builds use -Ofast, and the PSP must not
+ * send NaNs through its FPU comparisons. Inspect the IEEE exponent instead. */
+static qboolean CM_FiniteVector (const float *v)
+{
+	int i;
+	for (i = 0; i < 3; i++)
+	{
+		uint32_t bits;
+		memcpy (&bits, &v[i], sizeof(bits));
+		if ((bits & 0x7f800000u) == 0x7f800000u)
+			return false;
+	}
+	return true;
+}
 
 int		c_pointcontents;
 int		c_traces, c_brush_traces;
@@ -154,7 +186,11 @@ void CMod_LoadSubmodels (lump_t *l)
 	if (count > MAX_MAP_MODELS)
 		Com_Error (ERR_DROP, "Map has too many models");
 
-	cm.cmodels = Hunk_AllocName (count * sizeof(*cm.cmodels), cm.name);
+#ifdef KINGPIN_ENGINE
+	cm.cmodels = cm_cmodels;
+#else
+	cm.cmodels = CM_Alloc (count * sizeof(*cm.cmodels));
+#endif
 	cm.numcmodels = count;
 
 	for ( i=0 ; i<count ; i++, in++, out++)
@@ -192,7 +228,7 @@ void CMod_LoadSurfaces (lump_t *l)
 	if (count > MAX_MAP_TEXINFO)
 		Com_Error (ERR_DROP, "Map has too many surfaces");
 
-	cm.surfaces = Hunk_AllocName (count * sizeof(*cm.surfaces), cm.name);
+	cm.surfaces = CM_Alloc (count * sizeof(*cm.surfaces));
 	cm.numtexinfo = count;
 
 	out = cm.surfaces;
@@ -230,7 +266,7 @@ void CMod_LoadNodes (lump_t *l)
 	if (count > MAX_MAP_NODES)
 		Com_Error (ERR_DROP, "Map has too many nodes");
 
-	cm.nodes = Hunk_AllocName ((count + 6) * sizeof(*cm.nodes), cm.name); // extra for box hull
+	cm.nodes = CM_Alloc ((count + 6) * sizeof(*cm.nodes)); // extra for box hull
 	cm.numnodes = count;
 
 	out = cm.nodes;
@@ -267,7 +303,7 @@ void CMod_LoadBrushes (lump_t *l)
 	if (count > MAX_MAP_BRUSHES)
 		Com_Error (ERR_DROP, "Map has too many brushes");
 
-	cm.brushes = Hunk_AllocName ((count + 1) * sizeof(*cm.brushes), cm.name); // extra for box hull
+	cm.brushes = CM_Alloc ((count + 1) * sizeof(*cm.brushes)); // extra for box hull
 	cm.numbrushes = count;
 
 	out = cm.brushes;
@@ -305,7 +341,7 @@ void CMod_LoadLeafs (lump_t *l)
 	if (count > MAX_MAP_PLANES)
 		Com_Error (ERR_DROP, "Map has too many planes");
 
-	cm.leafs = Hunk_AllocName ((count + 1) * sizeof(*cm.leafs), cm.name); // extra for box hull
+	cm.leafs = CM_Alloc ((count + 1) * sizeof(*cm.leafs)); // extra for box hull
 	cm.numleafs = count;
 
 	out = cm.leafs;
@@ -363,7 +399,7 @@ void CMod_LoadPlanes (lump_t *l)
 	if (count > MAX_MAP_PLANES)
 		Com_Error (ERR_DROP, "Map has too many planes");
 
-	cm.planes = Hunk_AllocName ((count + 12) * sizeof(*cm.planes), cm.name); // extra for box hull
+	cm.planes = CM_Alloc ((count + 12) * sizeof(*cm.planes)); // extra for box hull
 	cm.numplanes = count;
 
 	out = cm.planes;
@@ -407,7 +443,7 @@ void CMod_LoadLeafBrushes (lump_t *l)
 	if (count > MAX_MAP_LEAFBRUSHES)
 		Com_Error (ERR_DROP, "Map has too many leafbrushes");
 
-	cm.leafbrushes = Hunk_AllocName ((count + 1) * sizeof(*cm.leafbrushes), cm.name); // extra for box hull
+	cm.leafbrushes = CM_Alloc ((count + 1) * sizeof(*cm.leafbrushes)); // extra for box hull
 	cm.numleafbrushes = count;
 
 	out = cm.leafbrushes;
@@ -438,7 +474,7 @@ void CMod_LoadBrushSides (lump_t *l)
 	if (count > MAX_MAP_BRUSHSIDES)
 		Com_Error (ERR_DROP, "Map has too many planes");
 
-	cm.brushsides = Hunk_AllocName ((count + 6) * sizeof(*cm.brushsides), cm.name); // extra for box hull
+	cm.brushsides = CM_Alloc ((count + 6) * sizeof(*cm.brushsides)); // extra for box hull
 	cm.numbrushsides = count;
 
 	out = cm.brushsides;
@@ -474,7 +510,7 @@ void CMod_LoadAreas (lump_t *l)
 	if (count > MAX_MAP_AREAS)
 		Com_Error (ERR_DROP, "Map has too many areas");
 
-	cm.areas = Hunk_AllocName (count * sizeof(*cm.areas), cm.name);
+	cm.areas = CM_Alloc (count * sizeof(*cm.areas));
 	cm.numareas = count;
 
 	out = cm.areas;
@@ -508,7 +544,7 @@ void CMod_LoadAreaPortals (lump_t *l)
 	if (count > MAX_MAP_AREAS)
 		Com_Error (ERR_DROP, "Map has too many areas");
 
-	cm.areaportals = Hunk_AllocName (count * sizeof(*cm.areaportals), cm.name);
+	cm.areaportals = CM_Alloc (count * sizeof(*cm.areaportals));
 	cm.numareaportals = count;
 
 	out = cm.areaportals;
@@ -535,7 +571,7 @@ void CMod_LoadVisibility (lump_t *l)
 	if (l->filelen > MAX_MAP_VISIBILITY)
 		Com_Error (ERR_DROP, "Map has too large visibility lump");
 
-	cm.vis = Hunk_AllocName (l->filelen, cm.name);
+	cm.vis = CM_Alloc (l->filelen);
 	memcpy (cm.vis, cmod_base + l->fileofs, l->filelen);
 
 	cm.vis->numclusters = LittleLong (cm.vis->numclusters);
@@ -557,7 +593,7 @@ void CMod_LoadEntityString (lump_t *l)
 	if (l->filelen > MAX_MAP_ENTSTRING)
 		Com_Error (ERR_DROP, "Map has too large entity lump");
 
-	cm.entitystring = Hunk_AllocName (l->filelen, cm.name);
+	cm.entitystring = CM_Alloc (l->filelen);
 	cm.numentitychars = l->filelen;
 
 	memcpy (cm.entitystring, cmod_base + l->fileofs, l->filelen);
@@ -577,21 +613,33 @@ cmodel_t *CM_LoadMap (char *name, qboolean clientload, unsigned *checksum)
 	unsigned		*buf;
 	int				i;
 	dheader_t		header;
-	int				length;
+	size_t			length;
 	static unsigned	last_checksum;
 
 	map_noareas = Cvar_Get ("map_noareas", "0", 0);
 
 	Com_DPrintf("CM_LoadMap( %s, %i )\n", name, clientload);
 
-	if (!strcmp(cm.name, name) && clientload)
+	if (!strcmp(cm.name, name) &&
+#ifdef KINGPIN_ENGINE
+		(clientload || !Cvar_VariableValue ("flushmap")))
+#else
+		clientload)
+#endif
 	{
 		*checksum = last_checksum;
+#ifdef KINGPIN_ENGINE
+		if (!clientload)
+		{
+			memset (cm.portalopen, 0, sizeof(cm.portalopen));
+			FloodAreaConnections ();
+		}
+#endif
 		return cm.cmodels;
 	}
 
 	// free old stuff
-	memset (&cm, 0, sizeof(cm));
+	CM_ClearMap ();
 
 	cm.lastpvscluster = -2;
 	cm.lastphscluster = -2;
@@ -603,7 +651,9 @@ cmodel_t *CM_LoadMap (char *name, qboolean clientload, unsigned *checksum)
 		cm.visrowbytes = 1;
 		cm.numareas = 1;
 		*checksum = 0;
+#ifndef KINGPIN_ENGINE
 		cm.cmodels = Hunk_Alloc (sizeof(*cm.cmodels)); // dummy
+#endif
 		return cm.cmodels;			// cinematic servers won't have anything at all
 	}
 
@@ -659,7 +709,13 @@ CM_ClearMap
 void CM_ClearMap (void)
 {
 	Com_DPrintf("CM_ClearMap( %s )\n", cm.name);
+#ifdef KINGPIN_ENGINE
+	Z_FreeTags (TAG_CMODEL);
+#endif
 	memset(&cm, 0, sizeof(cm));
+#ifdef KINGPIN_ENGINE
+	cm.cmodels = cm_cmodels;
+#endif
 }
 
 /*
@@ -698,6 +754,20 @@ int		CM_NumClusters (void)
 int		CM_NumInlineModels (void)
 {
 	return cm.numcmodels;
+}
+
+/* The local server may replace CM before queued old client snapshots drain.
+ * Static inline-model addresses survive, but slots beyond the new map's
+ * model count still contain old headnodes and must not be traced. */
+qboolean CM_IsCurrentInlineModel (const cmodel_t *model)
+{
+	uintptr_t offset;
+
+	if (!model || !cm.cmodels || cm.numcmodels <= 0)
+		return false;
+	offset = (uintptr_t)model - (uintptr_t)cm.cmodels;
+	return offset < (uintptr_t)cm.numcmodels * sizeof(*model) &&
+		(offset % sizeof(*model)) == 0;
 }
 
 char	*CM_EntityString (void)
@@ -1016,7 +1086,7 @@ int CM_PointContents (vec3_t p, int headnode)
 {
 	int		l;
 
-	if (!cm.numnodes)	// map not loaded
+	if (!cm.numnodes || !CM_FiniteVector(p))
 		return 0;
 
 	l = CM_PointLeafnum_r (p, headnode);
@@ -1037,6 +1107,10 @@ int	CM_TransformedPointContents (vec3_t p, int headnode, vec3_t origin, vec3_t a
 	vec3_t		p_l;
 	vec3_t		temp;
 	vec3_t		forward, right, up;
+
+	if (!CM_FiniteVector(p) || !CM_FiniteVector(origin) ||
+		(headnode != box_headnode && !CM_FiniteVector(angles)))
+		return 0;
 
 	// subtract origin offset
 	VectorSubtract (p, origin, p_l);
@@ -1477,6 +1551,15 @@ trace_t		CM_BoxTrace (vec3_t start, vec3_t end,
 	trace_trace.fraction = 1;
 	trace_trace.surface = &(nullsurface.c);
 
+	/* Invalid transforms must not turn an empty-space query into startsolid.
+	 * In particular, NaN compares differently in the original x87 code. */
+	if (!CM_FiniteVector(start) || !CM_FiniteVector(end) ||
+		!CM_FiniteVector(mins) || !CM_FiniteVector(maxs))
+	{
+		VectorCopy (end, trace_trace.endpos);
+		return trace_trace;
+	}
+
 	if (!cm.numnodes)	// map not loaded
 		return trace_trace;
 
@@ -1575,6 +1658,16 @@ trace_t		CM_TransformedBoxTrace (vec3_t start, vec3_t end,
 	vec3_t		forward, right, up;
 	vec3_t		temp;
 	qboolean	rotated;
+
+	if (!CM_FiniteVector(origin) ||
+		(headnode != box_headnode && !CM_FiniteVector(angles)))
+	{
+		memset (&trace, 0, sizeof(trace));
+		trace.fraction = 1;
+		trace.surface = &(nullsurface.c);
+		VectorCopy (end, trace.endpos);
+		return trace;
+	}
 
 	// subtract origin offset
 	VectorSubtract (start, origin, start_l);

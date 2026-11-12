@@ -2971,6 +2971,21 @@ float AngleAdd (float a2, float a1)
 	return (a1 + a2);
 }
 
+/* Calculate rotation only when the movement scheduler knows how many actual
+ * physics steps remain. Short moves use their final step; empty moves do not
+ * rotate. This also avoids inventing an extra step for exact-length moves. */
+static void Train_SetRotationRate (edict_t *ent, float ticks)
+{
+	vec3_t turn;
+	if (ticks > 0)
+	{
+		VectorSubtract (ent->angletarget, ent->s.angles, turn);
+		VectorScale (turn, 1.0f / (ticks * FRAMETIME), ent->avelocity);
+	}
+	else
+		VectorClear (ent->avelocity);
+}
+
 void Move_Begin_rotating (edict_t *ent)
 {
 	float	frames;
@@ -2978,6 +2993,7 @@ void Move_Begin_rotating (edict_t *ent)
     // Stand still rotation 
 	if (ent->durationflag)
     {
+		Train_SetRotationRate (ent, ceilf (ent->lastduration / FRAMETIME));
 		ent->nextthink = level.time + (ent->lastduration);
 		ent->think = Move_Final;
 		return;
@@ -2985,6 +3001,7 @@ void Move_Begin_rotating (edict_t *ent)
 
 	if (((ent->moveinfo.speed * FRAMETIME) >= ent->moveinfo.remaining_distance))  
 	{
+		Train_SetRotationRate (ent, ent->moveinfo.remaining_distance > 0 ? 1 : 0);
 		Move_Final(ent);
 		return;
 	}
@@ -2992,6 +3009,7 @@ void Move_Begin_rotating (edict_t *ent)
 	VectorScale (ent->moveinfo.dir, ent->moveinfo.speed, ent->velocity);
 	frames = floor((ent->moveinfo.remaining_distance / ent->moveinfo.speed) / FRAMETIME);
 	ent->moveinfo.remaining_distance -= frames * ent->moveinfo.speed * FRAMETIME;
+	Train_SetRotationRate (ent, frames + (ent->moveinfo.remaining_distance != 0));
 	ent->nextthink = level.time + (frames * FRAMETIME);
 	ent->think = Move_Final;
 }
@@ -3007,6 +3025,7 @@ void Move_Calc_rotating (edict_t *ent, vec3_t dest, void(*func)(edict_t*))
     //gi.dprintf ("MIN%s MAX%s", vtos(ent->mins), vtos(ent->maxs));
 	
 	VectorClear (ent->velocity);
+	VectorClear (ent->avelocity);
 	VectorSubtract (dest, ent->s.origin, ent->moveinfo.dir);
 	ent->moveinfo.remaining_distance = VectorNormalize (ent->moveinfo.dir);
 	ent->moveinfo.endfunc = func;
@@ -3126,7 +3145,6 @@ void train_next_rotating (edict_t *self)
 	vec3_t			dir;
 	float			remain;
 	qboolean		first;
-	int				frames;
 
 	first = true;
 again:
@@ -3188,42 +3206,18 @@ again:
 			// Set speed from saved first node
 			self->moveinfo.speed = self->moveinfo.accel = self->moveinfo.decel = self->speed;
 
-			frames = floor((remain / self->moveinfo.speed) / FRAMETIME);	
-			if (frames) frames++;
-
-			if (self->rotate[0]) self->avelocity[0] = (self->rotate[0] / frames)*10;	
-				else self->avelocity[0] = 0;
-			if (self->rotate[1]) self->avelocity[1] = (self->rotate[1] / frames)*10;	
-				else self->avelocity[1] = 0;		
-			if (self->rotate[2]) self->avelocity[2] = (self->rotate[2] / frames)*10;	
-				else self->avelocity[2] = 0;  
 		}
 		else if (remain)
 		{
 			// Set speed from duration saved from current node	
 			self->moveinfo.speed = self->moveinfo.accel = self->moveinfo.decel = (remain / (self->duration));
 
-			frames = floor((remain / self->moveinfo.speed) / FRAMETIME);	
-			if (frames) frames++;
-
-			if (self->rotate[0]) self->avelocity[0] = (self->rotate[0] / frames)*10;	
-				else self->avelocity[0] = 0;
-			if (self->rotate[1]) self->avelocity[1] = (self->rotate[1] / frames)*10;	
-				else self->avelocity[1] = 0;		
-			if (self->rotate[2]) self->avelocity[2] = (self->rotate[2] / frames)*10;	
-				else self->avelocity[2] = 0;  
 		}
 		else
 		{
 			// Set stand still duration flag
 			self->durationflag = 1;
 			
-			if (self->rotate[0]) self->avelocity[0] = (self->rotate[0] / (self->duration/*+0.1*/));	
-				else self->avelocity[0] = 0;
-			if (self->rotate[1]) self->avelocity[1] = (self->rotate[1] / (self->duration/*+0.1*/));	
-				else self->avelocity[1] = 0;		
-			if (self->rotate[2]) self->avelocity[2] = (self->rotate[2] / (self->duration/*+0.1*/));	
-				else self->avelocity[2] = 0;  
 		}
 
 		self->firstnode = 0;  
@@ -3247,30 +3241,12 @@ again:
 			// Set speed from saved current node
 			self->moveinfo.speed = self->moveinfo.accel = self->moveinfo.decel = self->speed;		
 			
-			frames = floor((remain / self->moveinfo.speed) / FRAMETIME);	
-			if (frames) frames++;
-			
-			if (self->rotate[0]) self->avelocity[0] = (self->rotate[0] / frames)*10;	
-				else self->avelocity[0] = 0;
-			if (self->rotate[1]) self->avelocity[1] = (self->rotate[1] / frames)*10;	
-				else self->avelocity[1] = 0;		
-			if (self->rotate[2]) self->avelocity[2] = (self->rotate[2] / frames)*10;	
-				else self->avelocity[2] = 0;    
 		}
 		else if (remain)
 		{
 			// Set speed from duration saved from current node	
 			self->moveinfo.speed = self->moveinfo.accel = self->moveinfo.decel = ((remain / self->duration));		
 			
-			frames = floor((remain / self->moveinfo.speed) / FRAMETIME);	
-			if (frames) frames++;
-			
-			if (self->rotate[0]) self->avelocity[0] = (self->rotate[0] / frames)*10;	
-				else self->avelocity[0] = 0;
-			if (self->rotate[1]) self->avelocity[1] = (self->rotate[1] / frames)*10;	
-				else self->avelocity[1] = 0;		
-			if (self->rotate[2]) self->avelocity[2] = (self->rotate[2] / frames)*10;	
-				else self->avelocity[2] = 0;    
 		}
 		else
 		{
@@ -3279,12 +3255,6 @@ again:
 
 			self->moveinfo.speed = self->moveinfo.accel = self->moveinfo.decel = 0;
 
-			if (self->rotate[0]) self->avelocity[0] = (self->rotate[0] / (self->duration));	
-				else self->avelocity[0] = 0;
-			if (self->rotate[1]) self->avelocity[1] = (self->rotate[1] / (self->duration));	
-				else self->avelocity[1] = 0;		
-			if (self->rotate[2]) self->avelocity[2] = (self->rotate[2] / (self->duration));	
-				else self->avelocity[2] = 0;   
 		}
 	}
 	

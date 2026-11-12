@@ -504,16 +504,8 @@ void ExitLevel (void)
     level.helpchange = 0;
 	// END JOSEPH
 
-	if (level.bar_lvl)
-	{
-		extern void Cmd_HolsterBar_f (edict_t *ent);
-		edict_t *player;
-		
-		player = &g_edicts[1];
-		level.bar_lvl = false;
-		
-		Cmd_HolsterBar_f (player);
-	}
+	// Leaving a weapon-free level must preserve the player's holstered weapon.
+	level.bar_lvl = false;
 		
 	// level.pawn_time = 0;
 	// level.pawn_exit = false;

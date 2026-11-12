@@ -25,12 +25,12 @@ void vectoangles (vec3_t value1, vec3_t angles)
 	}
 	else
 	{
-		yaw = /*(int)*/ (atan2(value1[1], value1[0]) * 180 / M_PI);
+		yaw = /*(int)*/ (atan2f(value1[1], value1[0]) * 180.0f / (float)M_PI);
 		if (yaw < 0)
 			yaw += 360;
 
-		forward = sqrt (value1[0]*value1[0] + value1[1]*value1[1]);
-		pitch = /*(int)*/ (atan2(value1[2], forward) * 180 / M_PI);
+		forward = sqrtf (value1[0]*value1[0] + value1[1]*value1[1]);
+		pitch = /*(int)*/ (atan2f(value1[2], forward) * 180.0f / (float)M_PI);
 		if (pitch < 0)
 			pitch += 360;
 	}
@@ -703,7 +703,7 @@ vec_t VectorNormalize (vec3_t v)
 	float	length, ilength;
 
 	length = v[0]*v[0] + v[1]*v[1] + v[2]*v[2];
-	length = sqrt (length);		// FIXME
+	length = sqrtf (length);		// FIXME
 
 	if (length)
 	{
@@ -722,7 +722,7 @@ vec_t VectorNormalize2 (vec3_t v, vec3_t out)
 	float	length, ilength;
 
 	length = v[0]*v[0] + v[1]*v[1] + v[2]*v[2];
-	length = sqrt (length);		// FIXME
+	length = sqrtf (length);		// FIXME
 
 	if (length)
 	{
@@ -777,8 +777,6 @@ void CrossProduct (vec3_t v1, vec3_t v2, vec3_t cross)
 	cross[2] = v1[0]*v2[1] - v1[1]*v2[0];
 }
 
-double sqrt(double x);
-
 vec_t VectorLength(vec3_t v)
 {
 	int		i;
@@ -787,7 +785,7 @@ vec_t VectorLength(vec3_t v)
 	length = 0;
 	for (i=0 ; i< 3 ; i++)
 		length += v[i]*v[i];
-	length = sqrt (length);		// FIXME
+	length = sqrtf (length);
 
 	return length;
 }

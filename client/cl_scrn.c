@@ -1157,6 +1157,18 @@ void SCR_TouchPics (void)
 #ifdef KINGPIN_ENGINE
 float CalcFov (float fov_x, float width, float height);
 
+#include "notebook_ru.h"
+
+const char *CL_LocalizeNotebookText (const char *text)
+{
+	int i;
+
+	for (i = 0; i < sizeof(notebook_ru) / sizeof(notebook_ru[0]); i++)
+		if (!strcmp (text, notebook_ru[i].english))
+			return notebook_ru[i].russian;
+	return text;
+}
+
 /*
 ================
 DrawHUDString2
@@ -1164,7 +1176,7 @@ DrawHUDString2
 kingpin.exe @00412af0: DrawHUDString with the second font and 12 pixel lines
 ================
 */
-static void DrawHUDString2 (char *string, int x, int y, int centerwidth, int xor)
+static void DrawHUDString2 (const char *string, int x, int y, int centerwidth, int xor)
 {
 	int		margin;
 	char	line[1024];
@@ -1808,9 +1820,9 @@ void SCR_ExecuteLayoutString (char *s, int hud)
 			y = -160 - (int)(sy * -300);
 			SCR_HudPic (x, y, "note", 0.5f);
 			token = COM_Parse (&s);
-			DrawHUDString2 (token, x + 16, y + 27, 0, 0x80);
+			DrawHUDString2 (CL_LocalizeNotebookText (token), x + 16, y + 27, 0, 0x80);
 			token = COM_Parse (&s);
-			DrawHUDString2 (token, x + 16, y + 75, 0, 0x80);
+			DrawHUDString2 (CL_LocalizeNotebookText (token), x + 16, y + 75, 0, 0x80);
 			continue;
 		}
 

@@ -256,6 +256,9 @@ typedef struct
 	int			downloadnumber;
 	dltype_t	downloadtype;
 	int			downloadpercent;
+#ifdef KINGPIN_ENGINE
+	qboolean download2;			// 1.21 chunk transfer is active
+#endif
 
 // demo recording info must be here, so it isn't cleared on level change
 	qboolean	demorecording;
@@ -386,6 +389,12 @@ extern	sizebuf_t	net_message;
 void DrawString (int x, int y, char *s);
 void DrawAltString (int x, int y, char *s);	// toggle high bit
 qboolean	CL_CheckOrDownloadFile (char *filename);
+#ifdef KINGPIN_ENGINE
+void CL_CancelDownload2 (void);
+qboolean CL_SendDownload2 (void);
+extern cvar_t *cl_oldchat;
+extern cvar_t *rate;
+#endif
 
 void CL_AddNetgraph (void);
 
@@ -592,6 +601,9 @@ void CL_AddLightStyles (void);
 
 void CL_PrepRefresh (void);
 void CL_RegisterSounds (void);
+#ifdef KINGPIN_ENGINE
+void CL_GetPlayerSkinFolders (char *modeldir, char headdir[64], char bodydir[64], char legsdir[64]);
+#endif
 
 void CL_Quit_f (void);
 
@@ -666,6 +678,7 @@ void CL_ParseClientinfo (int player);
 void CL_Download_f (void);
 #ifdef KINGPIN_ENGINE
 void CL_ConfigStringChanged (int i);
+const char *CL_LocalizeNotebookText (const char *text);
 #endif
 
 //

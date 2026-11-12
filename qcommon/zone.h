@@ -90,6 +90,7 @@ Zone block
 //...
 #define	TAG_GAME	765
 #define	TAG_LEVEL	766
+#define TAG_CMODEL 767
 
 void Memory_Init (int hunksize);
 

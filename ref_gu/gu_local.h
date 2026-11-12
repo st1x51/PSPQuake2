@@ -378,6 +378,7 @@ void	Draw_StretchPicTransparent (int x, int y, int w, int h, char *name, float a
 void	Draw_CharUpper (int x, int y, int c);
 void	Draw_Char2 (int x, int y, int c);
 void	Draw_BigChar (int x, int y, int c, float *color);
+void Draw_ChatChar (int x, int y, int c, float *color, float scale, float alpha);
 void	Draw_FillRGBA (int x, int y, int w, int h, float r, float g, float b, float a);
 #endif
 

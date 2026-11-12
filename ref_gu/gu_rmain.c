@@ -282,10 +282,17 @@ void R_DrawSpriteModel (entity_t *e)
 	if ( e->flags & RF_TRANSLUCENT )
 		alpha = e->alpha;
 
+#ifdef KINGPIN_ENGINE
+	// ref_gl 1.21 @1000e880 blends every sprite and disables alpha testing.
+	sceGuEnable (GU_BLEND);
+	sceGuBlendFunc (GU_ADD, GU_SRC_ALPHA, GU_ONE_MINUS_SRC_ALPHA, 0, 0);
+	sceGuDisable (GU_ALPHA_TEST);
+#else
 	if ( alpha != 1.0F )
 		sceGuEnable (GU_BLEND);
 	else
 		sceGuEnable (GU_ALPHA_TEST);
+#endif
 
 #ifdef KINGPIN_ENGINE
 	if (e->flags & RF_FACING)
@@ -335,8 +342,10 @@ void R_DrawSpriteModel (entity_t *e)
 
 	if ( alpha != 1.0F )
 		sceGuDisable (GU_BLEND);
+#ifndef KINGPIN_ENGINE
 	else
 		sceGuDisable (GU_ALPHA_TEST);
+#endif
 
 	sceGuColor (GU_HCOLOR_DEFAULT);
 
@@ -595,7 +604,9 @@ void GL_DrawParticles( int num_particles, const particle_t *particles, qboolean 
 		if (scale < 20)
 			scale = gl_particle_scale->value;
 		else
-			scale = gl_particle_scale->value + scale * 0.004f;
+			/* ref_gl 1.21: primary 1000f100 uses .002, secondary
+			 * 1000f980 uses .004. Keep the PSP base-size setting. */
+			scale = gl_particle_scale->value + scale * (secondary ? 0.004f : 0.002f);
 
 		alpha = Q_bound (0.0f, p->alpha, 1.0f);
 
@@ -725,16 +736,18 @@ static void GL_DrawSpriteParticles ( int num_particles, const particle_t *partic
 		if (!image)
 			image = r_notexture;
 
-		if (p->type == SFX_SPRITE_SURF_BLOOD_POOL)
+		if (!secondary && p->type == SFX_SPRITE_SURF_BLOOD_POOL)
 		{
 			float elapsed = R_SFXTime () - p->frame * 0.001f;
 			size = elapsed < 4.0f ? elapsed * 6.0f : 24.0f;
 			if (size < 0.0f)
 				size = 0.0f;
-			VectorSet (right, size, 0, 0);
-			VectorSet (up, 0, size, 0);
+			/* AngleVectors({90,0,0}) in ref_gl 1.21 1000f79c. */
+			VectorSet (right, 0, -size, 0);
+			VectorSet (up, size, 0, 0);
 
-			color.c = d_8to24table[p->color];
+			/* ref_gl 1.21 1000f7a4: gray, opaque blood pool. */
+			color.c = 0xff7f7f7f;
 		}
 		else if (secondary && p->type == SFX_SPRITE_RAIN)
 		{
@@ -764,14 +777,16 @@ static void GL_DrawSpriteParticles ( int num_particles, const particle_t *partic
 		}
 		else
 		{
-			size = (p->type == SFX_SPRITE_BLOOD_DRIP) ? 0.5f : 8.0f;
+			size = (!secondary && p->type == SFX_SPRITE_BLOOD_DRIP) ? 0.5f : 8.0f;
 			VectorScale (vright, size, right);
 			VectorScale (vup, size, up);
 
-			color.c = d_8to24table[p->color];
+			/* Sprite images supply their own RGB in both retail passes. */
+			color.c = GU_HCOLOR_DEFAULT;
 		}
 
-		alpha = Q_bound(0.0f, p->alpha, 1.0f);
+		alpha = (!secondary && p->type == SFX_SPRITE_SURF_BLOOD_POOL)
+			? 1.0f : Q_bound(0.0f, p->alpha, 1.0f);
 		color.a = (byte)(alpha * 255.0f);
 
 		GL_Bind (image);
@@ -785,21 +800,23 @@ static void GL_DrawSpriteParticles ( int num_particles, const particle_t *partic
 		t1 = (float)image->th / image->uplheight;
 
 		gu_vert_ftv_t* const out = (gu_vert_ftv_t*)sceGuGetMemory (sizeof(gu_vert_ftv_t) * 4);
-		out[0].uv[0] = s0;
+		/* Retail pairs (1,0), (1,1), (0,1), (0,0) with these
+		 * corners in both sprite-particle passes. */
+		out[0].uv[0] = s1;
 		out[0].uv[1] = t0;
 		VectorSubtract (p->origin, right, out[0].xyz);
-		VectorAdd (out[0].xyz, up, out[0].xyz);
+		VectorSubtract (out[0].xyz, up, out[0].xyz);
 		out[1].uv[0] = s1;
-		out[1].uv[1] = t0;
-		VectorAdd (p->origin, right, out[1].xyz);
+		out[1].uv[1] = t1;
+		VectorSubtract (p->origin, right, out[1].xyz);
 		VectorAdd (out[1].xyz, up, out[1].xyz);
-		out[2].uv[0] = s1;
+		out[2].uv[0] = s0;
 		out[2].uv[1] = t1;
 		VectorAdd (p->origin, right, out[2].xyz);
-		VectorSubtract (out[2].xyz, up, out[2].xyz);
+		VectorAdd (out[2].xyz, up, out[2].xyz);
 		out[3].uv[0] = s0;
-		out[3].uv[1] = t1;
-		VectorSubtract (p->origin, right, out[3].xyz);
+		out[3].uv[1] = t0;
+		VectorAdd (p->origin, right, out[3].xyz);
 		VectorSubtract (out[3].xyz, up, out[3].xyz);
 
 		sceGuDrawArray (GU_TRIANGLE_FAN, GU_TEXTURE_32BITF | GU_VERTEX_32BITF, 4, 0, out);
@@ -984,7 +1001,8 @@ R_DrawFirescreen
 static void R_DrawFirescreen (void)
 {
 	int	alpha;
-	short	s, t;
+	float s, t, tan_x, tan_y, extent_x, extent_y;
+	float center_x, center_y, half_width, half_height, u, v, du, dv;
 
 	alpha = (int)(v_blend[3] * 1275.0f);
 	if(alpha > 255)
@@ -1001,21 +1019,37 @@ static void R_DrawFirescreen (void)
 
 	GL_Bind (r_firescreentexture);
 
-	s = (rand () & 0x7fff) * (r_firescreentexture->sh * 0.2f / 32767.0f);
-	t = (rand () & 0x7fff) * (r_firescreentexture->th * 0.2f / 32767.0f);
+	s = (rand () & 0x7fff) * (0.2f / 32767.0f);
+	t = (rand () & 0x7fff) * (0.2f / 32767.0f);
 
-	gu_vert_htv_t* const out = (gu_vert_htv_t*)sceGuGetMemory(sizeof(gu_vert_htv_t) * 2);
-	out[0].u = s;
-	out[0].v = t;
-	out[0].x = 0;
-	out[0].y = 0;
+	// Retail's quad is at depth 10 with half-extents 50, after the fixed
+	// -90 X / +90 Z rotations. Project its visible portion into GU 2D;
+	// this preserves both UV orientation and the FOV-dependent crop.
+	tan_y = tanf (r_newrefdef.fov_y * (M_PI / 360.0f));
+	tan_x = tan_y * (float)r_newrefdef.width / r_newrefdef.height;
+	extent_x = Q_min (1.0f, 5.0f / tan_x);
+	extent_y = Q_min (1.0f, 5.0f / tan_y);
+	center_x = r_newrefdef.x + r_newrefdef.width * 0.5f;
+	center_y = r_newrefdef.y + r_newrefdef.height * 0.5f;
+	half_width = r_newrefdef.width * 0.5f * extent_x;
+	half_height = r_newrefdef.height * 0.5f * extent_y;
+	u = s + 0.4f;
+	v = t + 0.4f;
+	du = 0.08f * tan_x * extent_x;
+	dv = 0.08f * tan_y * extent_y;
+
+	gu_vert_ftv_t* const out = (gu_vert_ftv_t*)sceGuGetMemory(sizeof(gu_vert_ftv_t) * 2);
+	out[0].u = r_firescreentexture->sl + (u + du) * (r_firescreentexture->sh - r_firescreentexture->sl);
+	out[0].v = r_firescreentexture->tl + (v + dv) * (r_firescreentexture->th - r_firescreentexture->tl);
+	out[0].x = center_x - half_width;
+	out[0].y = center_y - half_height;
 	out[0].z = 0;
-	out[1].u = s + r_firescreentexture->sh * 0.8f;
-	out[1].v = t + r_firescreentexture->th * 0.8f;
-	out[1].x = vid.width;
-	out[1].y = vid.height;
+	out[1].u = r_firescreentexture->sl + (u - du) * (r_firescreentexture->sh - r_firescreentexture->sl);
+	out[1].v = r_firescreentexture->tl + (v - dv) * (r_firescreentexture->th - r_firescreentexture->tl);
+	out[1].x = center_x + half_width;
+	out[1].y = center_y + half_height;
 	out[1].z = 0;
-	sceGuDrawArray (GU_SPRITES, GU_TEXTURE_16BIT | GU_VERTEX_16BIT | GU_TRANSFORM_2D, 2, 0, out);
+	sceGuDrawArray (GU_SPRITES, GU_TEXTURE_32BITF | GU_VERTEX_32BITF | GU_TRANSFORM_2D, 2, 0, out);
 
 	GL_TexEnv (GU_TFX_REPLACE);
 	sceGuDisable (GU_BLEND);
@@ -1039,7 +1073,8 @@ void R_PolyBlend (void)
 		return;
 
 #ifdef KINGPIN_ENGINE
-	if(r_firescreentexture && v_blend[0] > 0.8f &&
+	// The DLL compares red with 0.8 (v_blend[0] >= 0.8f). Single precision on PSP.
+	if(r_firescreentexture && v_blend[0] >= 0.8f &&
 		v_blend[1] > 0.5f && v_blend[1] < v_blend[0] && v_blend[2] < 0.2f)
 	{
 		R_DrawFirescreen();
@@ -1047,6 +1082,9 @@ void R_PolyBlend (void)
 	}
 #endif
 
+	// ref_gl 1.21 @1000ff30 disables alpha testing for every screen blend.
+	// R_DrawParticles leaves it enabled; low-alpha flashes must still draw.
+	sceGuDisable (GU_ALPHA_TEST);
 	sceGuEnable (GU_BLEND);
 	sceGuDisable (GU_DEPTH_TEST);
 	sceGuDisable (GU_TEXTURE_2D);
@@ -1066,6 +1104,7 @@ void R_PolyBlend (void)
 	sceGuEnable (GU_TEXTURE_2D);
 
 	sceGuColor (GU_HCOLOR_DEFAULT);
+	sceGuEnable (GU_ALPHA_TEST);
 }
 
 //=======================================================================
@@ -1075,6 +1114,35 @@ void R_PolyBlend (void)
 R_SetupFrame
 ===============
 */
+#ifdef KINGPIN_ENGINE
+static void R_ClearViewRect (qboolean clear_color)
+{
+	int x1 = Q_max (0, r_newrefdef.x);
+	int y1 = Q_max (0, r_newrefdef.y);
+	int x2 = Q_min (vid.width, r_newrefdef.x + r_newrefdef.width);
+	int y2 = Q_min (vid.height, r_newrefdef.y + r_newrefdef.height);
+	int mask = GU_DEPTH_BUFFER_BIT;
+	gu_vert_hcv_t *out;
+	if (x1 >= x2 || y1 >= y2)
+		return;
+	if (clear_color)
+		mask |= GU_COLOR_BUFFER_BIT | GU_STENCIL_BUFFER_BIT;
+	out = sceGuGetMemory (sizeof(*out) * 2);
+	out[0].c = out[1].c = GU_HCOLOR_4F(0.3f, 0.3f, 0.3f, 1.0f);
+	out[0].x = x1; out[0].y = y1; out[0].z = -1;
+	out[1].x = x2; out[1].y = y2; out[1].z = -1;
+	// PSPSDK sceGuClear uses this same GE clear-mode command (0xd3),
+	// but builds framebuffer-sized sprites. Supply only the view rectangle.
+	sceGuEnable (GU_SCISSOR_TEST);
+	sceGuScissor (x1, y1, x2, y2);
+	sceGuSendCommandi (0xd3, (mask << 8) | 1);
+	sceGuDrawArray (GU_SPRITES, GU_COLOR_8888 | GU_VERTEX_16BIT | GU_TRANSFORM_2D,
+		2, 0, out);
+	sceGuSendCommandi (0xd3, 0);
+	// GU scissoring also bounds subsequent 3D/2D draws; keep it enabled.
+}
+#endif
+
 void R_SetupFrame (void)
 {
 	int i;
@@ -1132,14 +1200,11 @@ void R_SetupFrame (void)
 #ifdef KINGPIN_ENGINE
 	if ( r_newrefdef.rdflags & RDF_NOWORLDMODELALPHA )
 	{
-		/* Inventory/menu model views retain the existing colour buffer and
-		 * clear only depth inside their viewport (FUN_1000ff80). */
-		sceGuEnable( GU_SCISSOR_TEST );
-		sceGuScissor( r_newrefdef.x, vid.height - r_newrefdef.height - r_newrefdef.y,
-			r_newrefdef.width, r_newrefdef.height );
-		sceGuClear( GU_DEPTH_BUFFER_BIT | GU_FAST_CLEAR_BIT );
-		sceGuDisable( GU_SCISSOR_TEST );
+		// 1.21 @100103b0 gives alpha previews priority when both flags are set.
+		R_ClearViewRect (false);
 	}
+	else if (r_newrefdef.rdflags & RDF_NOWORLDMODEL)
+		R_ClearViewRect (true);
 #endif
 #if 0 // not used, sceGuClear has a bug
 	// clear out the portion of the screen that the NOWORLDMODEL defines
@@ -1179,7 +1244,7 @@ void R_SetupGL (void)
 	w = x2 - x;
 	h = y - y2;
 
-	sceGuViewport ( 2048 /*- ( vid.width >> 1 ) + x + ( w >> 1 )*/,
+	sceGuViewport ( 2048 - (vid.width >> 1) + x + (w >> 1),
 					2048 + (vid.height >> 1) - y2 - (h >> 1),
 					w, h);
 	sceGuScissor (x, vid.height - y2 - h, x + w, vid.height - y2);
@@ -1350,7 +1415,11 @@ void R_RenderView (refdef_t *fd)
 
 	r_newrefdef = *fd;
 
+#ifdef KINGPIN_ENGINE
+	if (!r_worldmodel && !( r_newrefdef.rdflags & (RDF_NOWORLDMODEL | RDF_NOWORLDMODELALPHA) ) )
+#else
 	if (!r_worldmodel && !( r_newrefdef.rdflags & RDF_NOWORLDMODEL ) )
+#endif
 		ri.Sys_Error (ERR_DROP, "R_RenderView: NULL worldmodel");
 
 	if (r_speeds->value)
@@ -1528,7 +1597,11 @@ void R_SetLightLevel (void)
 {
 	vec3_t		shadelight;
 
+#ifdef KINGPIN_ENGINE
+	if (r_newrefdef.rdflags & (RDF_NOWORLDMODEL | RDF_NOWORLDMODELALPHA))
+#else
 	if (r_newrefdef.rdflags & RDF_NOWORLDMODEL)
+#endif
 		return;
 
 	// save off light value for server to look at (BIG HACK!)
@@ -1889,6 +1962,79 @@ void R_SetPalette (const unsigned char *palette)
 */
 void R_DrawBeam( entity_t *e )
 {
+#ifdef KINGPIN_ENGINE
+	// ref_gl 1.21 @10012190 draws a six-sided tube, independent of the
+	// camera. Keep longitudinal slices for the GU's screen-window limits.
+	vec3_t mins, maxs, direction, normal, perpendicular, tangent, ring[7];
+	float length, radius, inv_num_segs;
+	int i, j, segment, num_segs;
+	gu_color_32_t color;
+	gu_vert_fv_t *out;
+
+	radius = e->frame / 2; // Retail performs signed integer division first.
+	for (i = 0; i < 3; i++)
+	{
+		mins[i] = Q_min (e->origin[i], e->oldorigin[i]) - fabsf(radius);
+		maxs[i] = Q_max (e->origin[i], e->oldorigin[i]) + fabsf(radius);
+	}
+	if (GU_ClipCullBox (mins, maxs) == GU_CULL_OUTSIDE)
+		return;
+
+	VectorSubtract (e->oldorigin, e->origin, direction);
+	VectorCopy (direction, normal);
+	length = VectorNormalize (normal);
+	if (length == 0.0f)
+		return;
+
+	PerpendicularVector (perpendicular, normal);
+	VectorScale (perpendicular, radius, perpendicular);
+	// Same rotation order as RotatePointAroundVector, without trig or matrices.
+	CrossProduct (normal, perpendicular, tangent);
+	for (j = 0; j < 3; j++)
+	{
+		float half = perpendicular[j] * 0.5f;
+		float side = tangent[j] * 0.8660254037844386f;
+		ring[0][j] = perpendicular[j];
+		ring[1][j] = half + side;
+		ring[2][j] = -half + side;
+		ring[3][j] = -ring[0][j];
+		ring[4][j] = -ring[1][j];
+		ring[5][j] = -ring[2][j];
+	}
+	for (i = 0; i < 6; i++)
+		VectorAdd (e->origin, ring[i], ring[i]);
+	VectorCopy (ring[0], ring[6]);
+
+	num_segs = Q_bound (1, (int)(length / 64.0f), 32);
+	inv_num_segs = 1.0f / num_segs;
+	out = sceGuGetMemory (sizeof(*out) * 14 * num_segs);
+	for (segment = 0; segment < num_segs; segment++)
+	{
+		vec3_t start_offset, end_offset;
+		gu_vert_fv_t *vertices = out + segment * 14;
+		VectorScale (direction, segment * inv_num_segs, start_offset);
+		VectorScale (direction, (segment + 1) * inv_num_segs, end_offset);
+		for (i = 0; i <= 6; i++)
+		{
+			VectorAdd (ring[i], start_offset, vertices[i * 2].xyz);
+			VectorAdd (ring[i], end_offset, vertices[i * 2 + 1].xyz);
+		}
+	}
+	color.c = d_8to24table[e->skinnum & 0xff];
+	color.a = (byte)(e->alpha * 255.0f);
+	sceGuDisable (GU_TEXTURE_2D);
+	sceGuEnable (GU_BLEND);
+	sceGuDepthMask (GU_TRUE);
+	sceGuColor (color.c);
+	for (segment = 0; segment < num_segs; segment++)
+		sceGuDrawArray (GU_TRIANGLE_STRIP, GU_VERTEX_32BITF | GU_TRANSFORM_3D,
+			14, 0, out + segment * 14);
+	sceGuEnable (GU_TEXTURE_2D);
+	sceGuDisable (GU_BLEND);
+	sceGuDepthMask (GU_FALSE);
+	sceGuColor (GU_HCOLOR_DEFAULT);
+	DEBUG_DrawBeamAABB (mins, maxs);
+#else
 #define BEAM_SEGS_LENGTH 64.0f
 
 	vec3_t	mins, maxs;
@@ -1966,6 +2112,7 @@ void R_DrawBeam( entity_t *e )
 	sceGuColor (GU_HCOLOR_DEFAULT);
 
 	DEBUG_DrawBeamAABB (mins, maxs);
+#endif
 }
 
 //===================================================================
@@ -2049,6 +2196,7 @@ refexport_t GetRefAPI (refimport_t rimp )
 	re.DrawCharUpper = Draw_CharUpper;
 	re.DrawChar2 = Draw_Char2;
 	re.DrawBigChar = Draw_BigChar;
+	re.DrawChatChar = Draw_ChatChar;
 	re.DrawTileClear = Draw_TileClear;
 	re.DrawFill = Draw_Fill;
 	re.DrawFillRGBA = Draw_FillRGBA;

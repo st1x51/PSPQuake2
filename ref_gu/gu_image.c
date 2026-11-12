@@ -47,8 +47,8 @@ GL_SetTexturePalette
 void GL_SetTexturePalette( unsigned palette[256] )
 {
 #ifdef KINGPIN_ENGINE
-	if (palette == (unsigned *)gl_state.currentpalette)
-		return;
+	/* R_SetPalette rewrites r_rawpalette in place (cinematics/gamma).
+	 * Pointer equality does not mean the GE has the new palette contents. */
 	gl_state.currentpalette = (byte *)palette;
 #endif
 
@@ -81,17 +81,23 @@ void GL_Bind (image_t *image)
 	if (!image || gl_nobind->value)
 		image = r_notexture;
 
-	if (gl_state.currenttexture == image)
-		return;
-
 #ifdef KINGPIN_ENGINE
-	if (image->palette && image->palette != gl_state.currentpalette)
+	/* Built-in images can be created before R_SetPalette initializes the
+	 * screen palette. Resolve their shared palette when binding as well. */
+	byte *palette = image->palette;
+	if (!palette && image->format == GU_PSM_T8)
+		palette = gl_state.screenpalette;
+	if (palette && palette != gl_state.currentpalette)
 	{
 		sceGuClutMode (GU_PSM_8888, 0, 0xff, 0);
-		sceGuClutLoad (32, image->palette);
-		gl_state.currentpalette = image->palette;
+		sceGuClutLoad (32, palette);
+		gl_state.currentpalette = palette;
 	}
 #endif
+
+	/* Palette changes can happen without changing the bound image. */
+	if (gl_state.currenttexture == image)
+		return;
 
 	// Set texture parameters
 	sceGuTexMode (image->format, 0, 0, (image->flags & IMG_FLAG_SWIZZLED) ? GU_TRUE : GU_FALSE);
@@ -374,6 +380,8 @@ void LoadPCX (char *filename, byte **pic, byte **palette, int *width, int *heigh
 			srcpal += 3;
 			dstpal += 4;
 		}
+		// ref_gl 1.21 GL_Upload8WithPalette @100042f0 reserves 255 for transparency.
+		(*palette)[255 * 4 + 3] = 0;
 #else
 		*palette = malloc(768);
 		if(!*palette)
@@ -463,6 +471,11 @@ static void LoadTGA (char *name, byte **pic, int *width, int *height)
 		return;
 	}
 
+	if (length < 18)
+	{
+		ri.Con_Printf (PRINT_ALL, "Corrupt tga file %s\n", name);
+		return;
+	}
 	buf_p = buffer;
 
 	targa_header.id_length = *buf_p++;
@@ -499,6 +512,18 @@ static void LoadTGA (char *name, byte **pic, int *width, int *height)
 
 	columns = targa_header.width;
 	rows = targa_header.height;
+	// 1.21 checks raw payload length before decoding. Validate the header
+	// and allocation size too, before arithmetic or advancing past the ID.
+	if (columns <= 0 || rows <= 0 ||
+		(size_t)columns * rows > 0x1fffffffU ||
+		(size_t)targa_header.id_length > length - 18 ||
+		(targa_header.image_type == 2 &&
+		 (size_t)columns * rows >
+		 (length - 18 - targa_header.id_length) / (targa_header.pixel_size / 8)))
+	{
+		ri.Con_Printf (PRINT_ALL, "Corrupt tga file %s\n", name);
+		return;
+	}
 	numPixels = columns * rows;
 
 	if (width)
@@ -1005,6 +1030,15 @@ GL_SetTextureDimensions
 static void GL_SetTextureDimensions (image_t *image, int width, int height)
 {
 	int		scaled_width, scaled_height;
+	float	max_size = TEXTURE_SIZE_MAX;
+
+	// Retail clamps the resulting dimensions to at least one. Bound the
+	// halving loop too: a negative limit would keep shifting zero forever.
+	if (!(max_size >= 1.0f))
+		max_size = 1.0f;
+	// GU texture dimensions cannot exceed 512, regardless of the cvar.
+	if (max_size > 512.0f)
+		max_size = 512.0f;
 
 	// store original sizes
 	image->width = width;
@@ -1034,9 +1068,9 @@ static void GL_SetTextureDimensions (image_t *image, int width, int height)
 		}
 	}
 
-	if (scaled_width > TEXTURE_SIZE_MAX || scaled_height > TEXTURE_SIZE_MAX)
+	if (scaled_width > max_size || scaled_height > max_size)
 	{
-		while (scaled_width > TEXTURE_SIZE_MAX || scaled_height > TEXTURE_SIZE_MAX)
+		while (scaled_width > max_size || scaled_height > max_size)
 		{
 			scaled_width >>= 1;
 			scaled_height >>= 1;
@@ -1241,6 +1275,18 @@ void GL_UploadTexture (image_t *image, byte *pic, byte *pal, int width, int heig
 		{
 			rgba = ri.Hunk_Alloc (image->uplwidth * image->uplheight * 4);
 			GL_ResampleTexture32 (pic, width, height, rgba, image->uplwidth, image->uplheight);
+		}
+		if (IMG_IS_SFX(image))
+		{
+			/* Blood RGB is often below 16: packing raw texels into 4444
+			 * erases the red channel. Apply the sprite gamma before packing,
+			 * as the GL upload does, and leave caller data/alpha untouched. */
+			if (rgba == pic)
+			{
+				rgba = ri.Hunk_Alloc (image->uplwidth * image->uplheight * 4);
+				memcpy (rgba, pic, image->uplwidth * image->uplheight * 4);
+			}
+			GL_LightScaleTexture ((unsigned *)rgba, image->uplwidth, image->uplheight, true);
 		}
 		GL_PixelConverter (tempbuff, rgba, image->uplwidth, image->uplheight,
 			GU_PSM_8888, GU_PSM_4444);
@@ -1496,7 +1542,13 @@ static image_t *GL_LoadPicPaletted (char *name, byte *pic, byte *pal, int width,
 		image->flags |= IMG_FORMAT_IND_32;
 	}
 
-	if (IMG_IS_SKIN(image) && IMG_IS_IND(image))
+	// 1.21's separate LoadPicWithPalette bypasses flood fill and the shared
+	// scrap, whose indices belong to the game's palette, not this image's.
+	if (IMG_IS_SKIN(image) && IMG_IS_IND(image)
+#ifdef KINGPIN_ENGINE
+		&& !pal
+#endif
+		)
 		R_FloodFillSkin(pic, width, height);
 
 	// use external buffer
@@ -1507,7 +1559,11 @@ static image_t *GL_LoadPicPaletted (char *name, byte *pic, byte *pal, int width,
 	}
 
 	// load little pics into the scrap
-	if (IMG_IS_PIC(image) && IMG_IS_IND(image) && width < 64 && height < 64)
+	if (IMG_IS_PIC(image) && IMG_IS_IND(image) && width < 64 && height < 64
+#ifdef KINGPIN_ENGINE
+		&& !pal
+#endif
+		)
 	{
 		if (GL_UploadScrap (image, pic, width, height))
 			return image;
@@ -1529,6 +1585,7 @@ image_t *GL_LoadPic (char *name, byte *pic, int width, int height, int flags)
 {
 	return GL_LoadPicPaletted(name, pic, NULL, width, height, flags);
 }
+
 
 
 /*
@@ -1806,6 +1863,15 @@ GL_FreeImage
 */
 void GL_FreeImage (image_t *image)
 {
+	// Slots and palette allocations can be reused by the next map. Do not
+	// retain bindings (or the reflection owner) across their lifetime.
+	if (gl_state.currenttexture == image)
+		gl_state.currenttexture = NULL;
+	if (image->palette && gl_state.currentpalette == image->palette)
+		gl_state.currentpalette = NULL;
+	if (r_worldreflectiontexture == image)
+		r_worldreflectiontexture = NULL;
+
 #ifdef USE_HASH_FOR_TEXTURES
 	// remove from hash
 	image_t	**prev;

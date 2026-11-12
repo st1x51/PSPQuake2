@@ -568,7 +568,8 @@ static qboolean Mod_TestSpecularTexture (const char *texture, int flags)
 	};
 	int mode = (int)gl_test_specular->value;
 	int i;
-	if (!mode)
+	// 1.21 tests zero and mode 3 as floats; only modes 1 and >= 4 use a cast.
+	if (gl_test_specular->value == 0.0f)
 		return false;
 	if (mode == 1)
 	{
@@ -581,7 +582,7 @@ static qboolean Mod_TestSpecularTexture (const char *texture, int flags)
 		return (flags & 0x100c) == 0;
 	if (flags & 0x103c)
 		return false;
-	if (mode == 3)
+	if (gl_test_specular->value == 3.0f)
 		return true;
 	return (flags & 0x800000) != 0 || strstr (texture, "metals/") != NULL;
 }
@@ -1545,8 +1546,10 @@ R_RegisterModel
 struct model_s *R_RegisterModel (char *name)
 {
 	model_t	*mod;
-	int		i;
-	dsprite_t	*sprout;
+	int		i, num_skins = 0;
+	char	*skins = NULL;
+	char	skin_names[MAX_MDXSKINS][MAX_SKINNAME];
+	void	*cached_data;
 	dmdl_t		*pheader;
 
 	mod = Mod_ForName (name, false);
@@ -1558,20 +1561,39 @@ struct model_s *R_RegisterModel (char *name)
 		{
 			dmdx_t *mdx = (dmdx_t *)Mod_Extradata (mod);
 			if (!Mod_MdxUsesExternalSkins (mod->name))
-				for (i = 0; i < mdx->num_skins; i++)
-					mod->skins[i] = GL_FindImage ((char *)mdx + mdx->ofs_skins + i * MAX_SKINNAME, IMG_TYPE_SKIN);
+			{
+				num_skins = mdx->num_skins;
+				skins = (char *)mdx + mdx->ofs_skins;
+			}
 			mod->numframes = mdx->num_frames;
 		}
 #endif
 		if (mod->type == mod_alias)
 		{
 			pheader = (dmdl_t *)Mod_Extradata (mod);
-			for (i=0 ; i<pheader->num_skins ; i++)
-				mod->skins[i] = GL_FindImage ((char *)pheader + pheader->ofs_skins + i*MAX_SKINNAME, IMG_TYPE_SKIN);
+			num_skins = pheader->num_skins;
+			skins = (char *)pheader + pheader->ofs_skins;
 //PGM
 			mod->numframes = pheader->num_frames;
 //PGM
 		}
+		/* Image decoding/upload grows the hunk and can move or evict this
+		 * model's cache block. Snapshot all names and metadata before the first
+		 * image load; even the header is unsafe to read after that call. */
+		if (num_skins < 0 || num_skins > MAX_MDXSKINS)
+			ri.Sys_Error (ERR_DROP, "R_RegisterModel: invalid skin count for %s", mod->name);
+		for (i = 0; i < num_skins; i++)
+		{
+			if (!memchr (skins + i * MAX_SKINNAME, 0, MAX_SKINNAME))
+				ri.Sys_Error (ERR_DROP, "R_RegisterModel: unterminated skin name for %s", mod->name);
+			memcpy (skin_names[i], skins + i * MAX_SKINNAME, MAX_SKINNAME);
+		}
+		cached_data = mod->cache.data;
+		for (i = 0; i < num_skins; i++)
+			mod->skins[i] = GL_FindImage (skin_names[i], IMG_TYPE_SKIN);
+		if (num_skins && cached_data != mod->cache.data)
+			ri.Con_Printf (PRINT_DEVELOPER,
+				"R_RegisterModel: cache moved while loading skins for %s\n", mod->name);
 	}
 	return mod;
 }

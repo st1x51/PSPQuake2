@@ -26,6 +26,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #endif
 #include "client.h"
 #include "../client/qmenu.h"
+#include "../client/menu_ru.h"
 
 static int	m_main_cursor;
 
@@ -292,7 +293,11 @@ higher res screens.
 */
 void M_DrawCharacter (int cx, int cy, int num)
 {
+#ifdef KINGPIN_ENGINE
+	re.DrawCharUpper ( cx + ((viddef.width - 320)>>1), cy + ((viddef.height - 240)>>1), num);
+#else
 	re.DrawChar ( cx + ((viddef.width - 320)>>1), cy + ((viddef.height - 240)>>1), num);
+#endif
 }
 
 void M_Print (int cx, int cy, char *str)
@@ -754,7 +759,7 @@ static qboolean Multiplayer_BuildApList (void)
 	netaccesspoints_list = Z_Malloc (sizeof(char *) * (netaccesspoints_count + 1));
 	memset (netaccesspoints_list, 0, sizeof(char *) * (netaccesspoints_count + 1));
 
-	netaccesspoints_list[0] = CopyString ("None");
+	netaccesspoints_list[0] = CopyString (M_RUS("HET", "HET"));
 	for (i = 1; i < netaccesspoints_count; i++)
 	{
 		if (!sceUtilityGetNetParam (i, PSP_NETPARAM_NAME, (void *)buffer))
@@ -838,9 +843,9 @@ void Multiplayer_MenuInit( void )
 
 	static const char *netmode_items[] =
 	{
-		"Loopback",
-		"Infrastructure",
-		"Ad-hoc",
+		M_RUS("LOKAL|HO", "LOKAL|HO"),
+		M_RUS("UHFPACTPYKTYPA", "TO4KA DOCTYIA"),
+		M_RUS("AD-HOC", "IPRMAR CBR3|"),
 		0
 	};
 
@@ -866,7 +871,7 @@ void Multiplayer_MenuInit( void )
 	s_network_mode_list.generic.type		= MTYPE_SPINCONTROL;
 	s_network_mode_list.generic.x			= 0;
 	s_network_mode_list.generic.y			= 0;
-	s_network_mode_list.generic.name		= " network mode";
+	s_network_mode_list.generic.name		= M_RUS(" PEJUM CETU", " PEJUM CETU");
 	s_network_mode_list.generic.callback	= NetModeFunc;
 	s_network_mode_list.itemnames			= netmode_items;
 	s_network_mode_list.curvalue			= net_mode->value;
@@ -874,7 +879,7 @@ void Multiplayer_MenuInit( void )
 	s_access_point_list.generic.type		= MTYPE_SPINCONTROL;
 	s_access_point_list.generic.x			= 0;
 	s_access_point_list.generic.y			= 10;
-	s_access_point_list.generic.name		= " access point";
+	s_access_point_list.generic.name		= M_RUS(" TO4KA DOCTYIA", " TO4KA DOCTYIA");
 	s_access_point_list.generic.callback	= NetApFunc;
 	s_access_point_list.itemnames			= (const char **)netaccesspoints_list;
 	s_access_point_list.curvalue			= net_accesspoint->value;
@@ -891,7 +896,7 @@ void Multiplayer_MenuInit( void )
 #endif
 	s_join_network_server_action.generic.x			= 0;
 	s_join_network_server_action.generic.y			= offset_y + 0;
-	s_join_network_server_action.generic.name		= " join network server";
+	s_join_network_server_action.generic.name		= M_RUS(" BOUTU B CET|", " BOZTU B CET|");
 	s_join_network_server_action.generic.callback	= JoinNetworkServerFunc;
 
 	s_start_network_server_action.generic.type		= MTYPE_ACTION;
@@ -900,7 +905,7 @@ void Multiplayer_MenuInit( void )
 #endif
 	s_start_network_server_action.generic.x			= 0;
 	s_start_network_server_action.generic.y			= offset_y + 10;
-	s_start_network_server_action.generic.name		= " start network server";
+	s_start_network_server_action.generic.name		= M_RUS(" CO3DAT| CEPBEP", " CO3DAT| CEPBEP");
 	s_start_network_server_action.generic.callback	= StartNetworkServerFunc;
 
 	s_player_setup_action.generic.type		= MTYPE_ACTION;
@@ -909,7 +914,7 @@ void Multiplayer_MenuInit( void )
 #endif
 	s_player_setup_action.generic.x			= 0;
 	s_player_setup_action.generic.y			= offset_y + 20;
-	s_player_setup_action.generic.name		= " player setup";
+	s_player_setup_action.generic.name		= M_RUS(" HACTP. UGPAKA", " HACTP. UGPOKA");
 	s_player_setup_action.generic.callback	= PlayerSetupFunc;
 
 #ifdef __psp__
@@ -934,7 +939,7 @@ void Multiplayer_MenuInit( void )
 		s_heat_action.generic.flags  = QMF_LEFT_JUSTIFY;
 		s_heat_action.generic.x		= 0;
 		s_heat_action.generic.y		= offset_y + 40;
-		s_heat_action.generic.name	= " play on heat.net";
+		s_heat_action.generic.name	= M_RUS(" play on heat.net", " UGPAT| B heat.net");
 		s_heat_action.generic.callback = HeatFunc;
 		Menu_AddItem( &s_multiplayer_menu, ( void * ) &s_heat_action );
 	}
@@ -969,42 +974,40 @@ KEYS MENU
 =======================================================================
 */
 #ifdef KINGPIN_ENGINE
-// kingpin.exe @00459d58. The reference executable is the Russian release,
-// a string-patched English one; the English labels are restored here, the
-// key1..key3 ones reconstructed from the readme.
+// kingpin.exe @00459d58: Russian glyph slots; see menu_ru.h.
 char *bindnames[][2] =
 {
-{"+attack",		"attack"},
-{"weapnext",		"next weapon"},
-{"+forward",		"walk forward"},
-{"+back",		"backpedal"},
-{"+left",		"turn left"},
-{"+right",		"turn right"},
-{"+speed",		"run"},
-{"+moveleft",		"step left"},
-{"+moveright",		"step right"},
-{"+strafe",		"sidestep"},
-{"+lookup",		"look up"},
-{"+lookdown",		"look down"},
-{"centerview",		"center view"},
-{"+mlook",		"mouse look"},
-{"+klook",		"keyboard look"},
-{"+moveup",		"up / jump"},
-{"+movedown",		"down / crouch"},
-{"inven",		"inventory"},
-{"invuse",		"use item"},
-{"invdrop",		"drop item"},
-{"invprev",		"prev item"},
-{"invnext",		"next item"},
-{"cmd help",		"notebook"},
-{"+activate",		"activate"},
-{"holster",		"holster"},
-{"flashlight",		"flashlight"},
-{"hud",			"hud"},
-{"reload",		"reload"},
-{"key1",		"positive / follow"},
-{"key2",		"special order"},
-{"key3",		"negative / hold"},
+{"+attack",		"ATAKA"}, /* АТАКА */ /* АТАКА */
+{"weapnext",		"CLED. OPYJUE"}, /* СЛЕД. ОРУЖИЕ */ /* СЛЕД. ОРУЖИЕ */
+{"+forward",		"BIEPED"}, /* ВПЕРЕД */ /* ВПЕРЕД */
+{"+back",		"HA3AD"}, /* НАЗАД */ /* НАЗАД */
+{"+left",		"IOBOPOT BLEBO"}, /* ПОВОРОТ ВЛЕВО */ /* ПОВОРОТ ВЛЕВО */
+{"+right",		"IOBOPOT BIPABO"}, /* ПОВОРОТ ВПРАВО */ /* ПОВОРОТ ВПРАВО */
+{"+speed",		"VEG"}, /* БЕГ */ /* БЕГ */
+{"+moveleft",		"WAG BLEBO"}, /* ШАГ ВЛЕВО */ /* ШАГ ВЛЕВО */
+{"+moveright",		"WAG BIPABO"}, /* ШАГ ВПРАВО */ /* ШАГ ВПРАВО */
+{"+strafe",		"CDBUG"}, /* СДВИГ */ /* СДВИГ */
+{"+lookup",		"CMOTPET| BBEPX"}, /* СМОТРЕТЬ ВВЕРХ */ /* СМОТРЕТЬ ВВЕРХ */
+{"+lookdown",		"CMOTPET| BHU3"}, /* СМОТРЕТЬ ВНИЗ */ /* СМОТРЕТЬ ВНИЗ */
+{"centerview",		"B3GLRD IO QEHTPY"}, /* ВЗГЛЯД ПО ЦЕНТРУ */ /* ВЗГЛЯД ПО ЦЕНТРУ */
+{"+mlook",		"OV3OP M}W|@"}, /* ОБЗОР МЫШЬЮ */ /* ОБЗОР МЫШЬЮ */
+{"+klook",		"OV3OP KLABUWAMU"}, /* ОБЗОР КЛАВИШАМИ */ /* ОБЗОР КЛАВИШАМИ */
+{"+moveup",		"BBEPX / IP}JOK"}, /* ВВЕРХ / ПРЫЖОК */ /* ВВЕРХ / ПРЫЖОК */
+{"+movedown",		"BHU3 / IPUCECT|"}, /* ВНИЗ / ПРИСЕСТЬ */ /* ВНИЗ / ПРИСЕСТЬ */
+{"inven",		"UHBEHTAP|"}, /* ИНВЕНТАРЬ */ /* ИНВЕНТАРЬ */
+{"invuse",		"UCIOL|3OBAT|"}, /* ИСПОЛЬЗОВАТЬ */ /* ИСПОЛЬЗОВАТЬ */
+{"invdrop",		"B}VPOCUT|"}, /* ВЫБРОСИТЬ */ /* ВЫБРОСИТЬ */
+{"invprev",		"IPED. IPEDMET"}, /* ПРЕД. ПРЕДМЕТ */ /* ПРЕД. ПРЕДМЕТ */
+{"invnext",		"CLED. IPEDMET"}, /* СЛЕД. ПРЕДМЕТ */ /* СЛЕД. ПРЕДМЕТ */
+{"cmd help",		"3AIUCHAR KHUJKA"}, /* ЗАПИСНАЯ КНИЖКА */ /* ЗАПИСНАЯ КНИЖКА */
+{"+activate",		"DEZCTBUE"}, /* ДЕЙСТВИЕ */ /* ДЕЙСТВИЕ */
+{"holster",		"YVPAT| OPYJUE"}, /* УБРАТЬ ОРУЖИЕ */ /* УБРАТЬ ОРУЖИЕ */
+{"flashlight",		"FOHAP|"}, /* ФОНАРЬ */ /* ФОНАРЬ */
+{"hud",		"UHTEPFEZC"}, /* ИНТЕРФЕЙС */ /* ИНТЕРФЕЙС */
+{"reload",		"IEPE3APRDKA"}, /* ПЕРЕЗАРЯДКА */ /* ПЕРЕЗАРЯДКА */
+{"key1",		"DA / 3A MHOZ"}, /* ДА / ЗА МНОЙ */ /* ДА / ЗА МНОЙ */
+{"key2",		"OCOV}Z IPUKA3"}, /* ОСОБЫЙ ПРИКАЗ */ /* ОСОБЫЙ ПРИКАЗ */
+{"key3",		"HET / CTORT|"}, /* НЕТ / СТОЯТЬ */ /* НЕТ / СТОЯТЬ */
 { 0, 0 }
 };
 #define NUM_BINDNAMES	31
@@ -1133,6 +1136,37 @@ static void KeyCursorDrawFunc( menuframework_s *menu )
 #endif
 }
 
+// Display names only: binding commands and config files retain canonical keys.
+static const char *M_KeyDisplayName (int key)
+{
+#ifdef KINGPIN_ENGINE
+	switch (key)
+	{
+	case K_A_BUTTON: return "KPECT";       // КРЕСТ
+	case K_B_BUTTON: return "KPYG";        // КРУГ
+	case K_X_BUTTON: return "KBADPAT";     // КВАДРАТ
+	case K_Y_BUTTON: return "TPEYGOL|HUK"; // ТРЕУГОЛЬНИК
+	case K_L1_BUTTON: return "LEB.";
+	case K_R1_BUTTON: return "IPAB.";
+	case K_MODE_BUTTON: return "B}VOP";    // ВЫБОР
+	case K_START_BUTTON: return "CTAPT";   // СТАРТ
+	case K_BACK_BUTTON: return "HA3AD";   // НАЗАД
+	case K_UPARROW: return "BBEPX";       // ВВЕРХ
+	case K_DOWNARROW: return "BHU3";      // ВНИЗ
+	case K_LEFTARROW: return "BLEBO";     // ВЛЕВО
+	case K_RIGHTARROW: return "BIPABO";   // ВПРАВО
+	case K_SPACE: return "IPOVEL";        // ПРОБЕЛ
+	case K_ENTER: return "BBOD";          // ВВОД
+	case K_ESCAPE: return "OTMEHA";       // ОТМЕНА
+	case K_BACKSPACE: return "3AVOZ";     // ЗАБОЙ
+	case K_MOUSE1: return "M}W| 1";
+	case K_MOUSE2: return "M}W| 2";
+	case K_MOUSE3: return "M}W| 3";
+	}
+#endif
+	return Key_KeynumToString (key);
+}
+
 static void DrawKeyBindingFunc( void *self )
 {
 	int keys[2];
@@ -1149,7 +1183,7 @@ static void DrawKeyBindingFunc( void *self )
 		int x;
 		const char *name;
 
-		name = Key_KeynumToString (keys[0]);
+		name = M_KeyDisplayName (keys[0]);
 
 		Menu_DrawString( a->generic.x + a->generic.parent->x + 16, a->generic.y + a->generic.parent->y, name );
 
@@ -1157,8 +1191,8 @@ static void DrawKeyBindingFunc( void *self )
 
 		if (keys[1] != -1)
 		{
-			Menu_DrawString( a->generic.x + a->generic.parent->x + 24 + x, a->generic.y + a->generic.parent->y, "or" );
-			Menu_DrawString( a->generic.x + a->generic.parent->x + 48 + x, a->generic.y + a->generic.parent->y, Key_KeynumToString (keys[1]) );
+			Menu_DrawString( a->generic.x + a->generic.parent->x + 24 + x, a->generic.y + a->generic.parent->y, M_RUS("or", "ULU") );
+			Menu_DrawString( a->generic.x + a->generic.parent->x + 48 + x, a->generic.y + a->generic.parent->y, M_KeyDisplayName (keys[1]) );
 		}
 	}
 }
@@ -1175,7 +1209,7 @@ static void KeyBindingFunc( void *self )
 
 	bind_grab = true;
 
-	Menu_SetStatusBar( &s_keys_menu, "press a key or button for this action" );
+	Menu_SetStatusBar( &s_keys_menu, M_RUS("HAJMUTE KLAVUWU DLR DEUSTBUR", "HAJMUTE KHOIKY DLR DEZCTBUR") );
 }
 
 #ifdef KINGPIN_ENGINE
@@ -1204,9 +1238,9 @@ static void Keys_MenuInit( void )
 	}
 
 #if __psp__
-	Menu_SetStatusBar( &s_keys_menu, "CROSS to change, SQUARE to clear" );
+	Menu_SetStatusBar( &s_keys_menu, M_RUS("KPECT - U3MEHUT|, KBD - CVRAT|", "KPECT: U3MEHUT|, KBADPAT: CTEPET|") );
 #else
-	Menu_SetStatusBar( &s_keys_menu, "enter to change, backspace to clear" );
+	Menu_SetStatusBar( &s_keys_menu, M_RUS("enter to change, backspace to clear", "BBOD: U3MEHUT|, 3AVOZ: CTEPET|") );
 #endif
 	Menu_Center( &s_keys_menu );
 }
@@ -1431,9 +1465,9 @@ static void Keys_MenuInit( void )
 	Menu_AddItem( &s_keys_menu, ( void * ) &s_keys_help_computer_action );
 
 #if __psp__
-	Menu_SetStatusBar( &s_keys_menu, "CROSS to change, SQUARE to clear" );
+	Menu_SetStatusBar( &s_keys_menu, M_RUS("CROSS to change, SQUARE to clear", "KPECT: U3MEHUT|, KBADPAT: CTEPET|") );
 #else
-	Menu_SetStatusBar( &s_keys_menu, "enter to change, backspace to clear" );
+	Menu_SetStatusBar( &s_keys_menu, M_RUS("enter to change, backspace to clear", "BBOD: U3MEHUT|, 3AVOZ: CTEPET|") );
 #endif
 	Menu_Center( &s_keys_menu );
 }
@@ -1460,9 +1494,9 @@ static const char *Keys_MenuKey( int key )
 		}
 
 #if __psp__
-		Menu_SetStatusBar( &s_keys_menu, "CROSS to change, SQUARE to clear" );
+		Menu_SetStatusBar( &s_keys_menu, M_RUS("KPECT - U3MEHUT|, KBD - CVRAT|", "KPECT: U3MEHUT|, KBADPAT: CTEPET|") );
 #else
-		Menu_SetStatusBar( &s_keys_menu, "enter to change, backspace to clear" );
+		Menu_SetStatusBar( &s_keys_menu, M_RUS("enter to change, backspace to clear", "BBOD: U3MEHUT|, 3AVOZ: CTEPET|") );
 #endif
 		bind_grab = false;
 		return menu_out_sound;
@@ -1628,14 +1662,14 @@ void Joy_MenuInit( void )
 
 	static const char *yesno_names[] =
 	{
-		"no",
-		"yes",
+		M_RUS("HET", "HET"),
+		M_RUS("DA", "DA"),
 		0
 	};
 
 	static const char *joy_axis_items[] =
 	{
-		"None", "Forward", "Look", "Side", "Turn", "Up", 0
+		M_RUS("HET", "HET"), M_RUS("BIEPED", "BIEPED"), M_RUS("OB3OP", "OV3OP"), M_RUS("CTPAUF", "CDBUG"), M_RUS("IOBOPOT", "IOBOPOT"), M_RUS("BBEPX", "BBEPX"), 0
 	};
 
 	/*
@@ -1650,7 +1684,7 @@ void Joy_MenuInit( void )
 	s_joy_axisx_list.generic.type					= MTYPE_SPINCONTROL;
 	s_joy_axisx_list.generic.x						= 0;
 	s_joy_axisx_list.generic.y						= position_y;
-	s_joy_axisx_list.generic.name					= "Axis X";
+	s_joy_axisx_list.generic.name					= M_RUS("OC| X", "OC| X");
 	s_joy_axisx_list.generic.callback				= UpdateAxisXFunc;
 	s_joy_axisx_list.itemnames						= joy_axis_items;
 	s_joy_axisx_list.curvalue						= Cvar_VariableValue( "joy_axisx" );
@@ -1663,7 +1697,7 @@ void Joy_MenuInit( void )
 	s_joy_axisx_sensitivity_slider.generic.flags	= (s_joy_axisx_list.curvalue ? 0 : QMF_INACTIVE);
 	s_joy_axisx_sensitivity_slider.generic.x		= 0;
 	s_joy_axisx_sensitivity_slider.generic.y		= position_y;
-	s_joy_axisx_sensitivity_slider.generic.name		= "Sensitivity X";
+	s_joy_axisx_sensitivity_slider.generic.name		= M_RUS("4YBCTB. X", "4YBCTB. X");
 	s_joy_axisx_sensitivity_slider.generic.callback	= UpdateSensitivityXFunc;
 	s_joy_axisx_sensitivity_slider.minvalue			= 0;
 	s_joy_axisx_sensitivity_slider.maxvalue			= 10;
@@ -1675,7 +1709,7 @@ void Joy_MenuInit( void )
 	s_joy_axisx_inv_box.generic.flags				= (s_joy_axisx_list.curvalue ? 0 : QMF_INACTIVE);
 	s_joy_axisx_inv_box.generic.x					= 0;
 	s_joy_axisx_inv_box.generic.y					= position_y;
-	s_joy_axisx_inv_box.generic.name				= "Inv X";
+	s_joy_axisx_inv_box.generic.name				= M_RUS("UHB. X", "UHBEPCUR X");
 	s_joy_axisx_inv_box.generic.callback			= UpdateSensitivityXFunc;
 	s_joy_axisx_inv_box.itemnames					= yesno_names;
 	s_joy_axisx_inv_box.curvalue					= ( joy_sensitivity_val < 0.0f );
@@ -1685,7 +1719,7 @@ void Joy_MenuInit( void )
 	s_joy_axisy_list.generic.type					= MTYPE_SPINCONTROL;
 	s_joy_axisy_list.generic.x						= 0;
 	s_joy_axisy_list.generic.y						= position_y;
-	s_joy_axisy_list.generic.name					= "Axis Y";
+	s_joy_axisy_list.generic.name					= M_RUS("OC| Y", "OC| Y");
 	s_joy_axisy_list.generic.callback				= UpdateAxisYFunc;
 	s_joy_axisy_list.itemnames						= joy_axis_items;
 	s_joy_axisy_list.curvalue						= Cvar_VariableValue( "joy_axisy" );
@@ -1698,7 +1732,7 @@ void Joy_MenuInit( void )
 	s_joy_axisy_sensitivity_slider.generic.flags	= (s_joy_axisy_list.curvalue ? 0 : QMF_INACTIVE);
 	s_joy_axisy_sensitivity_slider.generic.x		= 0;
 	s_joy_axisy_sensitivity_slider.generic.y		= position_y;
-	s_joy_axisy_sensitivity_slider.generic.name		= "Sensitivity Y";
+	s_joy_axisy_sensitivity_slider.generic.name		= M_RUS("4YBCTB. Y", "4YBCTB. Y");
 	s_joy_axisy_sensitivity_slider.generic.callback	= UpdateSensitivityYFunc;
 	s_joy_axisy_sensitivity_slider.minvalue			= 0;
 	s_joy_axisy_sensitivity_slider.maxvalue			= 10;
@@ -1710,7 +1744,7 @@ void Joy_MenuInit( void )
 	s_joy_axisy_inv_box.generic.flags				= (s_joy_axisy_list.curvalue ? 0 : QMF_INACTIVE);
 	s_joy_axisy_inv_box.generic.x					= 0;
 	s_joy_axisy_inv_box.generic.y					= position_y;
-	s_joy_axisy_inv_box.generic.name				= "Inv Y";
+	s_joy_axisy_inv_box.generic.name				= M_RUS("UHB. Y", "UHBEPCUR Y");
 	s_joy_axisy_inv_box.generic.callback			= UpdateSensitivityYFunc;
 	s_joy_axisy_inv_box.itemnames					= yesno_names;
 	s_joy_axisy_inv_box.curvalue					= ( joy_sensitivity_val < 0.0f );
@@ -1720,7 +1754,7 @@ void Joy_MenuInit( void )
 	s_joy_smooth_box.generic.type					= MTYPE_SPINCONTROL;
 	s_joy_smooth_box.generic.x						= 0;
 	s_joy_smooth_box.generic.y						= position_y;
-	s_joy_smooth_box.generic.name					= "Smoothing filter";
+	s_joy_smooth_box.generic.name					= M_RUS("SGLAJUBAHUE", "CGLAJUBAHUE");
 	s_joy_smooth_box.generic.callback				= UpdateSmoothFunc;
 	s_joy_smooth_box.itemnames						= yesno_names;
 	s_joy_smooth_box.curvalue						= Cvar_VariableValue( "joy_smooth" );
@@ -1730,7 +1764,7 @@ void Joy_MenuInit( void )
 	s_joy_dz_min_slider.generic.type				= MTYPE_SLIDER;
 	s_joy_dz_min_slider.generic.x					= 0;
 	s_joy_dz_min_slider.generic.y					= position_y;
-	s_joy_dz_min_slider.generic.name				= "Deadzone min";
+	s_joy_dz_min_slider.generic.name				= M_RUS("MEPTB. 3OHA MIN", "MEPTB. 3OHA MUH.");
 	s_joy_dz_min_slider.generic.callback			= UpdateDzMinFunc;
 	s_joy_dz_min_slider.minvalue					= 0;
 	s_joy_dz_min_slider.maxvalue					= 32;
@@ -1741,7 +1775,7 @@ void Joy_MenuInit( void )
 	s_joy_dz_max_slider.generic.type				= MTYPE_SLIDER;
 	s_joy_dz_max_slider.generic.x					= 0;
 	s_joy_dz_max_slider.generic.y					= position_y;
-	s_joy_dz_max_slider.generic.name				= "Deadzone max";
+	s_joy_dz_max_slider.generic.name				= M_RUS("MEPTB. 3OHA MAX", "MEPTB. 3OHA MAKC.");
 	s_joy_dz_max_slider.generic.callback			= UpdateDzMaxFunc;
 	s_joy_dz_max_slider.minvalue					= 0;
 	s_joy_dz_max_slider.maxvalue					= 32;
@@ -1752,7 +1786,7 @@ void Joy_MenuInit( void )
 	s_joy_cv_power_slider.generic.type				= MTYPE_SLIDER;
 	s_joy_cv_power_slider.generic.x					= 0;
 	s_joy_cv_power_slider.generic.y					= position_y;
-	s_joy_cv_power_slider.generic.name				= "Cv power";
+	s_joy_cv_power_slider.generic.name				= M_RUS("Cv POWER", "KPUBAR: CTEIEH|");
 	s_joy_cv_power_slider.generic.callback			= UpdateCvPowerFunc;
 	s_joy_cv_power_slider.minvalue					= 2;
 	s_joy_cv_power_slider.maxvalue					= 10;
@@ -1763,7 +1797,7 @@ void Joy_MenuInit( void )
 	s_joy_cv_expo_slider.generic.type				= MTYPE_SLIDER;
 	s_joy_cv_expo_slider.generic.x					= 0;
 	s_joy_cv_expo_slider.generic.y					= position_y;
-	s_joy_cv_expo_slider.generic.name				= "Cv expo";
+	s_joy_cv_expo_slider.generic.name				= M_RUS("Cv EXPO", "KPUBAR: {KCIOHEHTA");
 	s_joy_cv_expo_slider.generic.callback			= UpdateCvExpoFunc;
 	s_joy_cv_expo_slider.minvalue					= 0;
 	s_joy_cv_expo_slider.maxvalue					= 40;
@@ -2073,9 +2107,9 @@ static void UpdateSoundQualityFunc( void *unused )
 	Cvar_SetValue( "s_primary", s_options_compatibility_list.curvalue );
 
 	M_DrawTextBox( 8, 120 - 48, 36, 3 );
-	M_Print( 16 + 16, 120 - 48 + 8,  "Restarting the sound system. This" );
-	M_Print( 16 + 16, 120 - 48 + 16, "could take up to a minute, so" );
-	M_Print( 16 + 16, 120 - 48 + 24, "please be patient." );
+	M_Print( 16 + 16, 120 - 48 + 8,  M_RUS("Restarting the sound system. This", "IEPE3AIYCK 3BYKA.") );
+	M_Print( 16 + 16, 120 - 48 + 16, M_RUS("could take up to a minute, so", "{TO 3AZMET OKOLO MUHYT}.") );
+	M_Print( 16 + 16, 120 - 48 + 24, M_RUS("please be patient.", "IOJALYZCTA, IODOJDUTE.") );
 
 	// the text box won't show up unless we do a buffer swap
 	re.EndFrame();
@@ -2089,36 +2123,36 @@ void Options_MenuInit( void )
 	int		position_y;
 	static const char *cd_music_items[] =
 	{
-		"disabled",
-		"enabled",
+		M_RUS("B}KLZ4EH", "B}KL@4EHO"),
+		M_RUS("BKLZ4EH", "BKL@4EHO"),
 		0
 	};
 
 #ifndef __psp__
 	static const char *quality_items[] =
 	{
-		"low", "high", 0
+		M_RUS("HU3", "HU3KOE"), M_RUS("B}C.", "B}COKOE"), 0
 	};
 
 	static const char *compatibility_items[] =
 	{
-		"max compatibility", "max performance", 0
+		M_RUS("max COBMECTUMOCT|", "MAKC. COBMECTUMOCT|"), M_RUS("max CKOPOCT|", "MAKC. CKOPOCT|"), 0
 	};
 #endif
 
 	static const char *yesno_names[] =
 	{
-		"no",
-		"yes",
+		M_RUS("HET", "HET"),
+		M_RUS("DA", "DA"),
 		0
 	};
 
 	static const char *crosshair_names[] =
 	{
-		"none",
-		"cross",
-		"dot",
-		"angle",
+		M_RUS("HET", "HET"),
+		M_RUS("KPECT", "KPECT"),
+		M_RUS("TO4KA", "TO4KA"),
+		M_RUS("YGOL", "YGOL"),
 		0
 	};
 
@@ -2143,7 +2177,7 @@ void Options_MenuInit( void )
 	s_options_sfxvolume_slider.generic.type	= MTYPE_SLIDER;
 	s_options_sfxvolume_slider.generic.x	= 0;
 	s_options_sfxvolume_slider.generic.y	= position_y;
-	s_options_sfxvolume_slider.generic.name	= "effects volume";
+	s_options_sfxvolume_slider.generic.name	= M_RUS("effects volume", "GPOMK. {FFEKTOB");
 	s_options_sfxvolume_slider.generic.callback	= UpdateVolumeFunc;
 	s_options_sfxvolume_slider.minvalue		= 0;
 	s_options_sfxvolume_slider.maxvalue		= 10;
@@ -2154,7 +2188,7 @@ void Options_MenuInit( void )
 	s_options_cdvolume_slider.generic.type	= MTYPE_SLIDER;
 	s_options_cdvolume_slider.generic.x		= 0;
 	s_options_cdvolume_slider.generic.y		= position_y;
-	s_options_cdvolume_slider.generic.name	= "music volume";
+	s_options_cdvolume_slider.generic.name	= M_RUS("music volume", "GPOMK. MY3}KU");
 	s_options_cdvolume_slider.generic.callback	= UpdateCDVolumeFunc;
 	s_options_cdvolume_slider.minvalue		= 0;
 	s_options_cdvolume_slider.maxvalue		= 10;
@@ -2166,9 +2200,9 @@ void Options_MenuInit( void )
 	s_options_cdenable_box.generic.x		= 0;
 	s_options_cdenable_box.generic.y		= position_y;
 #ifdef __psp__
-	s_options_cdenable_box.generic.name		= "MP3 music";
+	s_options_cdenable_box.generic.name		= M_RUS("MP3 music", "MY3}KA");
 #else
-	s_options_cdenable_box.generic.name		= "CD music";
+	s_options_cdenable_box.generic.name		= M_RUS("CD music", "MY3}KA");
 #endif
 	s_options_cdenable_box.generic.callback	= UpdateCDEnableFunc;
 	s_options_cdenable_box.itemnames		= cd_music_items;
@@ -2180,7 +2214,7 @@ void Options_MenuInit( void )
 	s_options_quality_list.generic.type	= MTYPE_SPINCONTROL;
 	s_options_quality_list.generic.x		= 0;
 	s_options_quality_list.generic.y		= position_y;
-	s_options_quality_list.generic.name		= "sound quality";
+	s_options_quality_list.generic.name		= M_RUS("sound quality", "KA4ECTBO 3BYKA");
 	s_options_quality_list.generic.callback = UpdateSoundQualityFunc;
 	s_options_quality_list.itemnames		= quality_items;
 	s_options_quality_list.curvalue			= !Cvar_VariableValue( "s_loadas8bit" );
@@ -2190,7 +2224,7 @@ void Options_MenuInit( void )
 	s_options_compatibility_list.generic.type	= MTYPE_SPINCONTROL;
 	s_options_compatibility_list.generic.x		= 0;
 	s_options_compatibility_list.generic.y		= position_y;
-	s_options_compatibility_list.generic.name	= "sound compatibility";
+	s_options_compatibility_list.generic.name	= M_RUS("sound compatibility", "COBMECTUMOCT| 3BYKA");
 	s_options_compatibility_list.generic.callback = UpdateSoundQualityFunc;
 	s_options_compatibility_list.itemnames		= compatibility_items;
 	s_options_compatibility_list.curvalue		= Cvar_VariableValue( "s_primary" );
@@ -2201,7 +2235,7 @@ void Options_MenuInit( void )
 	s_options_sensitivity_slider.generic.type	= MTYPE_SLIDER;
 	s_options_sensitivity_slider.generic.x		= 0;
 	s_options_sensitivity_slider.generic.y		= position_y;
-	s_options_sensitivity_slider.generic.name	= "mouse speed";
+	s_options_sensitivity_slider.generic.name	= M_RUS("mouse speed", "CKOPOCT| M}WU");
 	s_options_sensitivity_slider.generic.callback = MouseSpeedFunc;
 	s_options_sensitivity_slider.minvalue		= 2;
 	s_options_sensitivity_slider.maxvalue		= 22;
@@ -2211,7 +2245,7 @@ void Options_MenuInit( void )
 	s_options_alwaysrun_box.generic.type = MTYPE_SPINCONTROL;
 	s_options_alwaysrun_box.generic.x	= 0;
 	s_options_alwaysrun_box.generic.y	= position_y;
-	s_options_alwaysrun_box.generic.name	= "always run";
+	s_options_alwaysrun_box.generic.name	= M_RUS("always run", "VEG BCEGDA");
 	s_options_alwaysrun_box.generic.callback = AlwaysRunFunc;
 	s_options_alwaysrun_box.itemnames = yesno_names;
 
@@ -2220,7 +2254,7 @@ void Options_MenuInit( void )
 	s_options_invertmouse_box.generic.type = MTYPE_SPINCONTROL;
 	s_options_invertmouse_box.generic.x	= 0;
 	s_options_invertmouse_box.generic.y	= position_y;
-	s_options_invertmouse_box.generic.name	= "invert mouse";
+	s_options_invertmouse_box.generic.name	= M_RUS("invert mouse", "UHBEPCUR M}WU");
 	s_options_invertmouse_box.generic.callback = InvertMouseFunc;
 	s_options_invertmouse_box.itemnames = yesno_names;
 
@@ -2229,7 +2263,7 @@ void Options_MenuInit( void )
 	s_options_lookspring_box.generic.type = MTYPE_SPINCONTROL;
 	s_options_lookspring_box.generic.x	= 0;
 	s_options_lookspring_box.generic.y	= position_y;
-	s_options_lookspring_box.generic.name	= "lookspring";
+	s_options_lookspring_box.generic.name	= M_RUS("lookspring", "BO3BPAT B3GLRDA");
 	s_options_lookspring_box.generic.callback = LookspringFunc;
 	s_options_lookspring_box.itemnames = yesno_names;
 
@@ -2238,7 +2272,7 @@ void Options_MenuInit( void )
 	s_options_lookstrafe_box.generic.type = MTYPE_SPINCONTROL;
 	s_options_lookstrafe_box.generic.x	= 0;
 	s_options_lookstrafe_box.generic.y	= position_y;
-	s_options_lookstrafe_box.generic.name	= "lookstrafe";
+	s_options_lookstrafe_box.generic.name	= M_RUS("lookstrafe", "M}W|: CDBUG");
 	s_options_lookstrafe_box.generic.callback = LookstrafeFunc;
 	s_options_lookstrafe_box.itemnames = yesno_names;
 
@@ -2247,7 +2281,7 @@ void Options_MenuInit( void )
 	s_options_freelook_box.generic.type = MTYPE_SPINCONTROL;
 	s_options_freelook_box.generic.x	= 0;
 	s_options_freelook_box.generic.y	= position_y;
-	s_options_freelook_box.generic.name	= "free look";
+	s_options_freelook_box.generic.name	= M_RUS("free look", "CBOVODH}Z OV3OP");
 	s_options_freelook_box.generic.callback = FreeLookFunc;
 	s_options_freelook_box.itemnames = yesno_names;
 
@@ -2256,25 +2290,25 @@ void Options_MenuInit( void )
 	s_options_crosshair_box.generic.type = MTYPE_SPINCONTROL;
 	s_options_crosshair_box.generic.x	= 0;
 	s_options_crosshair_box.generic.y	= position_y;
-	s_options_crosshair_box.generic.name	= "crosshair";
+	s_options_crosshair_box.generic.name	= M_RUS("crosshair", "IPUQEL");
 	s_options_crosshair_box.generic.callback = CrosshairFunc;
 	s_options_crosshair_box.itemnames = crosshair_names;
 
 #ifdef KINGPIN_ENGINE
 	position_y += 10;
-	Options_InitSpin (&s_options_hudtalk_box, position_y, "talk icons", HudTalkFunc, yesno_names);
+	Options_InitSpin (&s_options_hudtalk_box, position_y, M_RUS("talk icons", "3HA4KU PA3GOBOPA"), HudTalkFunc, yesno_names);
 	position_y += 10;
-	Options_InitSpin (&s_options_hudguys_box, position_y, "hire icons", HudGuysFunc, yesno_names);
+	Options_InitSpin (&s_options_hudguys_box, position_y, M_RUS("hire icons", "3HA4KU HAEMHUKOB"), HudGuysFunc, yesno_names);
 	position_y += 10;
-	Options_InitSpin (&s_options_captions_box, position_y, "captions", CaptionsFunc, yesno_names);
+	Options_InitSpin (&s_options_captions_box, position_y, M_RUS("captions", "CYVTUTP}"), CaptionsFunc, yesno_names);
 	position_y += 20;
-	Options_InitSlider (&s_options_fireworks_slider, position_y, "fireworks", FireworksFunc, 0, 3);
+	Options_InitSlider (&s_options_fireworks_slider, position_y, M_RUS("fireworks", "FEZEPBEPK"), FireworksFunc, 0, 3);
 	position_y += 10;
-	Options_InitSpin (&s_options_dirlight_box, position_y, "directional lighting", DirLightFunc, yesno_names);
+	Options_InitSpin (&s_options_dirlight_box, position_y, M_RUS("directional lighting", "HAIPABLEHH}Z CBET"), DirLightFunc, yesno_names);
 	position_y += 10;
-	Options_InitSlider (&s_options_bloodtime_slider, position_y, "blood time", BloodTimeFunc, 0, 10);
+	Options_InitSlider (&s_options_bloodtime_slider, position_y, M_RUS("blood time", "BPEMR KPOBU"), BloodTimeFunc, 0, 10);
 	position_y += 10;
-	Options_InitSpin (&s_options_props_box, position_y, "props", PropsFunc, yesno_names);
+	Options_InitSpin (&s_options_props_box, position_y, M_RUS("props", "CKP}T| IPEDMET}"), PropsFunc, yesno_names);
 #endif
 
 /*
@@ -2284,7 +2318,7 @@ void Options_MenuInit( void )
 	s_options_noalttab_box.generic.type = MTYPE_SPINCONTROL;
 	s_options_noalttab_box.generic.x	= 0;
 	s_options_noalttab_box.generic.y	= position_y;
-	s_options_noalttab_box.generic.name	= "disable alt-tab";
+	s_options_noalttab_box.generic.name	= M_RUS("disable alt-tab", "OTKL@4UT| alt-tab");
 	s_options_noalttab_box.generic.callback = NoAltTabFunc;
 	s_options_noalttab_box.itemnames = yesno_names;
 #endif
@@ -2295,7 +2329,7 @@ void Options_MenuInit( void )
 	s_options_joystick_box.generic.type = MTYPE_SPINCONTROL;
 	s_options_joystick_box.generic.x	= 0;
 	s_options_joystick_box.generic.y	= position_y;
-	s_options_joystick_box.generic.name	= "use joystick";
+	s_options_joystick_box.generic.name	= M_RUS("use joystick", "UCI. DJOZCTUK");
 	s_options_joystick_box.generic.callback = JoystickFunc;
 	s_options_joystick_box.itemnames = yesno_names;
 
@@ -2305,7 +2339,7 @@ void Options_MenuInit( void )
 	s_options_joystick_setup_action.generic.type		= MTYPE_ACTION;
 	s_options_joystick_setup_action.generic.x			= 0;
 	s_options_joystick_setup_action.generic.y			= position_y;
-	s_options_joystick_setup_action.generic.name		= "joystick setup";
+	s_options_joystick_setup_action.generic.name		= M_RUS("joystick setup", "HACTPOZKA CTUKA");
 	s_options_joystick_setup_action.generic.callback	= JoysticSetupFunc;
 
 	position_y += 10;
@@ -2314,7 +2348,7 @@ void Options_MenuInit( void )
 	s_options_customize_options_action.generic.type	= MTYPE_ACTION;
 	s_options_customize_options_action.generic.x		= 0;
 	s_options_customize_options_action.generic.y		= position_y;
-	s_options_customize_options_action.generic.name	= "customize controls";
+	s_options_customize_options_action.generic.name	= M_RUS("customize controls", "HACTPOUT| YIPABLEHUE");
 	s_options_customize_options_action.generic.callback = CustomizeControlsFunc;
 
 	position_y += 10;
@@ -2322,7 +2356,7 @@ void Options_MenuInit( void )
 	s_options_defaults_action.generic.type	= MTYPE_ACTION;
 	s_options_defaults_action.generic.x		= 0;
 	s_options_defaults_action.generic.y		= position_y;
-	s_options_defaults_action.generic.name	= "reset defaults";
+	s_options_defaults_action.generic.name	= M_RUS("reset defaults", "CVPOCUT| HACTPOZKU");
 	s_options_defaults_action.generic.callback = ControlsResetDefaultsFunc;
 
 	position_y += 10;
@@ -2330,7 +2364,7 @@ void Options_MenuInit( void )
 	s_options_console_action.generic.type	= MTYPE_ACTION;
 	s_options_console_action.generic.x		= 0;
 	s_options_console_action.generic.y		= position_y;
-	s_options_console_action.generic.name	= "go to console";
+	s_options_console_action.generic.name	= M_RUS("go to console", "KOHCOL|");
 	s_options_console_action.generic.callback = ConsoleFunc;
 
 	ControlsSetMenuItemValues();
@@ -2911,6 +2945,119 @@ static menuframework_s	s_game_menu;
 #ifdef KINGPIN_ENGINE
 static menuaction_s		s_novice_game_action;
 static menuaction_s		s_real_game_action;
+static menuaction_s		s_notebook_action;
+
+/* Layout replies are sent even while the local server is paused. Keep the
+ * game's overlay closed; this menu draws picnote without STAT_LAYOUTS. */
+static void Notebook_Command (char *command)
+{
+	MSG_WriteByte (&cls.netchan.message, clc_stringcmd);
+	SZ_Print (&cls.netchan.message, command);
+}
+
+static qboolean Notebook_Available (void)
+{
+	return cls.state == ca_active && cl.refresh_prepped &&
+		!cl.cinematictime && Com_ServerState () &&
+		!Cvar_VariableValue ("deathmatch");
+}
+
+static void Notebook_Text (const char *text, int x, int y, int bottom)
+{
+	int column = 0;
+	unsigned char c;
+
+	text = CL_LocalizeNotebookText (text);
+
+	while (*text && y + 8 <= bottom)
+	{
+		c = (unsigned char)*text++;
+		if (c == '\r')
+			continue;
+		if (c == '\n' || column == 36)
+		{
+			y += 12;
+			column = 0;
+			if (c == '\n')
+				continue;
+			if (y + 8 > bottom)
+				break;
+		}
+		/* Menu glyphs are printed capitals; the notebook atlas is handwritten. */
+		re.DrawCharUpper (x + column * 8, y, c);
+		column++;
+	}
+}
+
+static void Notebook_Draw (void)
+{
+	char *layout, *token;
+	int width = 320;
+	int x = (viddef.width - width) / 2;
+	int y = (viddef.height - 224) / 2;
+
+	M_Main_Draw ();
+	M_PrintWhite (128, 0, M_RUS("objectives", "3ADAHUR"));
+	if (!Notebook_Available ())
+	{
+		M_PrintWhite (32, 104, M_RUS("Start a single player game", "HA4HUTE ODUHO4HY@ UGPY"));
+		return;
+	}
+
+	re.DrawStretchPic (x, y, width, 224, "note");
+	/* Opaque backing keeps the printed white menu font clear over gameplay. */
+	re.DrawFillRGBA (x + 10, y + 10, width - 20, 204, 0.025f, 0.025f, 0.025f, 1.0f);
+	layout = cl.layout;
+	token = COM_Parse (&layout);
+	if (!strcmp (token, "picnote"))
+	{
+		token = COM_Parse (&layout);
+		Notebook_Text (token, x + 16, y + 16, y + 48);
+		token = COM_Parse (&layout);
+		Notebook_Text (token, x + 16, y + 52, y + 212);
+	}
+	M_PrintWhite (0, 232, M_RUS("LEFT/RIGHT: pages   CIRCLE: back", "VLEBO/BIPABO: LUCT   O: HA3AD"));
+}
+
+static const char *Notebook_Key (int key)
+{
+	if (Notebook_Available ())
+	{
+		switch (key)
+		{
+		case K_LEFTARROW:
+		case K_KP_LEFTARROW:
+		case K_L1_BUTTON:
+			Notebook_Command ("invprev");
+			Notebook_Command ("putaway");
+			return menu_move_sound;
+		case K_RIGHTARROW:
+		case K_KP_RIGHTARROW:
+		case K_R1_BUTTON:
+			Notebook_Command ("invnext");
+			Notebook_Command ("putaway");
+			return menu_move_sound;
+		}
+	}
+	return Default_MenuKey (NULL, key);
+}
+
+static void M_Menu_Notebook_f (void)
+{
+	if (Notebook_Available ())
+	{
+		cl.layout[0] = 0;
+		Notebook_Command ("putaway");
+		Notebook_Command ("help");
+		Notebook_Command ("putaway");
+	}
+	M_PushMenu (Notebook_Draw, Notebook_Key);
+}
+
+static void NotebookFunc (void *unused)
+{
+	M_Menu_Notebook_f ();
+}
 #endif
 static menuaction_s		s_easy_game_action;
 static menuaction_s		s_medium_game_action;
@@ -3009,11 +3156,11 @@ void Game_MenuInit( void )
 {
 	static const char *difficulty_names[] =
 	{
-		"novice",
-		"easy",
-		"medium",
-		"hard",
-		"real",
+		M_RUS("novice", "HOBU4OK"),
+		M_RUS("easy", "LEGKO"),
+		M_RUS("medium", "CPEDHE"),
+		M_RUS("hard", "CLOJHO"),
+		M_RUS("real", "PEAL|HO"),
 		0
 	};
 
@@ -3026,35 +3173,35 @@ void Game_MenuInit( void )
 	s_novice_game_action.generic.flags  = QMF_LEFT_JUSTIFY;
 	s_novice_game_action.generic.x		= 0;
 	s_novice_game_action.generic.y		= 0;
-	s_novice_game_action.generic.name	= "novice";
+	s_novice_game_action.generic.name	= M_RUS("novice", "HOBU4OK");
 	s_novice_game_action.generic.callback = NoviceGameFunc;
 
 	s_easy_game_action.generic.type	= MTYPE_ACTION;
 	s_easy_game_action.generic.flags  = QMF_LEFT_JUSTIFY;
 	s_easy_game_action.generic.x		= 0;
 	s_easy_game_action.generic.y		= 10;
-	s_easy_game_action.generic.name	= "easy";
+	s_easy_game_action.generic.name	= M_RUS("easy", "LEGKO");
 	s_easy_game_action.generic.callback = EasyGameFunc;
 
 	s_medium_game_action.generic.type	= MTYPE_ACTION;
 	s_medium_game_action.generic.flags  = QMF_LEFT_JUSTIFY;
 	s_medium_game_action.generic.x		= 0;
 	s_medium_game_action.generic.y		= 20;
-	s_medium_game_action.generic.name	= "medium";
+	s_medium_game_action.generic.name	= M_RUS("medium", "CPEDHE");
 	s_medium_game_action.generic.callback = MediumGameFunc;
 
 	s_hard_game_action.generic.type	= MTYPE_ACTION;
 	s_hard_game_action.generic.flags  = QMF_LEFT_JUSTIFY;
 	s_hard_game_action.generic.x		= 0;
 	s_hard_game_action.generic.y		= 30;
-	s_hard_game_action.generic.name	= "hard";
+	s_hard_game_action.generic.name	= M_RUS("hard", "CLOJHO");
 	s_hard_game_action.generic.callback = HardGameFunc;
 
 	s_real_game_action.generic.type	= MTYPE_ACTION;
 	s_real_game_action.generic.flags  = QMF_LEFT_JUSTIFY;
 	s_real_game_action.generic.x		= 0;
 	s_real_game_action.generic.y		= 41;
-	s_real_game_action.generic.name	= "real";
+	s_real_game_action.generic.name	= M_RUS("real", "PEAL|HO");
 	s_real_game_action.generic.callback = RealGameFunc;
 
 	s_blankline.generic.type = MTYPE_SEPARATOR;
@@ -3063,23 +3210,32 @@ void Game_MenuInit( void )
 	s_load_game_action.generic.flags  = QMF_LEFT_JUSTIFY;
 	s_load_game_action.generic.x		= 0;
 	s_load_game_action.generic.y		= 70;
-	s_load_game_action.generic.name	= "load game";
+	s_load_game_action.generic.name	= M_RUS("load game", "3AGPY3UT|");
 	s_load_game_action.generic.callback = LoadGameFunc;
 
 	s_save_game_action.generic.type	= MTYPE_ACTION;
 	s_save_game_action.generic.flags  = QMF_LEFT_JUSTIFY;
 	s_save_game_action.generic.x		= 0;
 	s_save_game_action.generic.y		= 80;
-	s_save_game_action.generic.name	= "save game";
+	s_save_game_action.generic.name	= M_RUS("save game", "COXPAHUT|");
 	s_save_game_action.generic.callback = SaveGameFunc;
 
 	s_credits_action.generic.type	= MTYPE_ACTION;
 	s_credits_action.generic.flags  = QMF_LEFT_JUSTIFY;
 	s_credits_action.generic.x		= 0;
 	s_credits_action.generic.y		= 95;
-	s_credits_action.generic.name	= "credits";
+	s_credits_action.generic.name	= M_RUS("credits", "TUTP}");
 	s_credits_action.generic.callback = CreditsFunc;
 
+	s_notebook_action.generic.type = MTYPE_ACTION;
+	s_notebook_action.generic.flags = QMF_LEFT_JUSTIFY;
+	s_notebook_action.generic.x = 0;
+	s_notebook_action.generic.y = -20;
+	s_notebook_action.generic.name = M_RUS("objectives", "3ADAHUR");
+	s_notebook_action.generic.callback = NotebookFunc;
+
+	if (Notebook_Available ())
+		Menu_AddItem( &s_game_menu, &s_notebook_action );
 	Menu_AddItem( &s_game_menu, ( void * ) &s_novice_game_action );
 	Menu_AddItem( &s_game_menu, ( void * ) &s_easy_game_action );
 	Menu_AddItem( &s_game_menu, ( void * ) &s_medium_game_action );
@@ -3092,16 +3248,16 @@ void Game_MenuInit( void )
 	Menu_AddItem( &s_game_menu, ( void * ) &s_credits_action );
 
 	Menu_Center( &s_game_menu );
-	s_game_menu.cursor = 2;	// medium
+	s_game_menu.cursor = Notebook_Available () ? 0 : 2;
 }
 #else
 void Game_MenuInit( void )
 {
 	static const char *difficulty_names[] =
 	{
-		"easy",
-		"medium",
-		"hard",
+		M_RUS("easy", "LEGKO"),
+		M_RUS("medium", "CPEDHE"),
+		M_RUS("hard", "CLOJHO"),
 		0
 	};
 
@@ -3112,21 +3268,21 @@ void Game_MenuInit( void )
 	s_easy_game_action.generic.flags  = QMF_LEFT_JUSTIFY;
 	s_easy_game_action.generic.x		= 0;
 	s_easy_game_action.generic.y		= 0;
-	s_easy_game_action.generic.name	= "easy";
+	s_easy_game_action.generic.name	= M_RUS("easy", "LEGKO");
 	s_easy_game_action.generic.callback = EasyGameFunc;
 
 	s_medium_game_action.generic.type	= MTYPE_ACTION;
 	s_medium_game_action.generic.flags  = QMF_LEFT_JUSTIFY;
 	s_medium_game_action.generic.x		= 0;
 	s_medium_game_action.generic.y		= 10;
-	s_medium_game_action.generic.name	= "medium";
+	s_medium_game_action.generic.name	= M_RUS("medium", "CPEDHE");
 	s_medium_game_action.generic.callback = MediumGameFunc;
 
 	s_hard_game_action.generic.type	= MTYPE_ACTION;
 	s_hard_game_action.generic.flags  = QMF_LEFT_JUSTIFY;
 	s_hard_game_action.generic.x		= 0;
 	s_hard_game_action.generic.y		= 20;
-	s_hard_game_action.generic.name	= "hard";
+	s_hard_game_action.generic.name	= M_RUS("hard", "CLOJHO");
 	s_hard_game_action.generic.callback = HardGameFunc;
 
 	s_blankline.generic.type = MTYPE_SEPARATOR;
@@ -3135,21 +3291,21 @@ void Game_MenuInit( void )
 	s_load_game_action.generic.flags  = QMF_LEFT_JUSTIFY;
 	s_load_game_action.generic.x		= 0;
 	s_load_game_action.generic.y		= 40;
-	s_load_game_action.generic.name	= "load game";
+	s_load_game_action.generic.name	= M_RUS("load game", "3AGPY3UT|");
 	s_load_game_action.generic.callback = LoadGameFunc;
 
 	s_save_game_action.generic.type	= MTYPE_ACTION;
 	s_save_game_action.generic.flags  = QMF_LEFT_JUSTIFY;
 	s_save_game_action.generic.x		= 0;
 	s_save_game_action.generic.y		= 50;
-	s_save_game_action.generic.name	= "save game";
+	s_save_game_action.generic.name	= M_RUS("save game", "COXPAHUT|");
 	s_save_game_action.generic.callback = SaveGameFunc;
 
 	s_credits_action.generic.type	= MTYPE_ACTION;
 	s_credits_action.generic.flags  = QMF_LEFT_JUSTIFY;
 	s_credits_action.generic.x		= 0;
 	s_credits_action.generic.y		= 60;
-	s_credits_action.generic.name	= "credits";
+	s_credits_action.generic.name	= M_RUS("credits", "TUTP}");
 	s_credits_action.generic.callback = CreditsFunc;
 
 	Menu_AddItem( &s_game_menu, ( void * ) &s_easy_game_action );
@@ -3214,7 +3370,7 @@ void Create_Savestrings (void)
 		file = FS_FOpen (name, FS_MODE_READ | FS_PATH_GAMEDIR | FS_TYPE_RFS);
 		if (!file)
 		{
-			strcpy (m_savestrings[i], "<EMPTY>");
+			strcpy (m_savestrings[i], M_RUS("<EMPTY>", "<IYCTO>"));
 			m_savevalid[i] = false;
 		}
 		else
@@ -3394,7 +3550,7 @@ static menuaction_s		s_joinserver_address_book_action;
 static menuaction_s		s_joinserver_server_actions[MAX_LOCAL_SERVERS];
 
 int		m_num_servers;
-#define	NO_SERVER_STRING	"<no server>"
+#define	NO_SERVER_STRING	M_RUS("<no server>", "<HET CEPBEPA>")
 
 // user readable information
 static char local_server_names[MAX_LOCAL_SERVERS][80];
@@ -3459,14 +3615,14 @@ void SearchLocalGames( void )
 
 #ifdef KINGPIN_ENGINE
 	// kingpin.exe @0042b770: no text box
-	M_Print( 180, 192, "Searching for local servers, this" );
-	M_Print( 180, 200, "could take up to a minute, so" );
-	M_Print( 180, 208, "please be patient." );
+	M_Print( 180, 192, M_RUS("Searching for local servers, this", "IOUCK LOKAL|H}X CEPBEPOB.") );
+	M_Print( 180, 200, M_RUS("could take up to a minute, so", "{TO 3AZMET OKOLO MUHYT}.") );
+	M_Print( 180, 208, M_RUS("please be patient.", "IOJALYZCTA, IODOJDUTE.") );
 #else
 	M_DrawTextBox( 8, 120 - 48, 36, 3 );
-	M_Print( 16 + 16, 120 - 48 + 8,  "Searching for local servers, this" );
-	M_Print( 16 + 16, 120 - 48 + 16, "could take up to a minute, so" );
-	M_Print( 16 + 16, 120 - 48 + 24, "please be patient." );
+	M_Print( 16 + 16, 120 - 48 + 8,  M_RUS("Searching for local servers, this", "IOUCK LOKAL|H}X CEPBEPOB.") );
+	M_Print( 16 + 16, 120 - 48 + 16, M_RUS("could take up to a minute, so", "{TO 3AZMET OKOLO MUHYT}.") );
+	M_Print( 16 + 16, 120 - 48 + 24, M_RUS("please be patient.", "IOJALYZCTA, IODOJDUTE.") );
 #endif
 
 	// the text box won't show up unless we do a buffer swap
@@ -3493,22 +3649,22 @@ void JoinServer_MenuInit( void )
 #endif
 
 	s_joinserver_address_book_action.generic.type	= MTYPE_ACTION;
-	s_joinserver_address_book_action.generic.name	= "address book";
+	s_joinserver_address_book_action.generic.name	= M_RUS("address book", "ADPECHAR KHUGA");
 	s_joinserver_address_book_action.generic.flags	= QMF_LEFT_JUSTIFY;
 	s_joinserver_address_book_action.generic.x		= 0;
 	s_joinserver_address_book_action.generic.y		= 0;
 	s_joinserver_address_book_action.generic.callback = AddressBookFunc;
 
 	s_joinserver_search_action.generic.type = MTYPE_ACTION;
-	s_joinserver_search_action.generic.name	= "refresh server list";
+	s_joinserver_search_action.generic.name	= M_RUS("refresh server list", "OVHOBUT| CIUCOK");
 	s_joinserver_search_action.generic.flags	= QMF_LEFT_JUSTIFY;
 	s_joinserver_search_action.generic.x	= 0;
 	s_joinserver_search_action.generic.y	= 10;
 	s_joinserver_search_action.generic.callback = SearchLocalGamesFunc;
-	s_joinserver_search_action.generic.statusbar = "search for servers";
+	s_joinserver_search_action.generic.statusbar = M_RUS("search for servers", "IOUCK CEPBEPOB");
 
 	s_joinserver_server_title.generic.type = MTYPE_SEPARATOR;
-	s_joinserver_server_title.generic.name = "connect to...";
+	s_joinserver_server_title.generic.name = M_RUS("connect to...", "IODKL@4UT|CR K...");
 	s_joinserver_server_title.generic.x    = 80;
 	s_joinserver_server_title.generic.y	   = 30;
 
@@ -3521,7 +3677,7 @@ void JoinServer_MenuInit( void )
 		s_joinserver_server_actions[i].generic.x		= 0;
 		s_joinserver_server_actions[i].generic.y		= 40 + i*10;
 		s_joinserver_server_actions[i].generic.callback = JoinServerFunc;
-		s_joinserver_server_actions[i].generic.statusbar = "press ENTER to connect";
+		s_joinserver_server_actions[i].generic.statusbar = M_RUS("press ENTER to connect", "HAJMUTE KPECT DLR BXODA");
 	}
 
 	Menu_AddItem( &s_joinserver_menu, &s_joinserver_address_book_action );
@@ -3728,7 +3884,7 @@ static void StartServer_InitField( menufield_s *f, int y, char *name, char *cvar
 	f->generic.flags = flags;
 	f->generic.x	= 0;
 	f->generic.y	= y;
-	f->generic.statusbar = flags ? "0 = no limit" : NULL;
+	f->generic.statusbar = flags ? M_RUS("0 = no limit", "0 = VE3 OGPAHU4EHUZ") : NULL;
 	f->length = length;
 	f->visible_length = length;
 	strcpy( f->buffer, Cvar_VariableString(cvar) );
@@ -3739,8 +3895,8 @@ void StartServer_MenuInit( void )
 {
 	static const char *rules_names[] =
 	{
-		"deathmatch",
-		"bagman",
+		M_RUS("deathmatch", "VOZ HACMEPT|"),
+		M_RUS("bagman", "MEWOK DEHEG"),
 		0
 	};
 
@@ -3750,12 +3906,12 @@ void StartServer_MenuInit( void )
 	s_startmap_list.generic.type = MTYPE_SPINCONTROL;
 	s_startmap_list.generic.x	= 0;
 	s_startmap_list.generic.y	= 0;
-	s_startmap_list.generic.name	= "initial map";
+	s_startmap_list.generic.name	= M_RUS("initial map", "HA4AL|HAR KAPTA");
 
 	s_rules_box.generic.type = MTYPE_SPINCONTROL;
 	s_rules_box.generic.x	= 0;
 	s_rules_box.generic.y	= 20;
-	s_rules_box.generic.name	= "rules";
+	s_rules_box.generic.name	= M_RUS("rules", "IPABULA");
 	s_rules_box.itemnames = rules_names;
 	s_rules_box.curvalue = Cvar_VariableValue("teamplay") != 0;
 	s_rules_box.generic.callback = RulesChangeFunc;
@@ -3763,24 +3919,24 @@ void StartServer_MenuInit( void )
 	StartServer_LoadMaps ();
 	s_startmap_list.itemnames = (const char **)mapnames;
 
-	StartServer_InitField( &s_timelimit_field, 36, "time limit", "timelimit", 3, QMF_NUMBERSONLY );
-	StartServer_InitField( &s_fraglimit_field, 54, "frag limit", "fraglimit", 3, QMF_NUMBERSONLY );
-	StartServer_InitField( &s_cashlimit_field, 72, "cash limit", "cashlimit", 5, QMF_NUMBERSONLY );
+	StartServer_InitField( &s_timelimit_field, 36, M_RUS("time limit", "LUMUT BPEMEHU"), "timelimit", 3, QMF_NUMBERSONLY );
+	StartServer_InitField( &s_fraglimit_field, 54, M_RUS("frag limit", "LUMUT YVUZCTB"), "fraglimit", 3, QMF_NUMBERSONLY );
+	StartServer_InitField( &s_cashlimit_field, 72, M_RUS("cash limit", "LUMUT DEHEG"), "cashlimit", 5, QMF_NUMBERSONLY );
 
 	/*
 	** maxclients determines the maximum number of players that can join
 	** the game.  If maxclients is only "1" then we should default the menu
 	** option to 8 players, otherwise use whatever its current value is.
 	*/
-	StartServer_InitField( &s_maxclients_field, 90, "max players", "maxclients", 3, QMF_NUMBERSONLY );
+	StartServer_InitField( &s_maxclients_field, 90, M_RUS("max players", "MAKC. UGPOKOB"), "maxclients", 3, QMF_NUMBERSONLY );
 	s_maxclients_field.generic.statusbar = NULL;
 	if ( Cvar_VariableValue( "maxclients" ) == 1 )
 		strcpy( s_maxclients_field.buffer, "8" );
 
-	StartServer_InitField( &s_hostname_field, 108, "hostname", "hostname", 12, 0 );
+	StartServer_InitField( &s_hostname_field, 108, M_RUS("hostname", "UMR CEPBEPA"), "hostname", 12, 0 );
 
 	s_startserver_dmoptions_action.generic.type = MTYPE_ACTION;
-	s_startserver_dmoptions_action.generic.name	= " deathmatch flags";
+	s_startserver_dmoptions_action.generic.name	= M_RUS(" deathmatch flags", " IPABULA VOR");
 	s_startserver_dmoptions_action.generic.flags= QMF_LEFT_JUSTIFY;
 	s_startserver_dmoptions_action.generic.x	= 24;
 	s_startserver_dmoptions_action.generic.y	= 135;
@@ -3788,7 +3944,7 @@ void StartServer_MenuInit( void )
 	s_startserver_dmoptions_action.generic.callback = DMOptionsFunc;
 
 	s_startserver_start_action.generic.type = MTYPE_ACTION;
-	s_startserver_start_action.generic.name	= " begin";
+	s_startserver_start_action.generic.name	= M_RUS(" begin", " HA4AT|");
 	s_startserver_start_action.generic.flags= QMF_LEFT_JUSTIFY;
 	s_startserver_start_action.generic.x	= 24;
 	s_startserver_start_action.generic.y	= 165;
@@ -3968,7 +4124,7 @@ void StartServer_MenuInit( void )
 
 	static const char *dm_coop_names[] =
 	{
-		"deathmatch",
+		M_RUS("deathmatch", "VOZ HACMEPT|"),
 		"cooperative",
 		0
 	};
@@ -3976,7 +4132,7 @@ void StartServer_MenuInit( void )
 //PGM
 	static const char *dm_coop_names_rogue[] =
 	{
-		"deathmatch",
+		M_RUS("deathmatch", "VOZ HACMEPT|"),
 		"cooperative",
 		"tag",
 //		"deathball",
@@ -4033,13 +4189,13 @@ void StartServer_MenuInit( void )
 	s_startmap_list.generic.type = MTYPE_SPINCONTROL;
 	s_startmap_list.generic.x	= 0;
 	s_startmap_list.generic.y	= 0;
-	s_startmap_list.generic.name	= "initial map";
+	s_startmap_list.generic.name	= M_RUS("initial map", "HA4AL|HAR KAPTA");
 	s_startmap_list.itemnames = (const char **)mapnames;
 
 	s_rules_box.generic.type = MTYPE_SPINCONTROL;
 	s_rules_box.generic.x	= 0;
 	s_rules_box.generic.y	= 20;
-	s_rules_box.generic.name	= "rules";
+	s_rules_box.generic.name	= M_RUS("rules", "IPABULA");
 
 //PGM - rogue games only available with rogue DLL.
 	if(Developer_searchpath(2) == 2)
@@ -4055,21 +4211,21 @@ void StartServer_MenuInit( void )
 	s_rules_box.generic.callback = RulesChangeFunc;
 
 	s_timelimit_field.generic.type = MTYPE_FIELD;
-	s_timelimit_field.generic.name = "time limit";
+	s_timelimit_field.generic.name = M_RUS("time limit", "LUMUT BPEMEHU");
 	s_timelimit_field.generic.flags = QMF_NUMBERSONLY;
 	s_timelimit_field.generic.x	= 0;
 	s_timelimit_field.generic.y	= 36;
-	s_timelimit_field.generic.statusbar = "0 = no limit";
+	s_timelimit_field.generic.statusbar = M_RUS("0 = no limit", "0 = VE3 OGPAHU4EHUZ");
 	s_timelimit_field.length = 3;
 	s_timelimit_field.visible_length = 3;
 	strcpy( s_timelimit_field.buffer, Cvar_VariableString("timelimit") );
 
 	s_fraglimit_field.generic.type = MTYPE_FIELD;
-	s_fraglimit_field.generic.name = "frag limit";
+	s_fraglimit_field.generic.name = M_RUS("frag limit", "LUMUT YVUZCTB");
 	s_fraglimit_field.generic.flags = QMF_NUMBERSONLY;
 	s_fraglimit_field.generic.x	= 0;
 	s_fraglimit_field.generic.y	= 54;
-	s_fraglimit_field.generic.statusbar = "0 = no limit";
+	s_fraglimit_field.generic.statusbar = M_RUS("0 = no limit", "0 = VE3 OGPAHU4EHUZ");
 	s_fraglimit_field.length = 3;
 	s_fraglimit_field.visible_length = 3;
 	strcpy( s_fraglimit_field.buffer, Cvar_VariableString("fraglimit") );
@@ -4081,7 +4237,7 @@ void StartServer_MenuInit( void )
 	** Clamping will be done when the server is actually started.
 	*/
 	s_maxclients_field.generic.type = MTYPE_FIELD;
-	s_maxclients_field.generic.name = "max players";
+	s_maxclients_field.generic.name = M_RUS("max players", "MAKC. UGPOKOB");
 	s_maxclients_field.generic.flags = QMF_NUMBERSONLY;
 	s_maxclients_field.generic.x	= 0;
 	s_maxclients_field.generic.y	= 72;
@@ -4094,7 +4250,7 @@ void StartServer_MenuInit( void )
 		strcpy( s_maxclients_field.buffer, Cvar_VariableString("maxclients") );
 
 	s_hostname_field.generic.type = MTYPE_FIELD;
-	s_hostname_field.generic.name = "hostname";
+	s_hostname_field.generic.name = M_RUS("hostname", "UMR CEPBEPA");
 	s_hostname_field.generic.flags = 0;
 	s_hostname_field.generic.x	= 0;
 	s_hostname_field.generic.y	= 90;
@@ -4104,7 +4260,7 @@ void StartServer_MenuInit( void )
 	strcpy( s_hostname_field.buffer, Cvar_VariableString("hostname") );
 
 	s_startserver_dmoptions_action.generic.type = MTYPE_ACTION;
-	s_startserver_dmoptions_action.generic.name	= " deathmatch flags";
+	s_startserver_dmoptions_action.generic.name	= M_RUS(" deathmatch flags", " IPABULA VOR");
 	s_startserver_dmoptions_action.generic.flags= QMF_LEFT_JUSTIFY;
 	s_startserver_dmoptions_action.generic.x	= 24;
 	s_startserver_dmoptions_action.generic.y	= 108;
@@ -4112,7 +4268,7 @@ void StartServer_MenuInit( void )
 	s_startserver_dmoptions_action.generic.callback = DMOptionsFunc;
 
 	s_startserver_start_action.generic.type = MTYPE_ACTION;
-	s_startserver_start_action.generic.name	= " begin";
+	s_startserver_start_action.generic.name	= M_RUS(" begin", " HA4AT|");
 	s_startserver_start_action.generic.flags= QMF_LEFT_JUSTIFY;
 	s_startserver_start_action.generic.x	= 24;
 	s_startserver_start_action.generic.y	= 128;
@@ -4288,14 +4444,14 @@ static void DMFlagCallback( void *self )
 setvalue:
 	Cvar_SetValue ("dmflags", flags);
 
-	Com_sprintf( dmoptions_statusbar, sizeof( dmoptions_statusbar ), "dmflags = %d", flags );
+	Com_sprintf( dmoptions_statusbar, sizeof( dmoptions_statusbar ), M_RUS("dmflags = %d", "IPABULA = %d"), flags );
 }
 
 static void DMOptions_InitBox( menulist_s *box, int y, char *name, int curvalue )
 {
 	static const char *yes_no_names[] =
 	{
-		"no", "yes", 0
+		M_RUS("no", "HET"), M_RUS("yes", "DA"), 0
 	};
 
 	box->generic.type = MTYPE_SPINCONTROL;
@@ -4315,21 +4471,21 @@ void DMOptions_MenuInit( void )
 	s_dmoptions_menu.x = viddef.width * 0.50;
 	s_dmoptions_menu.nitems = 0;
 
-	DMOptions_InitBox( &s_falls_box, 0, "falling damage", ( dmflags & DF_NO_FALLING ) == 0 );
-	DMOptions_InitBox( &s_weapons_stay_box, 10, "weapons stay", ( dmflags & DF_WEAPONS_STAY ) != 0 );
-	DMOptions_InitBox( &s_health_box, 20, "allow health", ( dmflags & DF_NO_HEALTH ) == 0 );
-	DMOptions_InitBox( &s_armor_box, 30, "allow armor", ( dmflags & DF_NO_ARMOR ) == 0 );
-	DMOptions_InitBox( &s_spawn_farthest_box, 40, "spawn farthest", ( dmflags & DF_SPAWN_FARTHEST ) != 0 );
-	DMOptions_InitBox( &s_samelevel_box, 50, "same map", ( dmflags & DF_SAME_LEVEL ) != 0 );
+	DMOptions_InitBox( &s_falls_box, 0, M_RUS("falling damage", "YPOH OT IADEHUZ"), ( dmflags & DF_NO_FALLING ) == 0 );
+	DMOptions_InitBox( &s_weapons_stay_box, 10, M_RUS("weapons stay", "OPYJUE OCTAETCR"), ( dmflags & DF_WEAPONS_STAY ) != 0 );
+	DMOptions_InitBox( &s_health_box, 20, M_RUS("allow health", "AITE4KU"), ( dmflags & DF_NO_HEALTH ) == 0 );
+	DMOptions_InitBox( &s_armor_box, 30, M_RUS("allow armor", "VPOHR"), ( dmflags & DF_NO_ARMOR ) == 0 );
+	DMOptions_InitBox( &s_spawn_farthest_box, 40, M_RUS("spawn farthest", "BO3POJDAT| BDALU"), ( dmflags & DF_SPAWN_FARTHEST ) != 0 );
+	DMOptions_InitBox( &s_samelevel_box, 50, M_RUS("same map", "TA JE KAPTA"), ( dmflags & DF_SAME_LEVEL ) != 0 );
 	// sic: kingpin.exe reads the switch from DF_MODELTEAMS, it sets DF_FORCE_RESPAWN
-	DMOptions_InitBox( &s_force_respawn_box, 60, "force respawn", ( dmflags & DF_MODELTEAMS ) != 0 );
+	DMOptions_InitBox( &s_force_respawn_box, 60, M_RUS("force respawn", "ABTOBO3POJDEHUE"), ( dmflags & DF_MODELTEAMS ) != 0 );
 	// sic: kingpin.exe leaves this switch at its last value
-	DMOptions_InitBox( &s_teamplay_box, 70, "teamplay by model & skin", s_teamplay_box.curvalue );
-	DMOptions_InitBox( &s_allow_exit_box, 80, "allow exit", ( dmflags & DF_ALLOW_EXIT ) != 0 );
-	DMOptions_InitBox( &s_infinite_ammo_box, 90, "infinite ammo", ( dmflags & DF_INFINITE_AMMO ) != 0 );
-	DMOptions_InitBox( &s_fixed_fov_box, 100, "fixed FOV", ( dmflags & DF_FIXED_FOV ) != 0 );
-	DMOptions_InitBox( &s_friendlyfire_box, 110, "Friendly Damage", ( dmflags & DF_NO_FRIENDLY_FIRE ) == 0 );
-	DMOptions_InitBox( &s_autoteams_box, 120, "Auto Assign Teams", ( dmflags & DF_AUTO_JOIN_TEAM ) != 0 );
+	DMOptions_InitBox( &s_teamplay_box, 70, M_RUS("teamplay by model & skin", "KOMAHD} IO OVLUKY"), s_teamplay_box.curvalue );
+	DMOptions_InitBox( &s_allow_exit_box, 80, M_RUS("allow exit", "PA3PEWUT| B}XOD"), ( dmflags & DF_ALLOW_EXIT ) != 0 );
+	DMOptions_InitBox( &s_infinite_ammo_box, 90, M_RUS("infinite ammo", "VECKOH. IATPOH}"), ( dmflags & DF_INFINITE_AMMO ) != 0 );
+	DMOptions_InitBox( &s_fixed_fov_box, 100, M_RUS("fixed FOV", "FUKC. YGOL OV3OPA"), ( dmflags & DF_FIXED_FOV ) != 0 );
+	DMOptions_InitBox( &s_friendlyfire_box, 110, M_RUS("Friendly Damage", "YPOH CBOUM"), ( dmflags & DF_NO_FRIENDLY_FIRE ) == 0 );
+	DMOptions_InitBox( &s_autoteams_box, 120, M_RUS("Auto Assign Teams", "ABTOB}VOP KOMAHD}"), ( dmflags & DF_AUTO_JOIN_TEAM ) != 0 );
 
 	Menu_Center( &s_dmoptions_menu );
 
@@ -4504,7 +4660,7 @@ static void DMFlagCallback( void *self )
 setvalue:
 	Cvar_SetValue ("dmflags", flags);
 
-	Com_sprintf( dmoptions_statusbar, sizeof( dmoptions_statusbar ), "dmflags = %d", flags );
+	Com_sprintf( dmoptions_statusbar, sizeof( dmoptions_statusbar ), M_RUS("dmflags = %d", "IPABULA = %d"), flags );
 
 }
 
@@ -4512,11 +4668,11 @@ void DMOptions_MenuInit( void )
 {
 	static const char *yes_no_names[] =
 	{
-		"no", "yes", 0
+		M_RUS("no", "HET"), M_RUS("yes", "DA"), 0
 	};
 	static const char *teamplay_names[] =
 	{
-		"disabled", "by skin", "by model", 0
+		M_RUS("disabled", "B}KL@4EHO"), "by skin", "by model", 0
 	};
 	int dmflags = Cvar_VariableValue( "dmflags" );
 	int y = 0;
@@ -4527,7 +4683,7 @@ void DMOptions_MenuInit( void )
 	s_falls_box.generic.type = MTYPE_SPINCONTROL;
 	s_falls_box.generic.x	= 0;
 	s_falls_box.generic.y	= y;
-	s_falls_box.generic.name	= "falling damage";
+	s_falls_box.generic.name	= M_RUS("falling damage", "YPOH OT IADEHUZ");
 	s_falls_box.generic.callback = DMFlagCallback;
 	s_falls_box.itemnames = yes_no_names;
 	s_falls_box.curvalue = ( dmflags & DF_NO_FALLING ) == 0;
@@ -4535,7 +4691,7 @@ void DMOptions_MenuInit( void )
 	s_weapons_stay_box.generic.type = MTYPE_SPINCONTROL;
 	s_weapons_stay_box.generic.x	= 0;
 	s_weapons_stay_box.generic.y	= y += 10;
-	s_weapons_stay_box.generic.name	= "weapons stay";
+	s_weapons_stay_box.generic.name	= M_RUS("weapons stay", "OPYJUE OCTAETCR");
 	s_weapons_stay_box.generic.callback = DMFlagCallback;
 	s_weapons_stay_box.itemnames = yes_no_names;
 	s_weapons_stay_box.curvalue = ( dmflags & DF_WEAPONS_STAY ) != 0;
@@ -4560,14 +4716,14 @@ void DMOptions_MenuInit( void )
 	s_health_box.generic.x	= 0;
 	s_health_box.generic.y	= y += 10;
 	s_health_box.generic.callback = DMFlagCallback;
-	s_health_box.generic.name	= "allow health";
+	s_health_box.generic.name	= M_RUS("allow health", "AITE4KU");
 	s_health_box.itemnames = yes_no_names;
 	s_health_box.curvalue = ( dmflags & DF_NO_HEALTH ) == 0;
 
 	s_armor_box.generic.type = MTYPE_SPINCONTROL;
 	s_armor_box.generic.x	= 0;
 	s_armor_box.generic.y	= y += 10;
-	s_armor_box.generic.name	= "allow armor";
+	s_armor_box.generic.name	= M_RUS("allow armor", "VPOHR");
 	s_armor_box.generic.callback = DMFlagCallback;
 	s_armor_box.itemnames = yes_no_names;
 	s_armor_box.curvalue = ( dmflags & DF_NO_ARMOR ) == 0;
@@ -4575,7 +4731,7 @@ void DMOptions_MenuInit( void )
 	s_spawn_farthest_box.generic.type = MTYPE_SPINCONTROL;
 	s_spawn_farthest_box.generic.x	= 0;
 	s_spawn_farthest_box.generic.y	= y += 10;
-	s_spawn_farthest_box.generic.name	= "spawn farthest";
+	s_spawn_farthest_box.generic.name	= M_RUS("spawn farthest", "BO3POJDAT| BDALU");
 	s_spawn_farthest_box.generic.callback = DMFlagCallback;
 	s_spawn_farthest_box.itemnames = yes_no_names;
 	s_spawn_farthest_box.curvalue = ( dmflags & DF_SPAWN_FARTHEST ) != 0;
@@ -4583,7 +4739,7 @@ void DMOptions_MenuInit( void )
 	s_samelevel_box.generic.type = MTYPE_SPINCONTROL;
 	s_samelevel_box.generic.x	= 0;
 	s_samelevel_box.generic.y	= y += 10;
-	s_samelevel_box.generic.name	= "same map";
+	s_samelevel_box.generic.name	= M_RUS("same map", "TA JE KAPTA");
 	s_samelevel_box.generic.callback = DMFlagCallback;
 	s_samelevel_box.itemnames = yes_no_names;
 	s_samelevel_box.curvalue = ( dmflags & DF_SAME_LEVEL ) != 0;
@@ -4591,7 +4747,7 @@ void DMOptions_MenuInit( void )
 	s_force_respawn_box.generic.type = MTYPE_SPINCONTROL;
 	s_force_respawn_box.generic.x	= 0;
 	s_force_respawn_box.generic.y	= y += 10;
-	s_force_respawn_box.generic.name	= "force respawn";
+	s_force_respawn_box.generic.name	= M_RUS("force respawn", "ABTOBO3POJDEHUE");
 	s_force_respawn_box.generic.callback = DMFlagCallback;
 	s_force_respawn_box.itemnames = yes_no_names;
 	s_force_respawn_box.curvalue = ( dmflags & DF_FORCE_RESPAWN ) != 0;
@@ -4599,14 +4755,14 @@ void DMOptions_MenuInit( void )
 	s_teamplay_box.generic.type = MTYPE_SPINCONTROL;
 	s_teamplay_box.generic.x	= 0;
 	s_teamplay_box.generic.y	= y += 10;
-	s_teamplay_box.generic.name	= "teamplay";
+	s_teamplay_box.generic.name	= M_RUS("teamplay", "KOMAHDHAR UGPA");
 	s_teamplay_box.generic.callback = DMFlagCallback;
 	s_teamplay_box.itemnames = teamplay_names;
 
 	s_allow_exit_box.generic.type = MTYPE_SPINCONTROL;
 	s_allow_exit_box.generic.x	= 0;
 	s_allow_exit_box.generic.y	= y += 10;
-	s_allow_exit_box.generic.name	= "allow exit";
+	s_allow_exit_box.generic.name	= M_RUS("allow exit", "PA3PEWUT| B}XOD");
 	s_allow_exit_box.generic.callback = DMFlagCallback;
 	s_allow_exit_box.itemnames = yes_no_names;
 	s_allow_exit_box.curvalue = ( dmflags & DF_ALLOW_EXIT ) != 0;
@@ -4614,7 +4770,7 @@ void DMOptions_MenuInit( void )
 	s_infinite_ammo_box.generic.type = MTYPE_SPINCONTROL;
 	s_infinite_ammo_box.generic.x	= 0;
 	s_infinite_ammo_box.generic.y	= y += 10;
-	s_infinite_ammo_box.generic.name	= "infinite ammo";
+	s_infinite_ammo_box.generic.name	= M_RUS("infinite ammo", "VECKOH. IATPOH}");
 	s_infinite_ammo_box.generic.callback = DMFlagCallback;
 	s_infinite_ammo_box.itemnames = yes_no_names;
 	s_infinite_ammo_box.curvalue = ( dmflags & DF_INFINITE_AMMO ) != 0;
@@ -4622,7 +4778,7 @@ void DMOptions_MenuInit( void )
 	s_fixed_fov_box.generic.type = MTYPE_SPINCONTROL;
 	s_fixed_fov_box.generic.x	= 0;
 	s_fixed_fov_box.generic.y	= y += 10;
-	s_fixed_fov_box.generic.name	= "fixed FOV";
+	s_fixed_fov_box.generic.name	= M_RUS("fixed FOV", "FUKC. YGOL OV3OPA");
 	s_fixed_fov_box.generic.callback = DMFlagCallback;
 	s_fixed_fov_box.itemnames = yes_no_names;
 	s_fixed_fov_box.curvalue = ( dmflags & DF_FIXED_FOV ) != 0;
@@ -4785,7 +4941,7 @@ void DownloadOptions_MenuInit( void )
 {
 	static const char *yes_no_names[] =
 	{
-		"no", "yes", 0
+		M_RUS("no", "HET"), M_RUS("yes", "DA"), 0
 	};
 	int y = 0;
 
@@ -4793,14 +4949,14 @@ void DownloadOptions_MenuInit( void )
 	s_downloadoptions_menu.nitems = 0;
 
 	s_download_title.generic.type = MTYPE_SEPARATOR;
-	s_download_title.generic.name = "Download Options";
+	s_download_title.generic.name = M_RUS("Download Options", "3AGPY3KA FAZLOB");
 	s_download_title.generic.x    = 48;
 	s_download_title.generic.y	 = y;
 
 	s_allow_download_box.generic.type = MTYPE_SPINCONTROL;
 	s_allow_download_box.generic.x	= 0;
 	s_allow_download_box.generic.y	= y += 20;
-	s_allow_download_box.generic.name	= "allow downloading";
+	s_allow_download_box.generic.name	= M_RUS("allow downloading", "PA3PEWUT| 3AGPY3KY");
 	s_allow_download_box.generic.callback = DownloadCallback;
 	s_allow_download_box.itemnames = yes_no_names;
 	s_allow_download_box.curvalue = (Cvar_VariableValue("allow_download") != 0);
@@ -4808,7 +4964,7 @@ void DownloadOptions_MenuInit( void )
 	s_allow_download_maps_box.generic.type = MTYPE_SPINCONTROL;
 	s_allow_download_maps_box.generic.x	= 0;
 	s_allow_download_maps_box.generic.y	= y += 20;
-	s_allow_download_maps_box.generic.name	= "maps";
+	s_allow_download_maps_box.generic.name	= M_RUS("maps", "KAPT}");
 	s_allow_download_maps_box.generic.callback = DownloadCallback;
 	s_allow_download_maps_box.itemnames = yes_no_names;
 	s_allow_download_maps_box.curvalue = (Cvar_VariableValue("allow_download_maps") != 0);
@@ -4816,7 +4972,7 @@ void DownloadOptions_MenuInit( void )
 	s_allow_download_players_box.generic.type = MTYPE_SPINCONTROL;
 	s_allow_download_players_box.generic.x	= 0;
 	s_allow_download_players_box.generic.y	= y += 10;
-	s_allow_download_players_box.generic.name	= "player models/skins";
+	s_allow_download_players_box.generic.name	= M_RUS("player models/skins", "OVLUK UGPOKOB");
 	s_allow_download_players_box.generic.callback = DownloadCallback;
 	s_allow_download_players_box.itemnames = yes_no_names;
 	s_allow_download_players_box.curvalue = (Cvar_VariableValue("allow_download_players") != 0);
@@ -4824,7 +4980,7 @@ void DownloadOptions_MenuInit( void )
 	s_allow_download_models_box.generic.type = MTYPE_SPINCONTROL;
 	s_allow_download_models_box.generic.x	= 0;
 	s_allow_download_models_box.generic.y	= y += 10;
-	s_allow_download_models_box.generic.name	= "models";
+	s_allow_download_models_box.generic.name	= M_RUS("models", "MODELU");
 	s_allow_download_models_box.generic.callback = DownloadCallback;
 	s_allow_download_models_box.itemnames = yes_no_names;
 	s_allow_download_models_box.curvalue = (Cvar_VariableValue("allow_download_models") != 0);
@@ -4832,7 +4988,7 @@ void DownloadOptions_MenuInit( void )
 	s_allow_download_sounds_box.generic.type = MTYPE_SPINCONTROL;
 	s_allow_download_sounds_box.generic.x	= 0;
 	s_allow_download_sounds_box.generic.y	= y += 10;
-	s_allow_download_sounds_box.generic.name	= "sounds";
+	s_allow_download_sounds_box.generic.name	= M_RUS("sounds", "3BYKU");
 	s_allow_download_sounds_box.generic.callback = DownloadCallback;
 	s_allow_download_sounds_box.itemnames = yes_no_names;
 	s_allow_download_sounds_box.curvalue = (Cvar_VariableValue("allow_download_sounds") != 0);
@@ -4985,7 +5141,7 @@ typedef struct
 	char	displayname[MAX_DISPLAYNAME];
 	char	directory[MAX_QPATH];
 	char	bodydir[MAX_QPATH], headdir[MAX_QPATH], legsdir[MAX_QPATH];	// where the skins are
-	char	extras[MAX_EXTRAS][MAX_EXTRA_MODELS][16];	// model names, [0] is "none" or "N/A"
+	char	extras[MAX_EXTRAS][MAX_EXTRA_MODELS][16];	// model names; element zero is the localized none/N/A label
 	char	extranames[MAX_EXTRAS][16];					// group names
 } playermodelinfo_s;
 
@@ -5001,8 +5157,8 @@ static int s_pm_skinmemory[MAX_PLAYERMODELS][3];	// legs, head, body per model
 static char *s_pm_extranames[MAX_EXTRAS][MAX_EXTRA_MODELS + 1];
 
 static int rate_tbl[] = { 2500, 3200, 5000, 10000, 25000, 0 };
-static const char *rate_names[] = { "28.8 Modem", "33.6 Modem", "Single ISDN",
-	"Dual ISDN/Cable", "T1/LAN", "User defined", 0 };
+static const char *rate_names[] = { M_RUS("28.8 Modem", "MODEM 28.8"), M_RUS("33.6 Modem", "MODEM 33.6"), M_RUS("Single ISDN", "ODUH isdn"),
+	M_RUS("Dual ISDN/Cable", "DBA isdn/KAVEL|"), "T1/LAN", M_RUS("User defined", "CBOR"), 0 };
 
 // kingpin.exe @0042caf0, from CL_InitLocal
 void M_ClearPlayerSkinMemory (void)
@@ -5187,8 +5343,8 @@ static qboolean PlayerConfig_ScanDirectories( void )
 		memset( pmi->extras, 0, sizeof(pmi->extras) );
 		for ( j = 0; j < MAX_EXTRAS; j++ )
 		{
-			strcpy( pmi->extranames[j], "(unused)" );
-			strcpy( pmi->extras[j][0], "N/A" );
+			strcpy( pmi->extranames[j], M_RUS("(unused)", "(HE UCI.)") );
+			strcpy( pmi->extras[j][0], M_RUS("N/A", "HET") );
 		}
 		strcpy( scratch, dirnames[i] );
 		strcat( scratch, "/extras.txt" );
@@ -5204,7 +5360,7 @@ static qboolean PlayerConfig_ScanDirectories( void )
 				{
 					group = c - '1';
 					fscanf( f, " %s\n", pmi->extranames[group] );
-					strcpy( pmi->extras[group][0], "none" );
+					strcpy( pmi->extras[group][0], M_RUS("none", "HET") );
 				}
 				else if ( c == '+' )
 				{
@@ -5399,7 +5555,7 @@ qboolean PlayerConfig_MenuInit( void )
 	s_player_config_menu.yoffset = -20;
 
 	s_player_name_field.generic.type = MTYPE_FIELD;
-	s_player_name_field.generic.name = "name";
+	s_player_name_field.generic.name = M_RUS("name", "UMR");
 	s_player_name_field.generic.callback = 0;
 	s_player_name_field.generic.x		= 0;
 	s_player_name_field.generic.y		= 0;
@@ -5408,26 +5564,26 @@ qboolean PlayerConfig_MenuInit( void )
 	strcpy( s_player_name_field.buffer, name->string );
 	s_player_name_field.cursor = strlen( name->string );
 
-	PlayerConfig_InitSpin( &s_player_model_title, "model", &s_player_model_box, 70 );
+	PlayerConfig_InitSpin( &s_player_model_title, M_RUS("model", "MODEL|"), &s_player_model_box, 70 );
 	s_player_model_box.generic.callback = ModelCallback;
 	s_player_model_box.curvalue = s_pm_model;
 	s_player_model_box.itemnames = (const char **)s_pmnames;
 
-	PlayerConfig_InitSpin( &s_player_head_title, "head skin", &s_player_head_box, 100 );
+	PlayerConfig_InitSpin( &s_player_head_title, M_RUS("head skin", "LUQO"), &s_player_head_box, 100 );
 	s_player_head_box.curvalue = s_pm_head;
 	s_player_head_box.itemnames = (const char **)s_pmi[s_pm_model].headskins;
 
-	PlayerConfig_InitSpin( &s_player_body_title, "body skin", &s_player_body_box, 120 );
+	PlayerConfig_InitSpin( &s_player_body_title, M_RUS("body skin", "ODEJDA"), &s_player_body_box, 120 );
 	s_player_body_box.curvalue = s_pm_body;
 	s_player_body_box.itemnames = (const char **)s_pmi[s_pm_model].bodyskins;
 
-	PlayerConfig_InitSpin( &s_player_legs_title, "legs skin", &s_player_legs_box, 140 );
+	PlayerConfig_InitSpin( &s_player_legs_title, M_RUS("legs skin", "VP@KU"), &s_player_legs_box, 140 );
 	s_player_legs_box.curvalue = s_pm_legs;
 	s_player_legs_box.itemnames = (const char **)s_pmi[s_pm_model].legsskins;
 
 	for ( i = 0; i < MAX_EXTRAS; i++ )
 	{
-		PlayerConfig_InitSpin( &s_player_extras_title[i], "extras", &s_player_extras_box[i], 175 + i * 20 );
+		PlayerConfig_InitSpin( &s_player_extras_title[i], M_RUS("extras", "DOIOLHEHUR"), &s_player_extras_box[i], 175 + i * 20 );
 		s_player_extras_box[i].curvalue = s_pm_extras[i];
 		s_player_extras_box[i].itemnames = rate_names;	// until PlayerConfig_UpdateExtras
 	}
@@ -5436,7 +5592,7 @@ qboolean PlayerConfig_MenuInit( void )
 		if ( Cvar_VariableValue( "rate" ) == rate_tbl[i] )
 			break;
 
-	PlayerConfig_InitSpin( &s_player_rate_title, "connect speed", &s_player_rate_box, 285 );
+	PlayerConfig_InitSpin( &s_player_rate_title, M_RUS("connect speed", "CKOPOCT| CBR3U"), &s_player_rate_box, 285 );
 	s_player_rate_box.generic.callback = RateCallback;
 	s_player_rate_box.curvalue = i;
 	s_player_rate_box.itemnames = rate_names;
@@ -5761,7 +5917,7 @@ void M_Menu_PlayerConfig_f (void)
 {
 	if (!PlayerConfig_MenuInit())
 	{
-		Menu_SetStatusBar( &s_multiplayer_menu, "No valid player models found" );
+		Menu_SetStatusBar( &s_multiplayer_menu, M_RUS("No valid player models found", "HE HAZDEH} MODELU UGPOKOB") );
 		return;
 	}
 	Menu_SetStatusBar( &s_multiplayer_menu, NULL );
@@ -5800,8 +5956,8 @@ static char *s_pmnames[MAX_PLAYERMODELS];
 static int s_numplayermodels;
 
 static int rate_tbl[] = { 2500, 3200, 5000, 10000, 25000, 0 };
-static const char *rate_names[] = { "28.8 Modem", "33.6 Modem", "Single ISDN",
-	"Dual ISDN/Cable", "T1/LAN", "User defined", 0 };
+static const char *rate_names[] = { M_RUS("28.8 Modem", "MODEM 28.8"), M_RUS("33.6 Modem", "MODEM 33.6"), M_RUS("Single ISDN", "ODUH isdn"),
+	M_RUS("Dual ISDN/Cable", "DBA isdn/KAVEL|"), "T1/LAN", M_RUS("User defined", "CBOR"), 0 };
 
 void DownloadOptionsFunc( void *self )
 {
@@ -6087,7 +6243,7 @@ qboolean PlayerConfig_MenuInit( void )
 	s_player_config_menu.nitems = 0;
 
 	s_player_name_field.generic.type = MTYPE_FIELD;
-	s_player_name_field.generic.name = "name";
+	s_player_name_field.generic.name = M_RUS("name", "UMR");
 	s_player_name_field.generic.callback = 0;
 	s_player_name_field.generic.x		= 0;
 	s_player_name_field.generic.y		= 0;
@@ -6097,7 +6253,7 @@ qboolean PlayerConfig_MenuInit( void )
 	s_player_name_field.cursor = strlen( name->string );
 
 	s_player_model_title.generic.type = MTYPE_SEPARATOR;
-	s_player_model_title.generic.name = "model";
+	s_player_model_title.generic.name = M_RUS("model", "MODEL|");
 	s_player_model_title.generic.x    = -8;
 	s_player_model_title.generic.y	 = 60;
 
@@ -6110,7 +6266,7 @@ qboolean PlayerConfig_MenuInit( void )
 	s_player_model_box.itemnames = (const char **)s_pmnames;
 
 	s_player_skin_title.generic.type = MTYPE_SEPARATOR;
-	s_player_skin_title.generic.name = "skin";
+	s_player_skin_title.generic.name = M_RUS("skin", "OVLUK");
 	s_player_skin_title.generic.x    = -16;
 	s_player_skin_title.generic.y	 = 84;
 
@@ -6124,7 +6280,7 @@ qboolean PlayerConfig_MenuInit( void )
 	s_player_skin_box.itemnames = (const char **)s_pmi[currentdirectoryindex].skindisplaynames;
 
 	s_player_hand_title.generic.type = MTYPE_SEPARATOR;
-	s_player_hand_title.generic.name = "handedness";
+	s_player_hand_title.generic.name = M_RUS("handedness", "BEDYNAR PYKA");
 	s_player_hand_title.generic.x    = 32;
 	s_player_hand_title.generic.y	 = 108;
 
@@ -6142,7 +6298,7 @@ qboolean PlayerConfig_MenuInit( void )
 			break;
 
 	s_player_rate_title.generic.type = MTYPE_SEPARATOR;
-	s_player_rate_title.generic.name = "connect speed";
+	s_player_rate_title.generic.name = M_RUS("connect speed", "CKOPOCT| CBR3U");
 	s_player_rate_title.generic.x    = 56;
 	s_player_rate_title.generic.y	 = 156;
 
@@ -6156,7 +6312,7 @@ qboolean PlayerConfig_MenuInit( void )
 	s_player_rate_box.itemnames = rate_names;
 
 	s_player_download_action.generic.type = MTYPE_ACTION;
-	s_player_download_action.generic.name	= "download options";
+	s_player_download_action.generic.name	= M_RUS("download options", "3AGPY3KA FAZLOB");
 	s_player_download_action.generic.flags= QMF_LEFT_JUSTIFY;
 	s_player_download_action.generic.x	= -24;
 	s_player_download_action.generic.y	= 186;
@@ -6283,7 +6439,7 @@ void M_Menu_PlayerConfig_f (void)
 {
 	if (!PlayerConfig_MenuInit())
 	{
-		Menu_SetStatusBar( &s_multiplayer_menu, "No valid player models found" );
+		Menu_SetStatusBar( &s_multiplayer_menu, M_RUS("No valid player models found", "HE HAZDEH} MODELU UGPOKOB") );
 		return;
 	}
 	Menu_SetStatusBar( &s_multiplayer_menu, NULL );
@@ -6378,6 +6534,9 @@ void M_Init (void)
 {
 	Cmd_AddCommand ("menu_main", M_Menu_Main_f);
 	Cmd_AddCommand ("menu_game", M_Menu_Game_f);
+#ifdef KINGPIN_ENGINE
+	Cmd_AddCommand ("menu_notebook", M_Menu_Notebook_f);
+#endif
 		Cmd_AddCommand ("menu_loadgame", M_Menu_LoadGame_f);
 		Cmd_AddCommand ("menu_savegame", M_Menu_SaveGame_f);
 		Cmd_AddCommand ("menu_joinserver", M_Menu_JoinServer_f);

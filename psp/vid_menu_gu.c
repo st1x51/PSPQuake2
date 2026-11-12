@@ -20,6 +20,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 
 #include "../client/client.h"
 #include "../client/qmenu.h"
+#include "../client/menu_ru.h"
 
 extern cvar_t *vid_gamma;
 extern cvar_t *scr_viewsize;
@@ -98,9 +99,9 @@ static void ParticleSizeCallback (void *unused)
 */
 void VID_MenuInit (void)
 {
-	static const char *yesno_names[] = {"no", "yes", 0};
-	static const char *vsync_names[] = {"no", "yes", "adaptive", 0};
-	static const char *glow_names[]  = {"dlm only", "dlm + glow", "glow only", 0};
+	static const char *yesno_names[] = {M_RUS("no", "HET"), M_RUS("yes", "DA"), 0};
+	static const char *vsync_names[] = {M_RUS("no", "HET"), M_RUS("yes", "DA"), M_RUS("adaptive", "ADAITUBHAR"), 0};
+	static const char *glow_names[]  = {M_RUS("dlm only", "TOL|KO CBET"), M_RUS("dlm + glow", "CBET U OPEOL"), M_RUS("glow only", "TOL|KO OPEOL"), 0};
 
 	if (!scr_viewsize)
 		scr_viewsize = Cvar_Get ("viewsize", "100", CVAR_ARCHIVE);
@@ -117,7 +118,7 @@ void VID_MenuInit (void)
 	s_screensize_slider.generic.type     = MTYPE_SLIDER;
 	s_screensize_slider.generic.x        = 0;
 	s_screensize_slider.generic.y        = 20;
-	s_screensize_slider.generic.name     = "Screen size";
+	s_screensize_slider.generic.name     = M_RUS("Screen size", "PA3MEP {KPAHA");
 	s_screensize_slider.generic.callback = ScreenSizeCallback;
 	s_screensize_slider.minvalue         = 3;
 	s_screensize_slider.maxvalue         = 12;
@@ -126,7 +127,7 @@ void VID_MenuInit (void)
 	s_brightness_slider.generic.type     = MTYPE_SLIDER;
 	s_brightness_slider.generic.x        = 0;
 	s_brightness_slider.generic.y        = 30;
-	s_brightness_slider.generic.name     = "Brightness";
+	s_brightness_slider.generic.name     = M_RUS("Brightness", "RPKOCT|");
 	s_brightness_slider.generic.callback = BrightnessCallback;
 	s_brightness_slider.minvalue         = 5;
 	s_brightness_slider.maxvalue         = 13;
@@ -137,7 +138,7 @@ void VID_MenuInit (void)
 	s_drawfps_list.generic.type     = MTYPE_SPINCONTROL;
 	s_drawfps_list.generic.x        = 0;
 	s_drawfps_list.generic.y        = 50;
-	s_drawfps_list.generic.name     = "Draw FPS";
+	s_drawfps_list.generic.name     = M_RUS("Draw FPS", "4ACTOTA KADPOB");
 	s_drawfps_list.generic.callback = DrawFpsCallback;
 	s_drawfps_list.itemnames        = yesno_names;
 	s_drawfps_list.curvalue         = scr_drawfps->value;
@@ -145,7 +146,7 @@ void VID_MenuInit (void)
 	s_vsync_list.generic.type     = MTYPE_SPINCONTROL;
 	s_vsync_list.generic.x        = 0;
 	s_vsync_list.generic.y        = 60;
-	s_vsync_list.generic.name     = "VSync";
+	s_vsync_list.generic.name     = M_RUS("VSync", "BEPT. CUHXPOHU3AQUR");
 	s_vsync_list.generic.callback = VSyncCallback;
 	s_vsync_list.itemnames        = vsync_names;
 	s_vsync_list.curvalue         = Cvar_VariableValue ("gl_vsync");
@@ -153,7 +154,7 @@ void VID_MenuInit (void)
 	s_tq_slider.generic.type     = MTYPE_SLIDER;
 	s_tq_slider.generic.x        = 0;
 	s_tq_slider.generic.y        = 70;
-	s_tq_slider.generic.name     = "Texture quality";
+	s_tq_slider.generic.name     = M_RUS("Texture quality", "KA4ECTBO TEKCTYP");
 	s_tq_slider.generic.callback = TgCallback;
 	s_tq_slider.minvalue         = 0;
 	s_tq_slider.maxvalue         = 3;
@@ -162,7 +163,7 @@ void VID_MenuInit (void)
 	s_dynamic_lighting_list.generic.type     = MTYPE_SPINCONTROL;
 	s_dynamic_lighting_list.generic.x        = 0;
 	s_dynamic_lighting_list.generic.y        = 80;
-	s_dynamic_lighting_list.generic.name     = "Dynamic lighting";
+	s_dynamic_lighting_list.generic.name     = M_RUS("Dynamic lighting", "DUHAMU4ECKUZ CBET");
 	s_dynamic_lighting_list.generic.callback = DynamicLightingCallback;
 	s_dynamic_lighting_list.itemnames        = yesno_names;
 	s_dynamic_lighting_list.curvalue         = Cvar_VariableValue ("gl_dynamic");
@@ -170,7 +171,7 @@ void VID_MenuInit (void)
 	s_light_glow_list.generic.type     = MTYPE_SPINCONTROL;
 	s_light_glow_list.generic.x        = 0;
 	s_light_glow_list.generic.y        = 90;
-	s_light_glow_list.generic.name     = "Light glow effect";
+	s_light_glow_list.generic.name     = M_RUS("Light glow effect", "CBE4EHUE CBETA");
 	s_light_glow_list.generic.callback = LightGlowCallback;
 	s_light_glow_list.itemnames        = glow_names;
 	s_light_glow_list.curvalue         = Cvar_VariableValue ("gl_flashblend");
@@ -178,7 +179,7 @@ void VID_MenuInit (void)
 	s_simple_particles_list.generic.type     = MTYPE_SPINCONTROL;
 	s_simple_particles_list.generic.x        = 0;
 	s_simple_particles_list.generic.y        = 100;
-	s_simple_particles_list.generic.name     = "Simple particles";
+	s_simple_particles_list.generic.name     = M_RUS("Simple particles", "IPOCT}E 4ACTUQ}");
 	s_simple_particles_list.generic.callback = SimpleParticlesCallback;
 	s_simple_particles_list.itemnames        = yesno_names;
 	s_simple_particles_list.curvalue         = Cvar_VariableValue ("gl_particle_point");
@@ -187,7 +188,7 @@ void VID_MenuInit (void)
 	s_particle_size_slider.generic.flags    = (s_simple_particles_list.curvalue > 0) ? QMF_INACTIVE : 0;
 	s_particle_size_slider.generic.x        = 0;
 	s_particle_size_slider.generic.y        = 110;
-	s_particle_size_slider.generic.name     = "Particle size";
+	s_particle_size_slider.generic.name     = M_RUS("Particle size", "PA3MEP 4ACTUQ");
 	s_particle_size_slider.generic.callback = ParticleSizeCallback;
 	s_particle_size_slider.minvalue         = 1;
 	s_particle_size_slider.maxvalue         = 10;

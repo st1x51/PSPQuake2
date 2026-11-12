@@ -452,15 +452,31 @@ static qboolean R_CullAliasModel (dmdl_t *paliashdr, vec3_t mins, vec3_t maxs, e
 
 	if ((e->frame >= paliashdr->num_frames) || (e->frame < 0))
 	{
-		ri.Con_Printf (PRINT_ALL, "R_CullAliasModel %s: no such frame %d\n",
-			currentmodel->name, e->frame);
-		e->frame = 0;
+		if ((e->flags2 & RF2_MODULUS_FRAME) &&
+			e->frame >= 0 && paliashdr->num_frames > 0)
+		{
+			e->frame %= paliashdr->num_frames;
+		}
+		else
+		{
+			ri.Con_Printf (PRINT_ALL, "R_CullAliasModel %s: no such frame %d\n",
+				currentmodel->name, e->frame);
+			e->frame = 0;
+		}
 	}
 	if ((e->oldframe >= paliashdr->num_frames) || (e->oldframe < 0))
 	{
-		ri.Con_Printf (PRINT_ALL, "R_CullAliasModel %s: no such oldframe %d\n",
-			currentmodel->name, e->oldframe);
-		e->oldframe = 0;
+		if ((e->flags2 & RF2_MODULUS_FRAME) &&
+			e->oldframe >= 0 && paliashdr->num_frames > 0)
+		{
+			e->oldframe %= paliashdr->num_frames;
+		}
+		else
+		{
+			ri.Con_Printf (PRINT_ALL, "R_CullAliasModel %s: no such oldframe %d\n",
+				currentmodel->name, e->oldframe);
+			e->oldframe = 0;
+		}
 	}
 
 	pframe = (daliasframe_t *)((byte *)paliashdr + paliashdr->ofs_frames +
@@ -811,18 +827,34 @@ void R_DrawAliasModel (entity_t *e)
 
 	if ((currententity->frame >= paliashdr->num_frames) || (currententity->frame < 0))
 	{
-		ri.Con_Printf (PRINT_ALL, "R_DrawAliasModel %s: no such frame %d\n",
-			currentmodel->name, currententity->frame);
-		currententity->frame = 0;
-		currententity->oldframe = 0;
+		if ((currententity->flags2 & RF2_MODULUS_FRAME) &&
+			currententity->frame >= 0 && paliashdr->num_frames > 0)
+		{
+			currententity->frame %= paliashdr->num_frames;
+		}
+		else
+		{
+			ri.Con_Printf (PRINT_ALL, "R_DrawAliasModel %s: no such frame %d\n",
+				currentmodel->name, currententity->frame);
+			currententity->frame = 0;
+			currententity->oldframe = 0;
+		}
 	}
 
 	if ((currententity->oldframe >= paliashdr->num_frames) || (currententity->oldframe < 0))
 	{
-		ri.Con_Printf (PRINT_ALL, "R_DrawAliasModel %s: no such oldframe %d\n",
-			currentmodel->name, currententity->oldframe);
-		currententity->frame = 0;
-		currententity->oldframe = 0;
+		if ((currententity->flags2 & RF2_MODULUS_FRAME) &&
+			currententity->oldframe >= 0 && paliashdr->num_frames > 0)
+		{
+			currententity->oldframe %= paliashdr->num_frames;
+		}
+		else
+		{
+			ri.Con_Printf (PRINT_ALL, "R_DrawAliasModel %s: no such oldframe %d\n",
+				currentmodel->name, currententity->oldframe);
+			currententity->frame = 0;
+			currententity->oldframe = 0;
+		}
 	}
 
 	if (!r_lerpmodels->value)

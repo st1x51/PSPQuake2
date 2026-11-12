@@ -248,6 +248,7 @@ typedef struct
 	void	(*DrawCharUpper) (int x, int y, int c);		// maps a-z to A-Z
 	void	(*DrawChar2) (int x, int y, int c);			// second 8x8 font (HUD notes)
 	void	(*DrawBigChar) (int x, int y, int c, float *color);	// 22x22 cells, rgb tint
+	void (*DrawChatChar) (int x, int y, int c, float *color, float scale, float alpha);
 	void	(*DrawTileClear) (int x, int y, int w, int h, char *name);
 	void	(*DrawFill) (int x, int y, int w, int h, int c);
 	void	(*DrawFillRGBA) (int x, int y, int w, int h, float r, float g, float b, float a);

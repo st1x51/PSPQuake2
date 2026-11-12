@@ -137,9 +137,12 @@ void SubdividePolygon (int numverts, float *verts)
 		SubdividePolygon (b, back[0]);
 		return;
 	}
-#if 0
+#ifdef KINGPIN_ENGINE
 	// add a point in the center to help keep warp valid
 	poly = ri.Hunk_AllocName (sizeof(glpoly_t) + ((numverts + 1) * sizeof(gu_vert_ftv_t)), loadname);
+	poly->c_verts = NULL;
+	poly->c_numverts = 0;
+	poly->c_frameverts = -1;
 	poly->next = warpface->polys;
 	warpface->polys = poly;
 	poly->numverts = numverts + 2;
@@ -235,6 +238,30 @@ float	r_turbsin[] =
 };
 #define TURBSCALE (256.0 / (2 * M_PI))
 
+#ifdef KINGPIN_ENGINE
+static void R_DrawWaterFan (gu_vert_ftv_t *verts, int count, qboolean needsclip)
+{
+	int i;
+	if (!needsclip || !GU_ClipIsRequired (verts, count))
+	{
+		sceGuDrawArray (GU_TRIANGLE_FAN, GU_TEXTURE_32BITF | GU_VERTEX_32BITF, count, 0, verts);
+		return;
+	}
+
+	// The center + closed boundary is a fan, not a convex boundary polygon.
+	// Clip each triangle so its warped UV interpolation survives clipping.
+	for (i = 1; i < count - 1; i++)
+	{
+		gu_vert_ftv_t triangle[3] = {verts[0], verts[i], verts[i + 1]};
+		gu_vert_ftv_t *clipped;
+		int clipped_count;
+		GU_Clip (triangle, 3, &clipped, &clipped_count);
+		if (clipped_count)
+			sceGuDrawArray (GU_TRIANGLE_FAN, GU_TEXTURE_32BITF | GU_VERTEX_32BITF, clipped_count, 0, clipped);
+	}
+}
+#endif
+
 /*
 =============
 EmitWaterPolys
@@ -266,6 +293,9 @@ void EmitWaterPolys (msurface_t *fa)
 
 		sceGuTexOffset(os, ot);
 
+#ifdef KINGPIN_ENGINE
+		R_DrawWaterFan (&p->verts[0], p->numverts, true);
+#else
 		if (GU_ClipIsRequired(&p->verts[0], p->numverts))
 		{
 			gu_vert_ftv_t *cv;
@@ -274,6 +304,7 @@ void EmitWaterPolys (msurface_t *fa)
 			if (cvc) sceGuDrawArray (GU_TRIANGLE_FAN, GU_TEXTURE_32BITF | GU_VERTEX_32BITF, cvc, 0, cv);
 		}
 		else sceGuDrawArray (GU_TRIANGLE_FAN, GU_TEXTURE_32BITF | GU_VERTEX_32BITF, p->numverts, 0, &p->verts[0]);
+#endif
 	}
 	sceGuTexOffset (0.0f, 0.0f);
 	sceGuTexScale (1.0f, 1.0f);
@@ -308,11 +339,20 @@ void EmitWaterPolys (msurface_t *fa)
 		{
 			os = p->verts[i].u;
 			ot = p->verts[i].v;
+#ifdef KINGPIN_ENGINE
+			// ref_gl 1.21 indexes the wave table through Q_ftol (x87 fistp).
+			out[i].u = os + r_turbsin[(int)rintf ((ot * 0.125f + rdt) * TURBSCALE) & 255];
+			out[i].v = ot + r_turbsin[(int)rintf ((os * 0.125f + rdt) * TURBSCALE) & 255];
+#else
 			out[i].u = os + r_turbsin[(int)((ot * 0.125f + rdt) * TURBSCALE) & 255];
 			out[i].v = ot + r_turbsin[(int)((os * 0.125f + rdt) * TURBSCALE) & 255];
+#endif
 			VectorCopy (p->verts[i].xyz, out[i].xyz);
 		}
 
+#ifdef KINGPIN_ENGINE
+		R_DrawWaterFan (out, p->numverts, needsclip);
+#else
 		if (needsclip && GU_ClipIsRequired (out, p->numverts))
 		{
 			// Clip the polygon.
@@ -331,6 +371,7 @@ void EmitWaterPolys (msurface_t *fa)
 #endif
 		}
 		else sceGuDrawArray (GU_TRIANGLE_FAN, GU_TEXTURE_32BITF | GU_VERTEX_32BITF, p->numverts, 0, out);
+#endif
 	}
 
 	sceGuTexOffset (0.0f, 0.0f);

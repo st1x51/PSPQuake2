@@ -144,40 +144,53 @@ void Draw_CharUpper (int x, int y, int num)
 Draw_BigChar
 ================
 */
-void Draw_BigChar (int x, int y, int num, float *color)
+void Draw_ChatChar (int x, int y, int num, float *color, float scale, float alpha)
 {
 	int		glyph, row, col;
-	short	hrow, hcol;
-	const short size = 11;
+	float	u, v, du, dv;
+	const float size = 22.0f * scale;
 
 	glyph = (num & 127) - 32;
-	if (glyph <= 0 || y <= -11)
+	if (glyph <= 0 || glyph >= 96 || y <= -11 || !draw_bigchars)
 		return;
 
 	row = glyph / 11;
 	col = glyph % 11;
-	hrow = row * size;
-	hcol = col * size;
+	// 1.21's 256x256 atlas uses a 23-texel pitch. Its UV span is
+	// 2/23, distinct from the pitch; keep both constants from ref_gl.
+	u = draw_bigchars->sl + col * (23.0f / 256.0f) * (draw_bigchars->sh - draw_bigchars->sl);
+	v = draw_bigchars->tl + row * (23.0f / 256.0f) * (draw_bigchars->th - draw_bigchars->tl);
+	du = (2.0f / 23.0f) * (draw_bigchars->sh - draw_bigchars->sl);
+	dv = (2.0f / 23.0f) * (draw_bigchars->th - draw_bigchars->tl);
 
 	GL_TexEnv (GU_TFX_MODULATE);
-	sceGuColor (GU_HCOLOR_3FV(color));
+	sceGuDisable (GU_ALPHA_TEST);
+	sceGuEnable (GU_BLEND);
+	sceGuColor (GU_HCOLOR_C4F(color[0], color[1], color[2], alpha));
 	GL_Bind (draw_bigchars);
 
-	gu_vert_htv_t* const out = (gu_vert_htv_t*)sceGuGetMemory (sizeof(gu_vert_htv_t ) * 2);
-	out[0].u = hcol;
-	out[0].v = hrow;
+	gu_vert_ftv_t* const out = (gu_vert_ftv_t*)sceGuGetMemory (sizeof(gu_vert_ftv_t) * 2);
+	out[0].u = u;
+	out[0].v = v;
 	out[0].x = x;
 	out[0].y = y;
 	out[0].z = 0;
-	out[1].u = hcol + size;
-	out[1].v = hrow + size;
+	out[1].u = u + du;
+	out[1].v = v + dv;
 	out[1].x = x + size;
 	out[1].y = y + size;
 	out[1].z = 0;
-	sceGuDrawArray (GU_SPRITES, GU_TEXTURE_16BIT | GU_VERTEX_16BIT | GU_TRANSFORM_2D, 2, 0, out);
+	sceGuDrawArray (GU_SPRITES, GU_TEXTURE_32BITF | GU_VERTEX_32BITF | GU_TRANSFORM_2D, 2, 0, out);
 
 	GL_TexEnv (GU_TFX_REPLACE);
 	sceGuColor (GU_HCOLOR_DEFAULT);
+	sceGuEnable (GU_ALPHA_TEST);
+	sceGuDisable (GU_BLEND);
+}
+
+void Draw_BigChar (int x, int y, int num, float *color)
+{
+	Draw_ChatChar (x, y, num, color, 1.0f, 1.0f);
 }
 
 #else
@@ -289,8 +302,9 @@ void Draw_StretchPic (int x, int y, int w, int h, char *pic)
 
 	GL_Bind (image);
 
-	gu_vert_htv_t* out = (gu_vert_htv_t*)sceGuGetMemory (sizeof(gu_vert_htv_t) * 2 * num_slices);
-	gu_vert_htv_t* out_ptr = out;
+	// Preserve fractional UVs at slice boundaries, as in ref_gl 1.21.
+	gu_vert_ftv_t* out = (gu_vert_ftv_t*)sceGuGetMemory (sizeof(gu_vert_ftv_t) * 2 * num_slices);
+	gu_vert_ftv_t* out_ptr = out;
 
 	for (i = 0; i < num_slices; i++)
 	{
@@ -311,7 +325,7 @@ void Draw_StretchPic (int x, int y, int w, int h, char *pic)
 		out_ptr->z = 0;
 		out_ptr++;
 	}
-	sceGuDrawArray (GU_SPRITES, GU_TEXTURE_16BIT | GU_VERTEX_16BIT | GU_TRANSFORM_2D, 2 * num_slices, 0, out);
+	sceGuDrawArray (GU_SPRITES, GU_TEXTURE_32BITF | GU_VERTEX_32BITF | GU_TRANSFORM_2D, 2 * num_slices, 0, out);
 
 	//if (!(image->flags & IMG_FLAG_HAS_ALPHA))
 	//	sceGuEnable (GU_ALPHA_TEST);
@@ -352,8 +366,9 @@ void Draw_StretchPicTransparent (int x, int y, int w, int h, char *pic, float al
 
 	GL_Bind (image);
 
-	gu_vert_htv_t* out = (gu_vert_htv_t*)sceGuGetMemory (sizeof(gu_vert_htv_t) * 2 * num_slices);
-	gu_vert_htv_t* out_ptr = out;
+	// Preserve fractional UVs at slice boundaries, as in ref_gl 1.21.
+	gu_vert_ftv_t* out = (gu_vert_ftv_t*)sceGuGetMemory (sizeof(gu_vert_ftv_t) * 2 * num_slices);
+	gu_vert_ftv_t* out_ptr = out;
 
 	for (i = 0; i < num_slices; i++)
 	{
@@ -374,7 +389,7 @@ void Draw_StretchPicTransparent (int x, int y, int w, int h, char *pic, float al
 		out_ptr->z = 0;
 		out_ptr++;
 	}
-	sceGuDrawArray (GU_SPRITES, GU_TEXTURE_16BIT | GU_VERTEX_16BIT | GU_TRANSFORM_2D, 2 * num_slices, 0, out);
+	sceGuDrawArray (GU_SPRITES, GU_TEXTURE_32BITF | GU_VERTEX_32BITF | GU_TRANSFORM_2D, 2 * num_slices, 0, out);
 
 	//if (!(image->flags & IMG_FLAG_HAS_ALPHA))
 	//	sceGuEnable (GU_ALPHA_TEST);
@@ -415,8 +430,9 @@ void Draw_Pic (int x, int y, char *pic)
 
 	GL_Bind (image);
 
-	gu_vert_htv_t* out = (gu_vert_htv_t*)sceGuGetMemory (sizeof(gu_vert_htv_t) * 2 * num_slices);
-	gu_vert_htv_t* out_ptr = out;
+	// Preserve fractional UVs at slice boundaries, as in ref_gl 1.21.
+	gu_vert_ftv_t* out = (gu_vert_ftv_t*)sceGuGetMemory (sizeof(gu_vert_ftv_t) * 2 * num_slices);
+	gu_vert_ftv_t* out_ptr = out;
 
 	for (i = 0; i < num_slices; i++)
 	{
@@ -437,7 +453,7 @@ void Draw_Pic (int x, int y, char *pic)
 		out_ptr->z = 0;
 		out_ptr++;
 	}
-	sceGuDrawArray (GU_SPRITES, GU_TEXTURE_16BIT | GU_VERTEX_16BIT | GU_TRANSFORM_2D, 2 * num_slices, 0, out);
+	sceGuDrawArray (GU_SPRITES, GU_TEXTURE_32BITF | GU_VERTEX_32BITF | GU_TRANSFORM_2D, 2 * num_slices, 0, out);
 
 	//if (!(image->flags & IMG_FLAG_HAS_ALPHA))
 	//	sceGuEnable (GU_ALPHA_TEST);
@@ -479,8 +495,9 @@ void Draw_PicTransparent (int x, int y, char *pic, float alpha)
 
 	GL_Bind (image);
 
-	gu_vert_htv_t* out = (gu_vert_htv_t*)sceGuGetMemory (sizeof(gu_vert_htv_t) * 2 * num_slices);
-	gu_vert_htv_t* out_ptr = out;
+	// Preserve fractional UVs at slice boundaries, as in ref_gl 1.21.
+	gu_vert_ftv_t* out = (gu_vert_ftv_t*)sceGuGetMemory (sizeof(gu_vert_ftv_t) * 2 * num_slices);
+	gu_vert_ftv_t* out_ptr = out;
 
 	for (i = 0; i < num_slices; i++)
 	{
@@ -501,7 +518,7 @@ void Draw_PicTransparent (int x, int y, char *pic, float alpha)
 		out_ptr->z = 0;
 		out_ptr++;
 	}
-	sceGuDrawArray (GU_SPRITES, GU_TEXTURE_16BIT | GU_VERTEX_16BIT | GU_TRANSFORM_2D, 2 * num_slices, 0, out);
+	sceGuDrawArray (GU_SPRITES, GU_TEXTURE_32BITF | GU_VERTEX_32BITF | GU_TRANSFORM_2D, 2 * num_slices, 0, out);
 
 	//if (!(image->flags & IMG_FLAG_HAS_ALPHA))
 	//	sceGuEnable (GU_ALPHA_TEST);
@@ -588,7 +605,8 @@ void Draw_Fill (int x, int y, int w, int h, int c)
 		ri.Sys_Error (ERR_FATAL, "Draw_Fill: bad color");
 
 	sceGuDisable (GU_TEXTURE_2D);
-	sceGuColor (d_8to24table[c]);
+	// ref_gl 1.21 uses glColor3f: even palette entry 255 is opaque here.
+	sceGuColor (d_8to24table[c] | 0xff000000u);
 
 	gu_vert_hv_t* const out = (gu_vert_hv_t*)sceGuGetMemory (sizeof(gu_vert_hv_t) * 2);
 	out[0].x = x;

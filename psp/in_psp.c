@@ -281,6 +281,61 @@ void IN_DeactivateMouse (void)
 IN_KeyUpdate
 ===========
 */
+#ifdef KINGPIN_ENGINE
+static unsigned int IN_CompanionButtons (unsigned int buttons, int time)
+{
+	static unsigned int previous, consumed;
+	static qboolean select_pending, select_used;
+	const unsigned int directions = PSP_CTRL_UP | PSP_CTRL_RIGHT | PSP_CTRL_DOWN | PSP_CTRL_LEFT;
+	qboolean gameplay = cls.key_dest == key_game && cls.state == ca_active;
+	qboolean select_pressed = (buttons & PSP_CTRL_SELECT) && !(previous & PSP_CTRL_SELECT);
+	unsigned int pressed = buttons & ~previous;
+	unsigned int filtered = buttons;
+
+	consumed &= buttons;
+	if (gameplay && select_pressed)
+	{
+		select_pending = true;
+		select_used = false;
+		/* Also accept an arrow held just before SELECT. */
+		pressed |= buttons & directions;
+	}
+	if (select_pending)
+	{
+		filtered &= ~PSP_CTRL_SELECT;
+		if (!gameplay || (buttons & PSP_CTRL_START))
+			select_used = true;
+		if (buttons & PSP_CTRL_SELECT)
+		{
+			consumed |= buttons & directions;
+			if (buttons & directions)
+				select_used = true;
+			if (gameplay && !(buttons & PSP_CTRL_START))
+			{
+				if (pressed & PSP_CTRL_UP)
+					Cbuf_AddText ("key1\n");
+				else if (pressed & PSP_CTRL_RIGHT)
+					Cbuf_AddText ("key2\n");
+				else if (pressed & PSP_CTRL_DOWN)
+					Cbuf_AddText ("key3\n");
+			}
+		}
+		else
+		{
+			if (!select_used && gameplay)
+			{
+				Key_Event (K_MODE_BUTTON, true, time);
+				Key_Event (K_MODE_BUTTON, false, time);
+			}
+			select_pending = false;
+		}
+	}
+	previous = buttons;
+	/* Releasing SELECT first must not activate the arrow's normal binding. */
+	return filtered & ~consumed;
+}
+#endif
+
 void IN_KeyUpdate(void)
 {
 	int         i, time;
@@ -290,6 +345,10 @@ void IN_KeyUpdate(void)
 	time = Sys_Milliseconds();
 
 	sceCtrlPeekBufferPositive( &buf, 1 );
+
+#ifdef KINGPIN_ENGINE
+	buf.Buttons = IN_CompanionButtons (buf.Buttons, time);
+#endif
 
 	for( i = 0; i < IN_KEY_MAX; i++ )
 	{

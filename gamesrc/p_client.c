@@ -1361,6 +1361,11 @@ void PutClientInServer (edict_t *ent)
 		InitClientPersistant(client);
 	client->resp = resp;
 
+	// Bars and an unfinished holster animation can leave both pointers set.
+	// Restore the holstered state before rebuilding the view weapon.
+	if (!deathmatch->value && client->pers.holsteredweapon)
+		client->pers.weapon = NULL;
+
 	// copy some data from the client to the entity
 	FetchClientEntData (ent);
 
@@ -2312,7 +2317,8 @@ qboolean ClientConnect (edict_t *ent, char *userinfo)
 	{
 		// clear the respawning variables
 		InitClientResp (ent->client);
-		if (!game.autosaved || !ent->client->pers.weapon)
+		if (!game.autosaved || (!ent->client->pers.weapon &&
+			!ent->client->pers.holsteredweapon))
 			InitClientPersistant (ent->client);
 
 		// JOSEPH 14-MAR-99
